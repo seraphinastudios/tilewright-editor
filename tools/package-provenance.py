@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Describe package dependencies using their actual immutable Cargo coordinates."""
-# Copyright (c) 2026 Atrinik contributors. SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Seraphina Studios. SPDX-License-Identifier: MIT
 import argparse
 import hashlib
 import json

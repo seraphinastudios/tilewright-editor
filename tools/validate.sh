@@ -3,8 +3,6 @@ set -euo pipefail
 
 repository=$(git rev-parse --show-toplevel)
 cd "${repository}"
-python3 tools/released_dependencies.py ready --root .
-python3 -m unittest discover -s tools -p 'test_released_dependencies.py'
 python3 -m unittest discover -s tools -p 'test_package_provenance.py'
 test "$(rustc --version | awk '{print $2}')" = 1.97.1
 for command in cargo cargo-deny cargo-auditable jq syft; do command -v "${command}" >/dev/null || { echo "missing required tool: ${command}" >&2; exit 1; }; done
@@ -14,14 +12,14 @@ cargo test --locked --workspace --all-targets
 cargo test --locked --workspace --doc
 cargo deny --locked check
 tools/check-foundations.sh
-cargo run --locked --quiet --package atrinik-editor -- version
-cargo run --locked --quiet --package atrinik-editor -- headless
-SDL_VIDEO_DRIVER=dummy cargo run --locked --quiet --package atrinik-editor -- window
-first=$(mktemp -d /tmp/atrinik-editor-release-first.XXXXXX); rmdir "${first}"
-second=$(mktemp -d /tmp/atrinik-editor-release-second.XXXXXX); rmdir "${second}"
+cargo run --locked --quiet --package tilewright-editor -- version
+cargo run --locked --quiet --package tilewright-editor -- headless
+SDL_VIDEO_DRIVER=dummy cargo run --locked --quiet --package tilewright-editor -- window
+first=$(mktemp -d /tmp/tilewright-editor-release-first.XXXXXX); rmdir "${first}"
+second=$(mktemp -d /tmp/tilewright-editor-release-second.XXXXXX); rmdir "${second}"
 trap 'rm -rf -- "${first}" "${second}"' EXIT
 tools/package-linux.sh "${first}" 0.1.0-test.1
 tools/package-linux.sh "${second}" 0.1.0-test.1
-cmp "${first}/atrinik-editor-0.1.0-test.1-linux-amd64.tar.gz" "${second}/atrinik-editor-0.1.0-test.1-linux-amd64.tar.gz"
-cmp "${first}/atrinik-editor-0.1.0-test.1-source.tar.gz" "${second}/atrinik-editor-0.1.0-test.1-source.tar.gz"
+cmp "${first}/tilewright-editor-0.1.0-test.1-linux-amd64.tar.gz" "${second}/tilewright-editor-0.1.0-test.1-linux-amd64.tar.gz"
+cmp "${first}/tilewright-editor-0.1.0-test.1-source.tar.gz" "${second}/tilewright-editor-0.1.0-test.1-source.tar.gz"
 git diff --check

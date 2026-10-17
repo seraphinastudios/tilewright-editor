@@ -1,55 +1,50 @@
-# Atrinik editor
+# Tilewright editor
 
-This is the fresh MIT Rust authoring application for Atrinik. It is independent
-of Gridarta, `atrinik/classic`, the connected client, protocol, and server.
+Tilewright editor is an MIT-licensed Rust world editor for isometric and
+top-down tile games, with built-in agent tooling. Humans and agents edit the
+same world through one command engine: the desktop app, a headless CLI, and an
+MCP server all produce the same reviewable changesets.
+
+Tilewright is maintained by Seraphina Studios alongside
+[tilewright-world](https://github.com/seraphinastudios/tilewright-world), the
+world format and toolkit, and
+[tilewright-renderer](https://github.com/seraphinastudios/tilewright-renderer),
+the shared GPU renderer. Each game describes itself to the editor through a
+game profile (object schema, layers, projection, movement rules, palettes), so
+the editor carries no game-specific code.
 
 ## Development model
 
-The editor is part of Atrinik's agentic next-generation reimplementation. Its
-fresh MIT-licensed Rust code is developed primarily through OpenAI Codex
-workflows under maintainer direction and review, with evidence-gated provenance
-controls, tests, and repository validation. This describes the project's
-current primary development workflow, not every line, commit, or contributor;
-direct human-written code contributions are welcome.
+Development is primarily agent-driven, under maintainer direction, review,
+provenance controls, tests, and repository validation. Direct human-written
+code contributions are welcome under the same controls. See
+[provenance](PROVENANCE.md) for the reuse record.
 
-The current foundation was independently implemented rather than mechanically
-translated or source-ported. Future exact historical reuse is evidence-gated by
-the [local provenance record](PROVENANCE.md) and
-[canonical grant registry](https://github.com/atrinik/atrinik/blob/main/docs/PROVENANCE.md):
-admitted destination material may be consulted and MIT-relicensed, while every
-uncovered portion remains excluded and the Classic repository remains
-GPL-distributed.
-Follow the
-[replacement roadmap](https://github.com/atrinik/atrinik/issues/168) and the
-[canonical project authorship statement](https://github.com/atrinik/atrinik/issues/331)
-for the wider project boundaries.
+Maps, quests, art, and other content opened in the editor belong to each game,
+with their own credits and licenses; they are not part of the editor's
+MIT-licensed code.
 
-The editor operates on human-authored maps, quests, lore, archetypes, pixel
-art, and other creative game content with its own exact creator or upstream
-provenance and licenses. That content is distinct from the editor's
-MIT-licensed code, and the editor must not add a generative-content feature
-that conflicts with the owning content repository's policy.
-
-## M1 architecture
-
-The editor pins the immutable v1.0.0 source revisions of
-[`atrinik/content-toolkit`](https://github.com/atrinik/content-toolkit) and
-[`atrinik/renderer`](https://github.com/atrinik/renderer). Toolkit documents and
-transactions remain authoritative; renderer scenes and GPU resources remain
-renderer-owned. Wrapper profiles are the only supported local override
-mechanism.
+## Architecture
 
 ```text
-released content toolkit -> document adapter -> semantic commands/history
-                                      |                    |
-project/path policy ------------------+------> UI model ----+-> app
-released renderer -------> scene/preview adapter ----------+
+world toolkit release -> document adapter -> semantic commands/history
+                                    |                    |
+project/path policy ----------------+------> UI model ----+-> app
+renderer release ------> scene/preview adapter ----------+
 ```
 
-The seven workspace crates own application composition, project/tab and safe
-path state, document adaptation, commands/history, UI panels/tools, preview
-integration, and deterministic test fakes. None owns a parser, serializer,
-filesystem writer, renderer, network service, or server lifecycle.
+The world toolkit owns source syntax, lossless documents, schemas, catalogs,
+diagnostics, compilers, semantic diffs, and atomic file transactions. The
+renderer owns scenes and GPU resources. The seven editor crates own application
+composition, project/tab and safe path state, document adaptation,
+commands/history, UI panels/tools, preview integration, and deterministic test
+fakes. None owns a parser, serializer, filesystem writer, renderer, network
+service, or server lifecycle.
+
+The current dependencies are the renderer and toolkit crates published under
+their earlier names (`atrinik-render-*`, `atrinik-scene`, `atrinik-source`,
+`atrinik-transaction`); they switch to `tilewright-render-*` and
+`tilewright-world` crates as those are released.
 
 ## Build and validation
 
@@ -57,15 +52,14 @@ Rust 1.97.1 is pinned, and `Cargo.lock` records the resolved SDL bindings and
 SDL source versions used by `--locked` builds. External dependency declarations
 use compatible SemVer ranges so routine updates can refresh the lockfile
 without editing a second version inventory. Linux builds need the native SDL
-headers installed by `tools/install-linux-native-deps.sh`. The Atrinik
-devcontainer release that includes the editor toolchain also provides them.
+headers installed by `tools/install-linux-native-deps.sh`.
 
 ```sh
 cargo build --locked --workspace
 cargo test --locked --workspace --all-targets
-cargo run --locked --package atrinik-editor -- version
-cargo run --locked --package atrinik-editor -- headless
-SDL_VIDEO_DRIVER=dummy cargo run --locked --package atrinik-editor -- window
+cargo run --locked --package tilewright-editor -- version
+cargo run --locked --package tilewright-editor -- headless
+SDL_VIDEO_DRIVER=dummy cargo run --locked --package tilewright-editor -- window
 tools/validate.sh
 ```
 
@@ -75,21 +69,16 @@ contracts, the shared-renderer empty viewport, SDL lifecycle, Linux release
 dry-run/SBOM/reproducibility, and diff hygiene. GitHub also builds/tests/packages
 on Windows and exposes one required aggregate check named `Editor validation`.
 
-The root wrapper does not yet expose replacement editor build/run commands;
-that handoff belongs to `atrinik/atrinik#266`. It must use profile-local Cargo
-overrides rather than editing these manifests. The editor never launches a
-server; future playtests use wrapper-owned profile/topology/state lifecycle.
+The editor never launches a game server; playtests are run by the consuming
+game's own tooling.
 
-## Safety, parity, and releases
+## Safety and releases
 
 [ADR 0001](decisions/0001-editor-architecture.md), the
 [threat model](docs/THREAT_MODEL.md), and [mutable path table](docs/MUTABLE_PATHS.md)
-define authority. The machine-readable
-[behavior inventory](migration/behavior-parity.json) assigns every observed
-classic authoring workflow to one owner/issue/milestone and requires fixture
-evidence before parity claims.
+define authority.
 
 Every squash merge uses a Conventional Commit PR title and semantic-release.
 Linux and Windows packages include checksums, CycloneDX SBOMs, provenance,
-license, and third-party notices; no content, server/client, classic code,
-Gridarta, recovery data, or mutable project state is bundled.
+license, and third-party notices; no game content, server or client, recovery
+data, or mutable project state is bundled.

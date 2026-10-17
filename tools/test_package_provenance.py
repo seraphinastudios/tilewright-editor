@@ -1,5 +1,5 @@
 """Regression proof for dependency provenance after registry updates."""
-# Copyright (c) 2026 Atrinik contributors. SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Seraphina Studios. SPDX-License-Identifier: MIT
 import hashlib
 import importlib.util
 import json
@@ -13,14 +13,14 @@ spec.loader.exec_module(provenance)
 NAME = 'atrinik-scene'
 REVISION = 'a' * 40
 CHECKSUM = 'b' * 64
-LEGACY = {'git': 'https://github.com/atrinik/renderer', 'rev': REVISION, 'version': '0.1.0'}
+LEGACY = {'git': 'https://github.com/seraphinastudios/tilewright-renderer', 'rev': REVISION, 'version': '0.1.0'}
 
 
 class PackageProvenanceTests(unittest.TestCase):
     def fixture(self, root, registry=True, version='0.2.0', checksum=CHECKSUM, revision=REVISION):
         (root / 'policy').mkdir()
         (root / 'policy/released-dependencies.json').write_text(json.dumps({'schema_version': 1, 'dependencies': [
-            {'name': NAME, 'repository': 'atrinik/renderer', 'legacy_git': LEGACY}]}))
+            {'name': NAME, 'repository': 'seraphinastudios/tilewright-renderer', 'legacy_git': LEGACY}]}))
         if registry:
             declaration = '{ version = "=' + version + '", default-features = false, features = ["preview"] }'
             source = provenance.REGISTRY
@@ -38,7 +38,7 @@ class PackageProvenanceTests(unittest.TestCase):
             self.fixture(root)
             result = provenance.dependency_provenance(root)
             dependency = result['dependencies'][0]
-            self.assertEqual(dependency, {'name': NAME, 'repository': 'atrinik/renderer',
+            self.assertEqual(dependency, {'name': NAME, 'repository': 'seraphinastudios/tilewright-renderer',
                 'version': '0.2.0', 'source': provenance.REGISTRY, 'checksum': CHECKSUM})
             self.assertEqual(result['cargo_lock_sha256'], hashlib.sha256((root / 'Cargo.lock').read_bytes()).hexdigest())
             self.assertNotIn(REVISION, json.dumps(result))
@@ -89,7 +89,7 @@ class PackageProvenanceTests(unittest.TestCase):
         result = provenance.dependency_provenance(root)
         self.assertEqual(len(result['dependencies']), 6)
         self.assertEqual({record['repository'] for record in result['dependencies']},
-                         {'atrinik/renderer', 'atrinik/content-toolkit'})
+                         {'seraphinastudios/tilewright-renderer', 'atrinik/content-toolkit'})
 
 
 if __name__ == '__main__':

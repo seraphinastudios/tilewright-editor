@@ -19,7 +19,4 @@ deny = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = [
-  "https://github.com/atrinik/content-toolkit",
-  "https://github.com/atrinik/renderer",
-]
+allow-git = []

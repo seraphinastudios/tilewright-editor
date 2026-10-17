@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "repository": "atrinik/editor",
+  "repository": "seraphinastudios/tilewright-editor",
   "dependencies": [
     {
       "name": "atrinik-render-api",
-      "repository": "atrinik/renderer",
+      "repository": "seraphinastudios/tilewright-renderer",
       "legacy_git": {
-        "git": "https://github.com/atrinik/renderer",
+        "git": "https://github.com/seraphinastudios/tilewright-renderer",
         "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
         "version": "0.1.0"
       },
@@ -14,9 +14,9 @@
     },
     {
       "name": "atrinik-render-resources",
-      "repository": "atrinik/renderer",
+      "repository": "seraphinastudios/tilewright-renderer",
       "legacy_git": {
-        "git": "https://github.com/atrinik/renderer",
+        "git": "https://github.com/seraphinastudios/tilewright-renderer",
         "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
         "version": "0.1.0"
       },
@@ -24,9 +24,9 @@
     },
     {
       "name": "atrinik-render-testkit",
-      "repository": "atrinik/renderer",
+      "repository": "seraphinastudios/tilewright-renderer",
       "legacy_git": {
-        "git": "https://github.com/atrinik/renderer",
+        "git": "https://github.com/seraphinastudios/tilewright-renderer",
         "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
         "version": "0.1.0"
       },
@@ -34,9 +34,9 @@
     },
     {
       "name": "atrinik-scene",
-      "repository": "atrinik/renderer",
+      "repository": "seraphinastudios/tilewright-renderer",
       "legacy_git": {
-        "git": "https://github.com/atrinik/renderer",
+        "git": "https://github.com/seraphinastudios/tilewright-renderer",
         "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
         "version": "0.1.0"
       },

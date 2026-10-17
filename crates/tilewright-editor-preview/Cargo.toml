@@ -1,6 +1,6 @@
 [package]
 publish = false
-name = "atrinik-editor-preview"
+name = "tilewright-editor-preview"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,10 +1,10 @@
-// Copyright 2026 The Atrinik Project
+// Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
 #![forbid(unsafe_code)]
 
-use atrinik_editor_project::{Error, FileKind, FileStamp, PathProbe, RelativePath};
 use std::{collections::BTreeMap, sync::RwLock};
+use tilewright_editor_project::{Error, FileKind, FileStamp, PathProbe, RelativePath};
 
 #[derive(Default)]
 pub struct MemoryPathProbe {

@@ -15,38 +15,38 @@ if [[ -e ${output} ]]; then
 fi
 for command in cargo-auditable syft strip python3; do command -v "${command}" >/dev/null || { echo "missing required tool: ${command}" >&2; exit 1; }; done
 
-stage=$(mktemp -d /tmp/atrinik-editor-stage.XXXXXX)
+stage=$(mktemp -d /tmp/tilewright-editor-stage.XXXXXX)
 trap 'rm -rf -- "${stage}"' EXIT
-cargo auditable build --locked --release --package atrinik-editor
+cargo auditable build --locked --release --package tilewright-editor
 target=$(cargo metadata --locked --offline --format-version 1 --no-deps | jq -r .target_directory)
-install -d "${stage}/atrinik-editor-${version}/bin" "${output}"
-install "${target}/release/atrinik-editor" "${stage}/atrinik-editor-${version}/bin/atrinik-editor"
-strip "${stage}/atrinik-editor-${version}/bin/atrinik-editor"
+install -d "${stage}/tilewright-editor-${version}/bin" "${output}"
+install "${target}/release/tilewright-editor" "${stage}/tilewright-editor-${version}/bin/tilewright-editor"
+strip "${stage}/tilewright-editor-${version}/bin/tilewright-editor"
 cp LICENSE PROVENANCE.md THIRD_PARTY_NOTICES.md \
-  "${stage}/atrinik-editor-${version}/"
-"${stage}/atrinik-editor-${version}/bin/atrinik-editor" version >/dev/null
+  "${stage}/tilewright-editor-${version}/"
+"${stage}/tilewright-editor-${version}/bin/tilewright-editor" version >/dev/null
 SYFT_CHECK_FOR_APP_UPDATE=false syft \
-  "${stage}/atrinik-editor-${version}/bin/atrinik-editor" \
-  --source-name atrinik-editor --source-version "${version}" \
-  --output "cyclonedx-json=${stage}/atrinik-editor-${version}/sbom.cdx.json"
-sbom="${stage}/atrinik-editor-${version}/sbom.cdx.json"
+  "${stage}/tilewright-editor-${version}/bin/tilewright-editor" \
+  --source-name tilewright-editor --source-version "${version}" \
+  --output "cyclonedx-json=${stage}/tilewright-editor-${version}/sbom.cdx.json"
+sbom="${stage}/tilewright-editor-${version}/sbom.cdx.json"
 normalized="${sbom}.normalized"
-digest=$(printf 'atrinik-editor:linux-amd64:%s' "${version}" | sha256sum | cut -d' ' -f1)
+digest=$(printf 'tilewright-editor:linux-amd64:%s' "${version}" | sha256sum | cut -d' ' -f1)
 serial="urn:uuid:${digest:0:8}-${digest:8:4}-8${digest:13:3}-8${digest:17:3}-${digest:20:12}"
 jq --arg version "${version}" --arg serial "${serial}" '
   .serialNumber = $serial |
   .metadata.timestamp = "1970-01-01T00:00:00Z" |
-  .metadata.component["bom-ref"] = ("atrinik-editor-linux-amd64@" + $version) |
-  (.components[] | select(.type == "file") | .name) = "/atrinik-editor"
+  .metadata.component["bom-ref"] = ("tilewright-editor-linux-amd64@" + $version) |
+  (.components[] | select(.type == "file") | .name) = "/tilewright-editor"
 ' "${sbom}" >"${normalized}"
 mv "${normalized}" "${sbom}"
 jq -e '(.components // []) | length >= 10' "${sbom}" >/dev/null
 python3 tools/package-provenance.py --root . --version "${version}" \
-  --output "${stage}/atrinik-editor-${version}/provenance.json"
+  --output "${stage}/tilewright-editor-${version}/provenance.json"
 
-archive="${output}/atrinik-editor-${version}-linux-amd64.tar.gz"
+archive="${output}/tilewright-editor-${version}-linux-amd64.tar.gz"
 tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='UTC 1970-01-01' \
-  -C "${stage}" -cf - "atrinik-editor-${version}" | gzip -n >"${archive}"
-git archive --format=tar --prefix="atrinik-editor-${version}/" HEAD \
-  | gzip -n >"${output}/atrinik-editor-${version}-source.tar.gz"
+  -C "${stage}" -cf - "tilewright-editor-${version}" | gzip -n >"${archive}"
+git archive --format=tar --prefix="tilewright-editor-${version}/" HEAD \
+  | gzip -n >"${output}/tilewright-editor-${version}-source.tar.gz"
 (cd "${output}" && sha256sum ./* >SHA256SUMS)
