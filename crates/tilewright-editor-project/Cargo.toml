@@ -1,14 +1,11 @@
 [package]
 publish = false
-name = "atrinik-editor-ui"
+name = "tilewright-editor-project"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-
-[dependencies]
-atrinik-editor-project.workspace = true
 
 [lints]
 workspace = true

@@ -1,10 +1,10 @@
-// Copyright 2026 The Atrinik Project
+// Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
 #![forbid(unsafe_code)]
 
-use atrinik_editor_project::RelativePath;
 use std::{collections::BTreeMap, fmt};
+use tilewright_editor_project::RelativePath;
 
 pub const MAX_PANEL_DIAGNOSTICS: usize = 256;
 
@@ -115,7 +115,7 @@ impl std::error::Error for Error {}
 #[cfg(test)]
 mod tests {
     use super::{Error, Selection, UiState};
-    use atrinik_editor_project::RelativePath;
+    use tilewright_editor_project::RelativePath;
 
     #[test]
     fn semantic_selection_never_depends_on_pixels() {

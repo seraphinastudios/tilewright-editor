@@ -1,23 +1,24 @@
-# Atrinik editor repository guide
+# Tilewright editor repository guide
 
 ## Ownership and dependencies
 
-- This repository owns the fresh MIT native Rust authoring application:
+- This repository owns the MIT native Rust world editor for isometric and
+  top-down tile games:
   projects/documents, command history, panels/tools, document-to-scene
   adaptation, diagnostics UI, autosave/recovery, preview, and packaging.
-- Consume released `atrinik/content-toolkit` crates for lossless syntax,
+- Consume released world toolkit crates for lossless syntax,
   schemas/catalogs, compilation, diagnostics, diffs, and atomic transactions.
   Never add a second parser, validator, serializer, or write path.
-- Consume released `atrinik/renderer` for scenes, GPU resources, viewport,
+- Consume the released Tilewright renderer for scenes, GPU resources, viewport,
   semantic masks, picking, typography, and offscreen previews. Never fork
   renderer code or create editor-only projection, painter, lighting, cache, or
   pixel-picking behavior.
-- Do not make editor builds or runtime depend on client sessions, GP1, Go
-  internals, classic implementation, archived predecessors, or Gridarta.
-  Preview is local rendering; playable tests belong to wrapper-owned isolated
-  topologies.
-- Local renderer/toolkit overrides use wrapper profiles; production manifests
-  retain immutable released dependencies.
+- Do not make editor builds or runtime depend on game clients, servers,
+  protocols, or game-specific code. Game specifics arrive as data through game
+  profiles. Preview is local rendering; playable tests belong to each game's own
+  tooling.
+- Local renderer/toolkit overrides stay outside committed manifests; production
+  manifests retain immutable released dependencies.
 
 ## Documents and filesystem safety
 
@@ -43,35 +44,26 @@
 
 ## Licensing, delivery, and validation
 
-- New code/tests/docs/editor fixtures are MIT. Do not link, bundle, or depend on
-  GPL/AGPL source as MIT. Historical Classic destination reuse follows the
-  [local provenance record](PROVENANCE.md) and
-  [canonical grant registry](https://github.com/atrinik/atrinik/blob/main/docs/PROVENANCE.md).
-  At an exact source revision, prove every copyrightable portion is separable,
-  within a recorded grant's past-contribution scope, and original work solely
-  authored by its grantor. Present-day blame, majority authorship, a later
-  edit, or an agent-assisted commit cannot fill a coverage gap. Admitted
-  material may be inspected as implementation reference, copied, adapted,
-  ported, translated, and MIT-relicensed in this destination. Record the exact
-  source, destination, transformation, and registry revision; uncovered
-  material fails closed. The Classic repository remains GPL-distributed, and
-  Gridarta remains excluded without separately sufficient evidence.
+- New code/tests/docs/editor fixtures are MIT. Do not link, bundle, depend on,
+  copy, or adapt GPL/AGPL source. Independent implementation is the default;
+  any reuse of outside material needs an MIT-compatible license and an exact
+  record (source, revision, destination, transformation, notice) in
+  [PROVENANCE.md](PROVENANCE.md) and `THIRD_PARTY_NOTICES.md`.
 - Authored material keeps exact licenses. Preview/test assets require a
   source/author/license/digest/transformation/notice manifest; preserve legal
   metadata and fail on ambiguous inputs.
 - Packages pin renderer/toolkit releases and carry checksums, SBOM, provenance,
-  notices, and exact allowlisted assets. They must not bundle Gridarta, a game
-  server/client, Python, classic libraries, source, or mutable state.
-- `atrinik/atrinik#168` is the program roadmap; local issues/milestones own
-  executable acceptance criteria. Do not duplicate M1-M6 prose here.
+  notices, and exact allowlisted assets. They must not bundle game content, a
+  game server/client, source, or mutable state.
+- Local issues and milestones own executable acceptance criteria.
 - Prefer deterministic headless transaction/path/recovery tests and add
   malformed/large projects, path attacks, external edits, disk/permission
   failure, GPU loss, and repeated open/edit/save/reopen cases as relevant.
   Visual tests use the shared renderer, exact masks, explicit clocks/resources,
   and documented color tolerance.
-- Released library updates use [the dependency update policy](docs/RELEASED_DEPENDENCIES.md).
-  Keep internal editor packages unpublished; application archives remain GitHub releases.
-  Validate dependency readiness before compiler/build work.
+- `policy/released-dependencies.json` lists the released renderer and toolkit
+  crates and their source repositories for package provenance. Keep internal
+  editor packages unpublished; application archives remain GitHub releases.
 - Run the aggregate contract now present:
 
   ```sh
@@ -82,11 +74,10 @@
   `Editor validation` owns formatting, strict Clippy, workspace tests/docs,
   dependency architecture/security/license gates, transaction faults,
   renderer/toolkit compatibility, and supported platform/package proofs.
-- Wrapper replacement build/runtime adapters are not available yet. Use
-  repository validation, not classic fallbacks. Commits/PR titles use
-  Conventional Commits; semantic-release owns releases/tags.
+- Use repository validation. Commits/PR titles use Conventional Commits;
+  semantic-release owns releases/tags.
 - Dependency review is advisory, including operational errors. Before merge, the
-  implementing Codex must inspect the latest run for the current PR head and
+  implementing agent must inspect the latest run for the current PR head and
   read its job summary even when a bot comment exists, fix actionable introduced
   risk, or record explicit maintainer acceptance of existing risk. A comment
   from an earlier run is not current evidence; unavailable reports leave results

@@ -1,6 +1,6 @@
 [package]
 publish = false
-name = "atrinik-editor-commands"
+name = "tilewright-editor-commands"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

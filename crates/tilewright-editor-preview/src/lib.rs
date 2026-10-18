@@ -1,4 +1,4 @@
-// Copyright 2026 The Atrinik Project
+// Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
 #![forbid(unsafe_code)]

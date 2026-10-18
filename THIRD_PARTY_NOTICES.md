@@ -4,8 +4,9 @@ The editor source is MIT. Its exact dependency graph is recorded by
 `Cargo.lock`, checked by `cargo-deny`, and included in each CycloneDX release
 SBOM.
 
-- Atrinik content-toolkit v1.0.0 crates: MIT.
-- Atrinik renderer v1.0.0 crates: MIT.
+- `atrinik-source` and `atrinik-transaction` 0.1.0 (content-toolkit): MIT.
+- `atrinik-scene` and `atrinik-render-*` 0.1.0 (Tilewright renderer, published
+  under its earlier crate names): MIT.
 - `sdl3` Rust bindings: MIT.
 - SDL native library: Zlib License.
 

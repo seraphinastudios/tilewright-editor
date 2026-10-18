@@ -20,61 +20,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cae5d9483519fc25656c9f1012074c5e87a922ea407972e75c6c89bc9e5352a6"
 
 [[package]]
-name = "atrinik-editor"
-version = "0.1.0"
-dependencies = [
- "atrinik-editor-commands",
- "atrinik-editor-document",
- "atrinik-editor-preview",
- "atrinik-editor-project",
- "atrinik-editor-ui",
- "sdl3",
-]
-
-[[package]]
-name = "atrinik-editor-commands"
-version = "0.1.0"
-dependencies = [
- "atrinik-source",
- "atrinik-transaction",
-]
-
-[[package]]
-name = "atrinik-editor-document"
-version = "0.1.0"
-dependencies = [
- "atrinik-source",
-]
-
-[[package]]
-name = "atrinik-editor-preview"
-version = "0.1.0"
-dependencies = [
- "atrinik-render-api",
- "atrinik-render-resources",
- "atrinik-render-testkit",
- "atrinik-scene",
-]
-
-[[package]]
-name = "atrinik-editor-project"
-version = "0.1.0"
-
-[[package]]
-name = "atrinik-editor-testkit"
-version = "0.1.0"
-dependencies = [
- "atrinik-editor-project",
-]
-
-[[package]]
-name = "atrinik-editor-ui"
-version = "0.1.0"
-dependencies = [
- "atrinik-editor-project",
-]
-
-[[package]]
 name = "atrinik-render-api"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -478,6 +423,61 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tilewright-editor"
+version = "0.1.0"
+dependencies = [
+ "sdl3",
+ "tilewright-editor-commands",
+ "tilewright-editor-document",
+ "tilewright-editor-preview",
+ "tilewright-editor-project",
+ "tilewright-editor-ui",
+]
+
+[[package]]
+name = "tilewright-editor-commands"
+version = "0.1.0"
+dependencies = [
+ "atrinik-source",
+ "atrinik-transaction",
+]
+
+[[package]]
+name = "tilewright-editor-document"
+version = "0.1.0"
+dependencies = [
+ "atrinik-source",
+]
+
+[[package]]
+name = "tilewright-editor-preview"
+version = "0.1.0"
+dependencies = [
+ "atrinik-render-api",
+ "atrinik-render-resources",
+ "atrinik-render-testkit",
+ "atrinik-scene",
+]
+
+[[package]]
+name = "tilewright-editor-project"
+version = "0.1.0"
+
+[[package]]
+name = "tilewright-editor-testkit"
+version = "0.1.0"
+dependencies = [
+ "tilewright-editor-project",
+]
+
+[[package]]
+name = "tilewright-editor-ui"
+version = "0.1.0"
+dependencies = [
+ "tilewright-editor-project",
 ]
 
 [[package]]
