@@ -13,7 +13,16 @@ updates:
     cooldown:
       default-days: 3
       semver-major-days: 7
+      # First-party renderer crates release together; take them without delay.
+      exclude:
+        - "atrinik-*"
     groups:
+      # The atrinik-* crates come from one tilewright-renderer release and are
+      # pinned with "=", so every update, including 0.x "majors", moves together.
+      # Keep this group first so they never split into per-crate PRs.
+      tilewright-renderer:
+        patterns:
+          - "atrinik-*"
       cargo-minor-patch:
         update-types:
           - minor
