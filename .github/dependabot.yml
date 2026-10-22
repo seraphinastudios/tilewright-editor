@@ -1,12 +1,45 @@
 version: 2
+# Minor and patch updates are grouped into one pull request per ecosystem;
+# major updates still open one pull request each. Cooldown waits for new
+# releases to settle before proposing them (security updates are not delayed).
+# Cargo groups cannot split by dependency type (Dependabot supports
+# dependency-type only for bundler, composer, mix, maven, npm and pip).
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+      # First-party renderer crates release together; take them without delay.
+      exclude:
+        - "atrinik-*"
+    groups:
+      # The atrinik-* crates come from one tilewright-renderer release and are
+      # pinned with "=", so every update, including 0.x "majors", moves together.
+      # Keep this group first so they never split into per-crate PRs.
+      tilewright-renderer:
+        patterns:
+          - "atrinik-*"
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+    groups:
+      github-actions-minor-patch:
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
