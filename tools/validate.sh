@@ -13,7 +13,7 @@ cargo test --locked --workspace --doc
 cargo deny --locked check
 tools/check-foundations.sh
 cargo run --locked --quiet --package tilewright-editor -- version
-cargo run --locked --quiet --package tilewright-editor -- headless
+cargo run --locked --quiet --package tilewright-editor -- open crates/tilewright-editor-testkit/fixtures/meadow
 SDL_VIDEO_DRIVER=dummy cargo run --locked --quiet --package tilewright-editor -- window
 first=$(mktemp -d /tmp/tilewright-editor-release-first.XXXXXX); rmdir "${first}"
 second=$(mktemp -d /tmp/tilewright-editor-release-second.XXXXXX); rmdir "${second}"

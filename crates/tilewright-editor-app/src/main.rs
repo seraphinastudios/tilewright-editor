@@ -14,33 +14,26 @@ fn main() {
             tilewright_editor_document::TOOLKIT_COMPATIBILITY,
             tilewright_editor_preview::RENDERER_COMPATIBILITY
         ),
-        "headless" => {
-            let mut state = tilewright_editor_project::ProjectState::default();
-            let path = tilewright_editor_project::RelativePath::new("maps/empty.map")
-                .expect("constant path is valid");
-            state
-                .open(path.clone())
-                .expect("empty project state is available");
-            let document = tilewright_editor_document::DocumentView::open(
-                "headless:empty",
-                std::sync::Arc::from(&b"name empty\n"[..]),
-            )
-            .expect("synthetic document is valid");
-            let history = tilewright_editor_commands::History::default();
-            let mut ui = tilewright_editor_ui::UiState::default();
-            ui.select(tilewright_editor_ui::Selection {
-                document: path,
-                semantic_id: 1,
-            })
-            .expect("synthetic selection is valid");
-            let _scene = tilewright_editor_preview::empty_scene(1, 1, 1)
-                .expect("synthetic viewport is valid");
-            println!(
-                "headless generation={} diagnostics={} history={:?}",
-                state.generation(),
-                document.diagnostics_len(),
-                history.depths()
-            );
+        "open" => {
+            let Some(root) = std::env::args_os().nth(2) else {
+                usage();
+            };
+            match tilewright_editor_document::WorldDocument::open(std::path::Path::new(&root)) {
+                Ok(document) => print!(
+                    "revision {}\n{}",
+                    tilewright_editor_document::revision_hex(&document.revision()),
+                    document.summary()
+                ),
+                Err(tilewright_editor_document::Error::Invalid(diagnostics)) => {
+                    for diagnostic in &diagnostics {
+                        eprintln!("{diagnostic}");
+                    }
+                    fail(&format!(
+                        "the world does not load: {} problem(s)",
+                        diagnostics.len()
+                    ));
+                }
+            }
         }
         "window" => {
             let sdl = sdl3::init().unwrap_or_else(|error| fail(&error));
@@ -58,11 +51,13 @@ fn main() {
             drop(window);
             println!("window=created-and-destroyed pixels={width}x{height}");
         }
-        _ => {
-            eprintln!("usage: tilewright-editor [version|headless|window]");
-            std::process::exit(2);
-        }
+        _ => usage(),
     }
+}
+
+fn usage() -> ! {
+    eprintln!("usage: tilewright-editor [version | open ROOT | window]");
+    std::process::exit(2);
 }
 
 fn fail(error: &(impl std::fmt::Display + ?Sized)) -> ! {

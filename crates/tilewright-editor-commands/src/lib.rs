@@ -3,91 +3,93 @@
 
 #![forbid(unsafe_code)]
 
-use atrinik_source::{Document, Revision};
-use atrinik_transaction::Transaction;
-use std::{fmt, sync::Arc};
+//! Editor commands are world toolkit transactions (`tilewright.transaction/1`).
+//! [`preview`] carries one out against an open world in memory: the toolkit
+//! edits the files losslessly, validates the result and returns the sealed
+//! transaction and its exact inverse. Nothing is written. Publishing, and
+//! the history built on previews, come with the commands that need them.
 
-pub const MAX_HISTORY: usize = 1_024;
+use std::fmt;
+use tilewright_edit::{FileChange, Options, Plan, Transaction};
+use tilewright_editor_document::WorldDocument;
+use tilewright_source::{Diagnostic, World};
 
-#[derive(Clone, Debug)]
-struct Entry {
-    before: Arc<Document>,
-    after: Arc<Document>,
+/// A transaction carried out in memory against the tree of an open world.
+#[derive(Debug)]
+pub struct Preview {
+    plan: Plan,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct History {
-    undo: Vec<Entry>,
-    redo: Vec<Entry>,
-}
-
-impl History {
-    pub fn replace_value(
-        &mut self,
-        current: Arc<Document>,
-        expected: Revision,
-        record: usize,
-        replacement: &[u8],
-    ) -> Result<Arc<Document>, Error> {
-        if current.revision() != expected {
-            return Err(Error::StaleRevision);
-        }
-        if self.undo.len() >= MAX_HISTORY {
-            return Err(Error::HistoryFull);
-        }
-        let mut transaction = Transaction::new(current.clone());
-        transaction
-            .replace_value(record, replacement)
-            .map_err(Error::Toolkit)?;
-        let after = Arc::new(transaction.preview().map_err(Error::Toolkit)?);
-        self.undo.push(Entry {
-            before: current,
-            after: after.clone(),
-        });
-        self.redo.clear();
-        Ok(after)
-    }
-
-    pub fn undo(&mut self, current: &Arc<Document>) -> Result<Arc<Document>, Error> {
-        let entry = self.undo.pop().ok_or(Error::NothingToUndo)?;
-        if entry.after.revision() != current.revision() {
-            self.undo.push(entry);
-            return Err(Error::StaleRevision);
-        }
-        let before = entry.before.clone();
-        self.redo.push(entry);
-        Ok(before)
-    }
-
-    pub fn redo(&mut self, current: &Arc<Document>) -> Result<Arc<Document>, Error> {
-        let entry = self.redo.pop().ok_or(Error::NothingToRedo)?;
-        if entry.before.revision() != current.revision() {
-            self.redo.push(entry);
-            return Err(Error::StaleRevision);
-        }
-        let after = entry.after.clone();
-        self.undo.push(entry);
-        Ok(after)
-    }
-
+impl Preview {
+    /// Every file the transaction touched or consulted, by path.
     #[must_use]
-    pub fn depths(&self) -> (usize, usize) {
-        (self.undo.len(), self.redo.len())
+    pub fn files(&self) -> &[FileChange] {
+        self.plan.files()
     }
+
+    /// The files the transaction changes, by path.
+    pub fn changed(&self) -> impl Iterator<Item = &FileChange> + '_ {
+        self.plan.files().iter().filter(|file| file.is_changed())
+    }
+
+    /// The validated world after the transaction.
+    #[must_use]
+    pub fn world(&self) -> &World {
+        self.plan.world()
+    }
+
+    /// The transaction with the digests of every file it touched or
+    /// consulted, before and after.
+    #[must_use]
+    pub fn sealed(&self) -> &str {
+        self.plan.sealed()
+    }
+
+    /// The transaction that, carried out after this one, restores every file
+    /// byte for byte.
+    #[must_use]
+    pub fn inverse(&self) -> &str {
+        self.plan.inverse()
+    }
+}
+
+/// Carries out the transaction `text`, named `name` in diagnostics, on the
+/// tree of `document` as it is now, without writing anything. Its
+/// preconditions are its own: cell and value expectations, tests, and the
+/// file digests of its `base`.
+///
+/// # Errors
+/// Returns the transaction's problems, each at its operation, or the
+/// diagnostics of the edited world.
+pub fn preview(document: &WorldDocument, name: &str, text: &str) -> Result<Preview, Error> {
+    let transaction = Transaction::parse(name, text).map_err(Error::Rejected)?;
+    let plan = tilewright_edit::plan(document.root(), &transaction, &Options::default())
+        .map_err(Error::Rejected)?;
+    Ok(Preview { plan })
 }
 
 #[derive(Debug)]
 pub enum Error {
-    StaleRevision,
-    HistoryFull,
-    NothingToUndo,
-    NothingToRedo,
-    Toolkit(atrinik_source::Error),
+    /// The transaction is malformed, a precondition failed, or the edited
+    /// world does not validate: the toolkit's diagnostics.
+    Rejected(Vec<Diagnostic>),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "editor command error: {self:?}")
+        match self {
+            Self::Rejected(diagnostics) => {
+                write!(
+                    formatter,
+                    "the transaction was rejected: {} problem(s)",
+                    diagnostics.len()
+                )?;
+                if let Some(first) = diagnostics.first() {
+                    write!(formatter, "; first: {first}")?;
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -95,46 +97,70 @@ impl std::error::Error for Error {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, History};
-    use atrinik_source::{Document, Limits, SourceId};
-    use std::sync::Arc;
+    use super::{Error, preview};
+    use tilewright_editor_document::WorldDocument;
+    use tilewright_editor_testkit::fixture_world;
 
-    fn document() -> Arc<Document> {
-        Arc::new(
-            Document::parse(
-                SourceId::new("test:history").unwrap(),
-                Arc::<[u8]>::from(&b"name old\n"[..]),
-                Limits::default(),
-            )
-            .unwrap(),
-        )
+    const PAINT: &str = r#"{
+  "format": "tilewright.transaction/1",
+  "title": "Paint sand into the pond and a new chunk",
+  "actor": "test:commands",
+  "operations": [
+    {"op": "terrain.set", "plane": "meadow", "layer": 0, "grid": "ground",
+     "cells": [{"at": [10, 10], "value": "sand", "expect": "water"},
+               {"at": [32, 0], "value": "sand", "expect": null}]}
+  ]
+}
+"#;
+
+    #[test]
+    fn previews_a_transaction_without_writing() {
+        let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+        let preview = preview(&document, "paint.jsonc", PAINT).unwrap();
+        let changed: Vec<(&str, bool)> = preview
+            .changed()
+            .map(|file| (file.path.as_str(), file.before.is_none()))
+            .collect();
+        assert_eq!(
+            changed,
+            [
+                ("planes/meadow/layers/0/0_0.jsonc", false),
+                ("planes/meadow/layers/0/1_0.jsonc", true),
+            ]
+        );
+        let plane = &preview.world().planes()["meadow"];
+        let pond = &plane.chunks[&(0, 0, 0)].ground[0];
+        assert_eq!(pond.value(10 * 32 + 10), Some("sand"));
+        assert!(plane.chunks.contains_key(&(0, 1, 0)));
+        assert!(preview.sealed().contains("\"base\""));
+        assert!(preview.inverse().contains("document.delete"));
+        // Previewing wrote nothing: the tree still has its revision.
+        let reopened = WorldDocument::open(document.root()).unwrap();
+        assert_eq!(reopened.revision(), document.revision());
     }
 
     #[test]
-    fn commands_are_preconditioned_and_reversible() {
-        let original = document();
-        let mut history = History::default();
-        assert!(matches!(
-            history.replace_value(
-                original.clone(),
-                atrinik_source::Document::parse(
-                    SourceId::new("test:other").unwrap(),
-                    Arc::<[u8]>::from(&b"name other\n"[..]),
-                    Limits::default()
-                )
-                .unwrap()
-                .revision(),
-                0,
-                b"new"
-            ),
-            Err(Error::StaleRevision)
-        ));
-        let changed = history
-            .replace_value(original.clone(), original.revision(), 0, b"new")
-            .unwrap();
-        assert_eq!(changed.source_bytes(), b"name new\n");
-        let undone = history.undo(&changed).unwrap();
-        assert_eq!(undone.source_bytes(), b"name old\n");
-        assert_eq!(history.redo(&undone).unwrap().source_bytes(), b"name new\n");
+    fn a_failed_expectation_is_a_conflict() {
+        let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+        let stale = PAINT.replace(r#""expect": "water""#, r#""expect": "grass""#);
+        let Err(Error::Rejected(diagnostics)) = preview(&document, "paint.jsonc", &stale) else {
+            panic!("a stale expectation was accepted");
+        };
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "tx.conflict"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_transaction_is_rejected() {
+        let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+        let Err(Error::Rejected(diagnostics)) = preview(&document, "bad.jsonc", "{\"format\": 1}")
+        else {
+            panic!("a malformed transaction was accepted");
+        };
+        assert!(!diagnostics.is_empty());
     }
 }

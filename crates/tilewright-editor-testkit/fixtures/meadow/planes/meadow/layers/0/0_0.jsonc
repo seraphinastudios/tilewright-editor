@@ -1,0 +1,47 @@
+// g grass, t tall grass, w water, s sand. Chunk 1_0, east of the sand, is
+// not painted yet.
+{
+  "format": "tilewright.chunk/1",
+  "plane": "meadow",
+  "layer": 0,
+  "chunk": [0, 0],
+  "terrain": {
+    "ground": {
+      "palette": {"g": "grass", "t": "grass_tall", "w": "water", "s": "sand"},
+      "rows": [
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggwwwwwwwgggggggggggssssss",
+        "ggggggggwwwwwwwgggggggggggssssss",
+        "ggggggggwwwwwwwgggggggggggssssss",
+        "ggggggggwwwwwwwgggggggggggssssss",
+        "ggggggggwwwwwwwgggggggggggssssss",
+        "ggggggggwwwwwwwgggggggggggssssss",
+        "ggggggggwwwwwwwgggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggtgggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss",
+        "ggggggggggggggggggggggggggssssss"
+      ]
+    }
+  }
+}
