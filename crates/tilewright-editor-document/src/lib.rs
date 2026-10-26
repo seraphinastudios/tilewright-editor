@@ -17,8 +17,8 @@ use tilewright_source::{Diagnostic, LoadOptions, Projection, World};
 /// The world format and toolkit release the editor builds against.
 pub const TOOLKIT_COMPATIBILITY: &str = "tilewright.world/1 tilewright-source/0.1.0";
 
-/// Most diagnostics opening a world keeps. Past it, the toolkit reports one
-/// `source.budget` diagnostic for the rest.
+/// Most diagnostics opening a world reports. Past one fewer, the toolkit
+/// keeps the last place for a `source.budget` diagnostic about the rest.
 pub const MAXIMUM_DIAGNOSTICS: usize = 256;
 
 /// A world source tree, opened and validated.
@@ -36,8 +36,9 @@ impl WorldDocument {
     /// Returns the toolkit's diagnostics, at most [`MAXIMUM_DIAGNOSTICS`],
     /// when the tree does not load.
     pub fn open(root: &Path) -> Result<Self, Error> {
+        // The toolkit keeps this many and adds its budget note after them.
         let options = LoadOptions {
-            maximum_diagnostics: MAXIMUM_DIAGNOSTICS,
+            maximum_diagnostics: MAXIMUM_DIAGNOSTICS - 1,
             ..LoadOptions::default()
         };
         let world = tilewright_source::load_with(root, &options).map_err(Error::Invalid)?;
@@ -171,6 +172,23 @@ impl fmt::Display for Summary {
     }
 }
 
+/// `text` safe to print to a terminal. A world's strings, and diagnostics
+/// that quote them, can hold control characters that would move the
+/// cursor, retitle the window or write the clipboard; each control
+/// character other than a line break comes out as its escape instead.
+#[must_use]
+pub fn terminal_safe(text: &str) -> String {
+    text.chars()
+        .fold(String::with_capacity(text.len()), |mut safe, character| {
+            if character.is_control() && character != '\n' {
+                safe.extend(character.escape_unicode());
+            } else {
+                safe.push(character);
+            }
+            safe
+        })
+}
+
 /// Lowercase hexadecimal of a revision.
 #[must_use]
 pub fn revision_hex(revision: &[u8; 32]) -> String {
@@ -212,7 +230,7 @@ impl std::error::Error for Error {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, PlaneSummary, WorldDocument, revision_hex};
+    use super::{Error, PlaneSummary, Summary, WorldDocument, revision_hex, terminal_safe};
     use tilewright_editor_testkit::fixture_world;
     use tilewright_source::Projection;
 
@@ -261,6 +279,32 @@ mod tests {
         );
         let message = Error::Invalid(diagnostics).to_string();
         assert!(message.starts_with("the world does not load"), "{message}");
+    }
+
+    #[test]
+    fn control_characters_from_a_world_print_escaped() {
+        // A profile version may hold any text the toolkit accepts.
+        let summary = Summary {
+            profile: "example".to_owned(),
+            profile_version: "1.0.0\u{1b}]0;title\u{7}\u{1b}[2J".to_owned(),
+            projection: Projection::TopDown { tile_size: 32 },
+            ground_layers: vec!["floor".to_owned()],
+            terrain_layer: None,
+            terrains: Vec::new(),
+            planes: Vec::new(),
+        };
+        let shown = terminal_safe(&summary.to_string());
+        assert!(
+            !shown
+                .chars()
+                .any(|character| character.is_control() && character != '\n')
+        );
+        assert!(
+            shown.contains("1.0.0\\u{1b}]0;title\\u{7}\\u{1b}[2J"),
+            "{shown}"
+        );
+        assert_eq!(shown.lines().count(), 3);
+        assert_eq!(terminal_safe("a\tb\r\n"), "a\\u{9}b\\u{d}\n");
     }
 
     #[test]

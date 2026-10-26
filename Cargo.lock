@@ -295,7 +295,7 @@ dependencies = [
 [[package]]
 name = "tilewright-edit"
 version = "0.1.0"
-source = "git+https://github.com/seraphinastudios/tilewright-world?rev=d756731e1eb87660a6fdf22101da3e61033402dc#d756731e1eb87660a6fdf22101da3e61033402dc"
+source = "git+https://github.com/seraphinastudios/tilewright-world?rev=16cbd75889f1ca8f4ae7031d68821e7e653ccdf0#16cbd75889f1ca8f4ae7031d68821e7e653ccdf0"
 dependencies = [
  "sha2",
  "tempfile",
@@ -361,7 +361,7 @@ dependencies = [
 [[package]]
 name = "tilewright-jsonc"
 version = "0.1.0"
-source = "git+https://github.com/seraphinastudios/tilewright-world?rev=d756731e1eb87660a6fdf22101da3e61033402dc#d756731e1eb87660a6fdf22101da3e61033402dc"
+source = "git+https://github.com/seraphinastudios/tilewright-world?rev=16cbd75889f1ca8f4ae7031d68821e7e653ccdf0#16cbd75889f1ca8f4ae7031d68821e7e653ccdf0"
 
 [[package]]
 name = "tilewright-render-api"
@@ -409,7 +409,7 @@ source = "git+https://github.com/seraphinastudios/tilewright-renderer?rev=8f02a3
 [[package]]
 name = "tilewright-source"
 version = "0.1.0"
-source = "git+https://github.com/seraphinastudios/tilewright-world?rev=d756731e1eb87660a6fdf22101da3e61033402dc#d756731e1eb87660a6fdf22101da3e61033402dc"
+source = "git+https://github.com/seraphinastudios/tilewright-world?rev=16cbd75889f1ca8f4ae7031d68821e7e653ccdf0#16cbd75889f1ca8f4ae7031d68821e7e653ccdf0"
 dependencies = [
  "rustix",
  "sha2",

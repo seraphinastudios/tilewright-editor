@@ -20,13 +20,19 @@ fn main() {
             };
             match tilewright_editor_document::WorldDocument::open(std::path::Path::new(&root)) {
                 Ok(document) => print!(
-                    "revision {}\n{}",
-                    tilewright_editor_document::revision_hex(&document.revision()),
-                    document.summary()
+                    "{}",
+                    tilewright_editor_document::terminal_safe(&format!(
+                        "revision {}\n{}",
+                        tilewright_editor_document::revision_hex(&document.revision()),
+                        document.summary()
+                    ))
                 ),
                 Err(tilewright_editor_document::Error::Invalid(diagnostics)) => {
                     for diagnostic in &diagnostics {
-                        eprintln!("{diagnostic}");
+                        eprintln!(
+                            "{}",
+                            tilewright_editor_document::terminal_safe(&diagnostic.to_string())
+                        );
                     }
                     fail(&format!(
                         "the world does not load: {} problem(s)",
@@ -61,6 +67,9 @@ fn usage() -> ! {
 }
 
 fn fail(error: &(impl std::fmt::Display + ?Sized)) -> ! {
-    eprintln!("tilewright-editor: {error}");
+    eprintln!(
+        "tilewright-editor: {}",
+        tilewright_editor_document::terminal_safe(&error.to_string())
+    );
     std::process::exit(1);
 }
