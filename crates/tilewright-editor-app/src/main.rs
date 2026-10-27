@@ -31,7 +31,7 @@ fn main() {
                     for diagnostic in &diagnostics {
                         eprintln!(
                             "{}",
-                            tilewright_editor_document::terminal_safe(&diagnostic.to_string())
+                            tilewright_editor_document::terminal_field(&diagnostic.to_string())
                         );
                     }
                     fail(&format!(
@@ -69,7 +69,7 @@ fn usage() -> ! {
 fn fail(error: &(impl std::fmt::Display + ?Sized)) -> ! {
     eprintln!(
         "tilewright-editor: {}",
-        tilewright_editor_document::terminal_safe(&error.to_string())
+        tilewright_editor_document::terminal_field(&error.to_string())
     );
     std::process::exit(1);
 }

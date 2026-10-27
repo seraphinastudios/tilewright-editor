@@ -21,6 +21,15 @@ pub const TOOLKIT_COMPATIBILITY: &str = "tilewright.world/1 tilewright-source/0.
 /// keeps the last place for a `source.budget` diagnostic about the rest.
 pub const MAXIMUM_DIAGNOSTICS: usize = 256;
 
+/// How the editor loads worlds: the toolkit keeps one diagnostic fewer than
+/// [`MAXIMUM_DIAGNOSTICS`] and adds its budget note after them.
+fn load_options() -> LoadOptions {
+    LoadOptions {
+        maximum_diagnostics: MAXIMUM_DIAGNOSTICS - 1,
+        ..LoadOptions::default()
+    }
+}
+
 /// A world source tree, opened and validated.
 #[derive(Clone, Debug)]
 pub struct WorldDocument {
@@ -36,12 +45,7 @@ impl WorldDocument {
     /// Returns the toolkit's diagnostics, at most [`MAXIMUM_DIAGNOSTICS`],
     /// when the tree does not load.
     pub fn open(root: &Path) -> Result<Self, Error> {
-        // The toolkit keeps this many and adds its budget note after them.
-        let options = LoadOptions {
-            maximum_diagnostics: MAXIMUM_DIAGNOSTICS - 1,
-            ..LoadOptions::default()
-        };
-        let world = tilewright_source::load_with(root, &options).map_err(Error::Invalid)?;
+        let world = tilewright_source::load_with(root, &load_options()).map_err(Error::Invalid)?;
         Ok(Self {
             root: root.to_path_buf(),
             world: Arc::new(world),
@@ -140,21 +144,28 @@ impl fmt::Display for Summary {
             } => format!("isometric {tile_width}x{tile_height}"),
             Projection::TopDown { tile_size } => format!("top-down {tile_size}"),
         };
+        // Each value from the world is one field: its line breaks and
+        // formatting characters cannot make lines of their own.
+        let list = |values: &[String]| {
+            values
+                .iter()
+                .map(|value| terminal_field(value))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         writeln!(
             formatter,
             "profile {} {} ({projection})",
-            self.profile, self.profile_version
+            terminal_field(&self.profile),
+            terminal_field(&self.profile_version)
         )?;
-        writeln!(
-            formatter,
-            "ground layers: {}",
-            self.ground_layers.join(", ")
-        )?;
+        writeln!(formatter, "ground layers: {}", list(&self.ground_layers))?;
         match &self.terrain_layer {
             Some(layer) => writeln!(
                 formatter,
-                "terrains in {layer}: {}",
-                self.terrains.join(", ")
+                "terrains in {}: {}",
+                terminal_field(layer),
+                list(&self.terrains)
             )?,
             None => writeln!(formatter, "terrains: none")?,
         }
@@ -163,7 +174,7 @@ impl fmt::Display for Summary {
             writeln!(
                 formatter,
                 "plane {}: {} chunks on layers [{}]",
-                plane.id,
+                terminal_field(&plane.id),
                 plane.chunks,
                 layers.join(", ")
             )?;
@@ -172,21 +183,46 @@ impl fmt::Display for Summary {
     }
 }
 
-/// `text` safe to print to a terminal. A world's strings, and diagnostics
-/// that quote them, can hold control characters that would move the
-/// cursor, retitle the window or write the clipboard; each control
-/// character other than a line break comes out as its escape instead.
-#[must_use]
-pub fn terminal_safe(text: &str) -> String {
+/// Whether a character changes how a terminal shows text rather than
+/// showing itself: a control character, such as those that move the cursor,
+/// retitle the window or write the clipboard; a line or paragraph
+/// separator; or a bidirectional formatting character, which can reorder
+/// what is shown.
+fn unprintable(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}'
+                | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+fn escaped(text: &str, keep: fn(char) -> bool) -> String {
     text.chars()
         .fold(String::with_capacity(text.len()), |mut safe, character| {
-            if character.is_control() && character != '\n' {
+            if unprintable(character) && !keep(character) {
                 safe.extend(character.escape_unicode());
             } else {
                 safe.push(character);
             }
             safe
         })
+}
+
+/// One value from a world, such as an ID, a version or a diagnostic, made
+/// safe to print as part of a line: every character that would change how
+/// the terminal shows text, line breaks included, comes out as its escape.
+#[must_use]
+pub fn terminal_field(text: &str) -> String {
+    escaped(text, |_| false)
+}
+
+/// Text of several lines made safe to print, as a backstop behind
+/// [`terminal_field`]: everything [`terminal_field`] escapes except line
+/// breaks.
+#[must_use]
+pub fn terminal_safe(text: &str) -> String {
+    escaped(text, |character| character == '\n')
 }
 
 /// Lowercase hexadecimal of a revision.
@@ -230,7 +266,10 @@ impl std::error::Error for Error {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, PlaneSummary, Summary, WorldDocument, revision_hex, terminal_safe};
+    use super::{
+        Error, MAXIMUM_DIAGNOSTICS, PlaneSummary, Summary, WorldDocument, load_options,
+        revision_hex, terminal_field, terminal_safe,
+    };
     use tilewright_editor_testkit::fixture_world;
     use tilewright_source::Projection;
 
@@ -279,6 +318,53 @@ mod tests {
         );
         let message = Error::Invalid(diagnostics).to_string();
         assert!(message.starts_with("the world does not load"), "{message}");
+    }
+
+    #[test]
+    fn world_text_cannot_forge_lines_or_reorder_them() {
+        let summary = Summary {
+            profile: "example".to_owned(),
+            profile_version: "1.0.0\nterrains: forged\nplane evil \u{202e}gnp.exe".to_owned(),
+            projection: Projection::TopDown { tile_size: 32 },
+            ground_layers: vec!["floor".to_owned()],
+            terrain_layer: None,
+            terrains: Vec::new(),
+            planes: Vec::new(),
+        };
+        let shown = terminal_safe(&summary.to_string());
+        assert_eq!(shown.lines().count(), 3, "{shown}");
+        assert!(shown.starts_with(
+            "profile example 1.0.0\\u{a}terrains: forged\\u{a}plane evil \\u{202e}gnp.exe"
+        ));
+        assert_eq!(
+            terminal_field("a\nb\u{2066}c\u{2029}"),
+            "a\\u{a}b\\u{2066}c\\u{2029}"
+        );
+        assert_eq!(terminal_safe("a\nb\u{200f}"), "a\nb\\u{200f}");
+    }
+
+    #[test]
+    fn a_world_with_many_problems_reports_at_most_the_maximum() {
+        // Three hundred broken definitions over the fixture, in memory.
+        let overlay: tilewright_source::Overlay = (0..300)
+            .map(|index| {
+                (
+                    format!("defs/proto/broken{index}.jsonc"),
+                    Some("{".to_owned()),
+                )
+            })
+            .collect();
+        let Err(diagnostics) =
+            tilewright_source::load_edited(&fixture_world("meadow"), &load_options(), &overlay)
+        else {
+            panic!("a broken world loaded");
+        };
+        assert_eq!(diagnostics.len(), MAXIMUM_DIAGNOSTICS);
+        let notes = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "source.budget")
+            .count();
+        assert_eq!(notes, 1);
     }
 
     #[test]
