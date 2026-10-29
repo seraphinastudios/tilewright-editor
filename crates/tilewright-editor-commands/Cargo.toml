@@ -13,6 +13,7 @@ tilewright-editor-document.workspace = true
 tilewright-source.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 tilewright-editor-testkit.workspace = true
 
 [lints]

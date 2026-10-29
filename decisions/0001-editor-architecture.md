@@ -27,3 +27,38 @@ M1 uses the shared renderer's versioned scene/API/resource crates and its
 deterministic reference test renderer to prove an empty viewport. GPU and SDL
 handles stay below released renderer/application boundaries. The application
 owns only SDL lifecycle; headless model tests do not initialize SDL.
+
+## World transaction migration
+
+The command model keeps a `WorldDocument` plus bounded undo/redo records.
+`History::prepare` requires the author's observed world revision, plans the
+semantic transaction without writes, verifies the plan's before-image against
+that revision, and calls World's `Plan::check_undo`. Callers inspect the pending
+plan's file before/after images, sealed transaction and inverse before committing.
+A failed preparation discards any older pending preview; cancel changes no files.
+
+`History::commit` first asks the application's `RecoveryStore` to durably retain
+that exact inverse outside authored source. The integration must use toolkit
+storage, refuse an existing record, and keep records after failure. This is a
+required integration interface, not an implemented desktop recovery store.
+Only then does World publish the reviewed plan with the caller's explicit access
+policy. The editor never automatically opts into unchecked access. World offers
+atomic replacement per file and rollback on ordinary failure, not a crash-atomic
+multi-file filesystem transaction. The durable inverse is necessary for recovery.
+
+Any publication error, including an applied but non-durable or incompletely
+cleaned result, keeps history unadvanced and blocks further operations in that
+session. Callers must present World's `applied`, `durable`, and `cleaned` outcome,
+inspect the recovery record and source, and reopen after recovery. A recovery
+storage failure occurs before publication and permits retry. No-op commits do
+not write a record or consume history. Undo/redo are prepared inverse transactions
+with identical validation, recovery and publication requirements. A successful
+new edit discards the redo branch; failed edits do not. History is bounded by
+both entry count and retained UTF-8 record bytes.
+
+The pre-migration application exposed version, synthetic headless state, and
+window lifecycle smoke commands. Editing and undo/redo existed as headless
+library APIs, not a GUI or edit/save CLI. The World migration preserves those
+library capabilities and provides `headless ROOT` for the World-backed smoke
+path. A transactional desktop UI, persistence backend and automation interface
+remain separate work; the migration does not claim those features exist.

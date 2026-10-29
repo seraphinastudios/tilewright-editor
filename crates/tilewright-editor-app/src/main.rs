@@ -14,19 +14,31 @@ fn main() {
             tilewright_editor_document::TOOLKIT_COMPATIBILITY,
             tilewright_editor_preview::RENDERER_COMPATIBILITY
         ),
-        "open" => {
+        "open" | "headless" => {
             let Some(root) = std::env::args_os().nth(2) else {
                 usage();
             };
             match tilewright_editor_document::WorldDocument::open(std::path::Path::new(&root)) {
-                Ok(document) => print!(
-                    "{}",
-                    tilewright_editor_document::terminal_safe(&format!(
-                        "revision {}\n{}",
-                        tilewright_editor_document::revision_hex(&document.revision()),
-                        document.summary()
-                    ))
-                ),
+                Ok(document) => {
+                    if command == "headless" {
+                        let history = tilewright_editor_commands::History::new(document.clone());
+                        let _scene = tilewright_editor_preview::empty_scene(1, 1, 1)
+                            .expect("synthetic viewport is valid");
+                        println!(
+                            "headless history={:?} needs_reload={}",
+                            history.depths(),
+                            history.needs_reload()
+                        );
+                    }
+                    print!(
+                        "{}",
+                        tilewright_editor_document::terminal_safe(&format!(
+                            "revision {}\n{}",
+                            tilewright_editor_document::revision_hex(&document.revision()),
+                            document.summary()
+                        ))
+                    );
+                }
                 Err(tilewright_editor_document::Error::Invalid(diagnostics)) => {
                     for diagnostic in &diagnostics {
                         eprintln!(
@@ -62,7 +74,7 @@ fn main() {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: tilewright-editor [version | open ROOT | window]");
+    eprintln!("usage: tilewright-editor [version | open ROOT | headless ROOT | window]");
     std::process::exit(2);
 }
 

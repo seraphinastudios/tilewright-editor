@@ -3,16 +3,17 @@
 
 #![forbid(unsafe_code)]
 
-//! Editor commands are world toolkit transactions (`tilewright.transaction/1`).
-//! [`preview`] carries one out against an open world in memory: the toolkit
-//! edits the files losslessly, validates the result and returns the sealed
-//! transaction and its exact inverse. Nothing is written. Publishing, and
-//! the history built on previews, come with the commands that need them.
+//! Semantic edits, reviewable previews and bounded undo/redo over World plans.
+//! Preparing a step writes nothing. [`History::commit`] publishes only after
+//! its inverse has been durably retained by the caller's [`RecoveryStore`].
+//! All source access, validation and publication belongs to the World toolkit.
 
 use std::fmt;
-use tilewright_edit::{FileChange, Options, Plan, Transaction};
-use tilewright_editor_document::WorldDocument;
-use tilewright_source::{Diagnostic, World};
+use tilewright_edit::{
+    FileChange, Options, Plan, PublishError, PublishOptions, Published, Transaction,
+};
+use tilewright_editor_document::{WorldDocument, load_options};
+use tilewright_source::{Diagnostic, Overlay, World};
 
 /// A transaction carried out in memory against the tree of an open world.
 #[derive(Debug)]
@@ -63,16 +64,300 @@ impl Preview {
 /// diagnostics of the edited world.
 pub fn preview(document: &WorldDocument, name: &str, text: &str) -> Result<Preview, Error> {
     let transaction = Transaction::parse(name, text).map_err(Error::Rejected)?;
-    let plan = tilewright_edit::plan(document.root(), &transaction, &Options::default())
+    let plan = tilewright_edit::plan(
+        document.root(),
+        &transaction,
+        &Options {
+            load: load_options(),
+            rebase: false,
+        },
+    )
+    .map_err(Error::Rejected)?;
+    // The plan must start at the world the author actually inspected. Merely
+    // trusting an optional transaction base would accept stale UI commands.
+    let before: Overlay = plan
+        .files()
+        .iter()
+        .map(|file| (file.path.clone(), file.before.clone()))
+        .collect();
+    let baseline = tilewright_source::load_edited(document.root(), &load_options(), &before)
         .map_err(Error::Rejected)?;
+    if baseline.source_digest() != document.revision() {
+        return Err(Error::StaleRevision);
+    }
+    plan.check_undo().map_err(Error::Rejected)?;
     Ok(Preview { plan })
+}
+
+/// History is bounded both by steps and by the UTF-8 recovery records retained.
+pub const MAX_HISTORY: usize = 1_024;
+pub const MAX_HISTORY_BYTES: usize = 64 << 20;
+
+/// Durable recovery belongs to the application, outside authored source.
+///
+/// Implementations must retain the exact inverse using toolkit-owned storage,
+/// atomically and durably, before returning `Ok(())`. They must refuse an
+/// existing destination and keep the record even if publication fails. A
+/// memory-only acknowledgement is suitable only for deterministic tests.
+/// The editor never calls this for an unchanged plan.
+pub trait RecoveryStore {
+    fn retain(&mut self, inverse: &str) -> Result<(), String>;
+}
+
+#[derive(Clone, Debug)]
+struct Entry {
+    transaction: String,
+    expected: [u8; 32],
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Direction {
+    Edit,
+    Undo,
+    Redo,
+}
+
+#[derive(Debug)]
+struct Pending {
+    preview: Preview,
+    direction: Direction,
+}
+
+/// One opened world, its reviewed pending step, and successful command history.
+///
+/// Each commit publishes one World transaction. Undo and redo are new reviewed
+/// transactions, with the same recovery, validation and publication contract.
+/// Any publication error requires opening a new session after inspecting the
+/// recovery record: a failed rollback can leave a partially changed tree.
+#[derive(Debug)]
+pub struct History {
+    document: WorldDocument,
+    undo: Vec<Entry>,
+    redo: Vec<Entry>,
+    pending: Option<Pending>,
+    needs_reload: bool,
+}
+
+impl History {
+    #[must_use]
+    pub fn new(document: WorldDocument) -> Self {
+        Self {
+            document,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            pending: None,
+            needs_reload: false,
+        }
+    }
+
+    #[must_use]
+    pub fn document(&self) -> &WorldDocument {
+        &self.document
+    }
+
+    #[must_use]
+    pub fn depths(&self) -> (usize, usize) {
+        (self.undo.len(), self.redo.len())
+    }
+
+    #[must_use]
+    pub const fn needs_reload(&self) -> bool {
+        self.needs_reload
+    }
+
+    #[must_use]
+    pub fn pending(&self) -> Option<&Preview> {
+        self.pending.as_ref().map(|step| &step.preview)
+    }
+
+    /// Discard an uncommitted preview; published history is unaffected.
+    pub fn cancel(&mut self) {
+        self.pending = None;
+    }
+
+    /// Prepare a semantic transaction, using the revision observed by its author.
+    /// A failed preparation clears any earlier preview so it cannot be saved by mistake.
+    pub fn prepare(
+        &mut self,
+        expected: [u8; 32],
+        name: &str,
+        text: &str,
+    ) -> Result<&Preview, Error> {
+        self.prepare_step(expected, name, text, Direction::Edit)
+    }
+
+    pub fn prepare_undo(&mut self) -> Result<&Preview, Error> {
+        self.pending = None;
+        self.check_available()?;
+        let entry = self.undo.last().ok_or(Error::NothingToUndo)?.clone();
+        self.prepare_step(
+            entry.expected,
+            "editor:undo",
+            &entry.transaction,
+            Direction::Undo,
+        )
+    }
+
+    pub fn prepare_redo(&mut self) -> Result<&Preview, Error> {
+        self.pending = None;
+        self.check_available()?;
+        let entry = self.redo.last().ok_or(Error::NothingToRedo)?.clone();
+        self.prepare_step(
+            entry.expected,
+            "editor:redo",
+            &entry.transaction,
+            Direction::Redo,
+        )
+    }
+
+    fn check_available(&self) -> Result<(), Error> {
+        if self.needs_reload {
+            Err(Error::NeedsReload)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn prepare_step(
+        &mut self,
+        expected: [u8; 32],
+        name: &str,
+        text: &str,
+        direction: Direction,
+    ) -> Result<&Preview, Error> {
+        self.pending = None;
+        self.check_available()?;
+        if self.document.revision() != expected {
+            return Err(Error::StaleRevision);
+        }
+        let preview = preview(&self.document, name, text)?;
+        if preview.changed().next().is_some() {
+            let (count, bytes) = self.retained(direction);
+            if count >= MAX_HISTORY
+                || bytes.saturating_add(preview.inverse().len()) > MAX_HISTORY_BYTES
+            {
+                return Err(Error::HistoryFull);
+            }
+        }
+        self.pending = Some(Pending { preview, direction });
+        Ok(&self
+            .pending
+            .as_ref()
+            .expect("pending was just installed")
+            .preview)
+    }
+
+    fn retained(&self, direction: Direction) -> (usize, usize) {
+        let (undo, redo) = match direction {
+            Direction::Edit => (self.undo.as_slice(), &[][..]),
+            Direction::Undo => (
+                &self.undo[..self.undo.len().saturating_sub(1)],
+                self.redo.as_slice(),
+            ),
+            Direction::Redo => (
+                self.undo.as_slice(),
+                &self.redo[..self.redo.len().saturating_sub(1)],
+            ),
+        };
+        (
+            undo.len() + redo.len(),
+            undo.iter()
+                .chain(redo)
+                .map(|entry| entry.transaction.len())
+                .sum(),
+        )
+    }
+
+    /// Publish the exact pending plan after durable recovery. Default options
+    /// refuse platforms/filesystems whose access protections World cannot check;
+    /// callers must obtain explicit acceptance before opting into unchecked access.
+    ///
+    /// Errors keep the pending inverse and history available for inspection.
+    /// A publication error always blocks further steps in this session. Its
+    /// `applied`, `durable` and `cleaned` fields must be shown to the author.
+    pub fn commit(
+        &mut self,
+        recovery: &mut impl RecoveryStore,
+        options: &PublishOptions,
+    ) -> Result<Published, Error> {
+        self.commit_with(recovery, |plan| plan.publish_with(options))
+    }
+
+    fn commit_with(
+        &mut self,
+        recovery: &mut impl RecoveryStore,
+        publish: impl FnOnce(&Plan) -> Result<Published, PublishError>,
+    ) -> Result<Published, Error> {
+        self.check_available()?;
+        let pending = self.pending.as_ref().ok_or(Error::NothingPrepared)?;
+        let current = WorldDocument::open(self.document.root()).map_err(Error::Document)?;
+        if current.revision() != self.document.revision() {
+            return Err(Error::StaleRevision);
+        }
+        if pending.preview.changed().next().is_none() {
+            self.pending = None;
+            return Ok(Published { durable: true });
+        }
+        recovery
+            .retain(pending.preview.inverse())
+            .map_err(Error::Recovery)?;
+        let outcome = match publish(&pending.preview.plan) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                self.needs_reload = true;
+                return Err(Error::Publish(error));
+            }
+        };
+        // Even successful publication may not make directory entries durable.
+        // Keep its recovery record and refuse to silently continue a session
+        // whose persistence guarantee has not been established.
+        if !outcome.durable {
+            self.needs_reload = true;
+            return Err(Error::Publish(PublishError {
+                applied: true,
+                durable: false,
+                cleaned: true,
+                problems: Vec::new(),
+            }));
+        }
+        let pending = self.pending.take().expect("published pending step");
+        let entry = Entry {
+            transaction: pending.preview.inverse().to_owned(),
+            expected: pending.preview.world().source_digest(),
+        };
+        self.document = self
+            .document
+            .with_validated_world(pending.preview.world().clone());
+        match pending.direction {
+            Direction::Edit => {
+                self.undo.push(entry);
+                self.redo.clear();
+            }
+            Direction::Undo => {
+                self.undo.pop();
+                self.redo.push(entry);
+            }
+            Direction::Redo => {
+                self.redo.pop();
+                self.undo.push(entry);
+            }
+        }
+        Ok(outcome)
+    }
 }
 
 #[derive(Debug)]
 pub enum Error {
-    /// The transaction is malformed, a precondition failed, or the edited
-    /// world does not validate: the toolkit's diagnostics.
     Rejected(Vec<Diagnostic>),
+    Document(tilewright_editor_document::Error),
+    StaleRevision,
+    HistoryFull,
+    NothingToUndo,
+    NothingToRedo,
+    NothingPrepared,
+    NeedsReload,
+    Recovery(String),
+    Publish(PublishError),
 }
 
 impl fmt::Display for Error {
@@ -89,10 +374,12 @@ impl fmt::Display for Error {
                 }
                 Ok(())
             }
+            Self::Document(error) => error.fmt(formatter),
+            Self::Publish(error) => error.fmt(formatter),
+            other => write!(formatter, "editor command error: {other:?}"),
         }
     }
 }
-
 impl std::error::Error for Error {}
 
 #[cfg(test)]
@@ -112,6 +399,95 @@ mod tests {
   ]
 }
 "#;
+
+    #[derive(Default)]
+    struct Recovery(Vec<String>);
+    impl super::RecoveryStore for Recovery {
+        fn retain(&mut self, inverse: &str) -> Result<(), String> {
+            self.0.push(inverse.to_owned());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn all_uncertain_publish_outcomes_preserve_recovery_and_block_the_session() {
+        for (applied, durable, cleaned) in [
+            (false, true, true),
+            (false, false, false),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+            let revision = document.revision();
+            let mut history = super::History::new(document);
+            history.prepare(revision, "paint", PAINT).unwrap();
+            let inverse = history.pending().unwrap().inverse().to_owned();
+            let mut recovery = Recovery::default();
+            let result = history.commit_with(&mut recovery, |_| {
+                Err(tilewright_edit::PublishError {
+                    applied,
+                    durable,
+                    cleaned,
+                    problems: Vec::new(),
+                })
+            });
+            let Err(Error::Publish(error)) = result else {
+                panic!("fault was accepted")
+            };
+            assert_eq!(
+                (error.applied, error.durable, error.cleaned),
+                (applied, durable, cleaned)
+            );
+            assert_eq!(recovery.0, [inverse]);
+            assert_eq!(history.depths(), (0, 0));
+            assert!(history.needs_reload());
+            assert!(history.pending().is_some());
+            assert!(matches!(
+                history.prepare(revision, "paint", PAINT),
+                Err(Error::NeedsReload)
+            ));
+        }
+    }
+
+    #[test]
+    fn success_without_directory_durability_requires_recovery_too() {
+        let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+        let mut history = super::History::new(document);
+        history
+            .prepare(history.document().revision(), "paint", PAINT)
+            .unwrap();
+        let result = history.commit_with(&mut Recovery::default(), |_| {
+            Ok(tilewright_edit::Published { durable: false })
+        });
+        assert!(matches!(result, Err(Error::Publish(error)) if error.applied && !error.durable));
+        assert!(history.needs_reload());
+        assert_eq!(history.depths(), (0, 0));
+    }
+
+    #[test]
+    fn history_limits_refuse_before_source_or_recovery_changes() {
+        let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+        let mut history = super::History::new(document);
+        history.undo = vec![
+            super::Entry {
+                transaction: String::new(),
+                expected: history.document().revision()
+            };
+            super::MAX_HISTORY
+        ];
+        assert!(matches!(
+            history.prepare(history.document().revision(), "paint", PAINT),
+            Err(Error::HistoryFull)
+        ));
+        assert!(history.pending().is_none());
+        history.undo.truncate(1);
+        history.undo[0].transaction = " ".repeat(super::MAX_HISTORY_BYTES);
+        assert!(matches!(
+            history.prepare(history.document().revision(), "paint", PAINT),
+            Err(Error::HistoryFull)
+        ));
+        assert!(history.pending().is_none());
+    }
 
     #[test]
     fn previews_a_transaction_without_writing() {

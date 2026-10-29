@@ -23,7 +23,7 @@ pub const MAXIMUM_DIAGNOSTICS: usize = 256;
 
 /// How the editor loads worlds: the toolkit keeps one diagnostic fewer than
 /// [`MAXIMUM_DIAGNOSTICS`] and adds its budget note after them.
-fn load_options() -> LoadOptions {
+pub fn load_options() -> LoadOptions {
     LoadOptions {
         maximum_diagnostics: MAXIMUM_DIAGNOSTICS - 1,
         ..LoadOptions::default()
@@ -38,6 +38,16 @@ pub struct WorldDocument {
 }
 
 impl WorldDocument {
+    /// Adopts a world already validated by the toolkit for this source root.
+    /// Command history uses this after publishing its exact reviewed plan.
+    #[must_use]
+    pub fn with_validated_world(&self, world: World) -> Self {
+        Self {
+            root: self.root.clone(),
+            world: Arc::new(world),
+        }
+    }
+
     /// Loads and validates the world at `root` with the toolkit's default
     /// bounds.
     ///
