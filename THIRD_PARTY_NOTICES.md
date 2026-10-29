@@ -6,7 +6,7 @@ SBOM.
 
 - `tilewright-source`, `tilewright-edit` and `tilewright-jsonc` 0.1.0
   (tilewright-world): MIT.
-- `tilewright-scene` and `tilewright-render-*` 0.5.0 (tilewright-renderer): MIT.
+- `tilewright-scene` and `tilewright-render-*` 0.5.1 (tilewright-renderer): MIT.
 - `sdl3` Rust bindings: MIT.
 - SDL native library: Zlib License.
 

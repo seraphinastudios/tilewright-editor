@@ -8,7 +8,7 @@ use tilewright_render_api::{Error as RenderError, FrameOutput, RenderRequest, Re
 use tilewright_render_resources::ResourceProvider;
 use tilewright_scene::{SceneBundle, SceneLimits, Viewport};
 
-pub const RENDERER_COMPATIBILITY: &str = "scene-bundle-v3/0.5.0";
+pub const RENDERER_COMPATIBILITY: &str = "scene-bundle-v3/0.5.1";
 
 pub fn empty_scene(
     width: u32,
@@ -56,7 +56,7 @@ mod tests {
         assert_eq!(
             super::RENDERER_COMPATIBILITY,
             format!(
-                "scene-bundle-v{}/0.5.0",
+                "scene-bundle-v{}/0.5.1",
                 tilewright_scene::SCENE_BUNDLE_VERSION
             )
         );

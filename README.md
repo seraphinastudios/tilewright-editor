@@ -43,7 +43,7 @@ service, or server lifecycle.
 
 The editor opens world source trees with tilewright-world's `tilewright-source`
 and carries out edits as its `tilewright-edit` transactions; it builds scenes
-with tilewright-renderer 0.5. The production manifests target exact crates.io
+with tilewright-renderer 0.5.1. The production manifests target exact crates.io
 versions, recorded with their repositories in `policy/released-dependencies.json`.
 The World migration is pending their actual registry publication and a registry
 lockfile; local candidate overrides are compatibility evidence only, never
