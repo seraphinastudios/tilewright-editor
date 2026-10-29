@@ -64,8 +64,8 @@ impl Preview {
 /// diagnostics of the edited world.
 pub fn preview(document: &WorldDocument, name: &str, text: &str) -> Result<Preview, Error> {
     let transaction = Transaction::parse(name, text).map_err(Error::Rejected)?;
-    let plan = tilewright_edit::plan(
-        document.root(),
+    let plan = tilewright_edit::plan_in(
+        document.source(),
         &transaction,
         &Options {
             load: load_options(),
@@ -80,7 +80,7 @@ pub fn preview(document: &WorldDocument, name: &str, text: &str) -> Result<Previ
         .iter()
         .map(|file| (file.path.clone(), file.before.clone()))
         .collect();
-    let baseline = tilewright_source::load_edited(document.root(), &load_options(), &before)
+    let baseline = tilewright_source::load_edited_in(document.source(), &load_options(), &before)
         .map_err(Error::Rejected)?;
     if baseline.source_digest() != document.revision() {
         return Err(Error::StaleRevision);
@@ -106,8 +106,10 @@ pub trait RecoveryStore {
 
 #[derive(Clone, Debug)]
 struct Entry {
-    transaction: String,
-    expected: [u8; 32],
+    forward: String,
+    inverse: String,
+    before: [u8; 32],
+    after: [u8; 32],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -160,6 +162,16 @@ impl History {
         (self.undo.len(), self.redo.len())
     }
 
+    /// Memory charged to retained forward and inverse transaction records.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        self.undo
+            .iter()
+            .chain(&self.redo)
+            .map(|entry| entry.forward.len() + entry.inverse.len())
+            .sum()
+    }
+
     #[must_use]
     pub const fn needs_reload(&self) -> bool {
         self.needs_reload
@@ -172,7 +184,9 @@ impl History {
 
     /// Discard an uncommitted preview; published history is unaffected.
     pub fn cancel(&mut self) {
-        self.pending = None;
+        if !self.needs_reload {
+            self.pending = None;
+        }
     }
 
     /// Prepare a semantic transaction, using the revision observed by its author.
@@ -187,27 +201,17 @@ impl History {
     }
 
     pub fn prepare_undo(&mut self) -> Result<&Preview, Error> {
-        self.pending = None;
         self.check_available()?;
+        self.pending = None;
         let entry = self.undo.last().ok_or(Error::NothingToUndo)?.clone();
-        self.prepare_step(
-            entry.expected,
-            "editor:undo",
-            &entry.transaction,
-            Direction::Undo,
-        )
+        self.prepare_step(entry.after, "editor:undo", &entry.inverse, Direction::Undo)
     }
 
     pub fn prepare_redo(&mut self) -> Result<&Preview, Error> {
-        self.pending = None;
         self.check_available()?;
+        self.pending = None;
         let entry = self.redo.last().ok_or(Error::NothingToRedo)?.clone();
-        self.prepare_step(
-            entry.expected,
-            "editor:redo",
-            &entry.transaction,
-            Direction::Redo,
-        )
+        self.prepare_step(entry.before, "editor:redo", &entry.forward, Direction::Redo)
     }
 
     fn check_available(&self) -> Result<(), Error> {
@@ -225,16 +229,26 @@ impl History {
         text: &str,
         direction: Direction,
     ) -> Result<&Preview, Error> {
-        self.pending = None;
         self.check_available()?;
+        self.pending = None;
         if self.document.revision() != expected {
             return Err(Error::StaleRevision);
         }
         let preview = preview(&self.document, name, text)?;
-        if preview.changed().next().is_some() {
-            let (count, bytes) = self.retained(direction);
-            if count >= MAX_HISTORY
-                || bytes.saturating_add(preview.inverse().len()) > MAX_HISTORY_BYTES
+        if matches!(direction, Direction::Edit) && preview.changed().next().is_some() {
+            // Retain the original sealed forward transaction as well as its
+            // inverse. Moving an entry between stacks never grows its budget;
+            // asymmetric create/delete operations cannot strand an undo.
+            let bytes: usize = self
+                .undo
+                .iter()
+                .map(|entry| entry.forward.len() + entry.inverse.len())
+                .sum();
+            if self.undo.len() >= MAX_HISTORY
+                || bytes
+                    .saturating_add(preview.inverse().len())
+                    .saturating_add(preview.sealed().len())
+                    > MAX_HISTORY_BYTES
             {
                 return Err(Error::HistoryFull);
             }
@@ -245,27 +259,6 @@ impl History {
             .as_ref()
             .expect("pending was just installed")
             .preview)
-    }
-
-    fn retained(&self, direction: Direction) -> (usize, usize) {
-        let (undo, redo) = match direction {
-            Direction::Edit => (self.undo.as_slice(), &[][..]),
-            Direction::Undo => (
-                &self.undo[..self.undo.len().saturating_sub(1)],
-                self.redo.as_slice(),
-            ),
-            Direction::Redo => (
-                self.undo.as_slice(),
-                &self.redo[..self.redo.len().saturating_sub(1)],
-            ),
-        };
-        (
-            undo.len() + redo.len(),
-            undo.iter()
-                .chain(redo)
-                .map(|entry| entry.transaction.len())
-                .sum(),
-        )
     }
 
     /// Publish the exact pending plan after durable recovery. Default options
@@ -290,7 +283,7 @@ impl History {
     ) -> Result<Published, Error> {
         self.check_available()?;
         let pending = self.pending.as_ref().ok_or(Error::NothingPrepared)?;
-        let current = WorldDocument::open(self.document.root()).map_err(Error::Document)?;
+        let current = self.document.reload().map_err(Error::Document)?;
         if current.revision() != self.document.revision() {
             return Err(Error::StaleRevision);
         }
@@ -320,28 +313,42 @@ impl History {
                 problems: Vec::new(),
             }));
         }
-        let pending = self.pending.take().expect("published pending step");
-        let entry = Entry {
-            transaction: pending.preview.inverse().to_owned(),
-            expected: pending.preview.world().source_digest(),
+        // World permits concurrent valid changes to unconsulted files. Never
+        // silently adopt the cached preview when the actual published world
+        // differs, or a concurrent write prevents it from reopening.
+        let reopened = match self.document.reload() {
+            Ok(reopened) if reopened.revision() == pending.preview.world().source_digest() => {
+                reopened
+            }
+            result => {
+                self.needs_reload = true;
+                return Err(Error::PublishedStateChanged {
+                    published: outcome,
+                    reopen_error: result.err(),
+                });
+            }
         };
-        self.document = self
-            .document
-            .with_validated_world(pending.preview.world().clone());
+        let pending = self.pending.take().expect("published pending step");
         match pending.direction {
             Direction::Edit => {
-                self.undo.push(entry);
+                self.undo.push(Entry {
+                    forward: pending.preview.sealed().to_owned(),
+                    inverse: pending.preview.inverse().to_owned(),
+                    before: self.document.revision(),
+                    after: reopened.revision(),
+                });
                 self.redo.clear();
             }
             Direction::Undo => {
-                self.undo.pop();
-                self.redo.push(entry);
+                self.redo
+                    .push(self.undo.pop().expect("prepared undo entry"));
             }
             Direction::Redo => {
-                self.redo.pop();
-                self.undo.push(entry);
+                self.undo
+                    .push(self.redo.pop().expect("prepared redo entry"));
             }
         }
+        self.document = reopened;
         Ok(outcome)
     }
 }
@@ -358,6 +365,12 @@ pub enum Error {
     NeedsReload,
     Recovery(String),
     Publish(PublishError),
+    /// Publication succeeded, but the reopened world differs from the reviewed
+    /// result or no longer validates. Changes were applied; recovery is required.
+    PublishedStateChanged {
+        published: Published,
+        reopen_error: Option<tilewright_editor_document::Error>,
+    },
 }
 
 impl fmt::Display for Error {
@@ -376,6 +389,11 @@ impl fmt::Display for Error {
             }
             Self::Document(error) => error.fmt(formatter),
             Self::Publish(error) => error.fmt(formatter),
+            Self::PublishedStateChanged { published, .. } => write!(
+                formatter,
+                "the transaction was applied (durable={}), but the source changed while publishing or reopening failed; inspect recovery and reopen",
+                published.durable
+            ),
             other => write!(formatter, "editor command error: {other:?}"),
         }
     }
@@ -470,8 +488,10 @@ mod tests {
         let mut history = super::History::new(document);
         history.undo = vec![
             super::Entry {
-                transaction: String::new(),
-                expected: history.document().revision()
+                forward: String::new(),
+                inverse: String::new(),
+                before: history.document().revision(),
+                after: history.document().revision()
             };
             super::MAX_HISTORY
         ];
@@ -481,12 +501,34 @@ mod tests {
         ));
         assert!(history.pending().is_none());
         history.undo.truncate(1);
-        history.undo[0].transaction = " ".repeat(super::MAX_HISTORY_BYTES);
+        history.undo[0].forward = " ".repeat(super::MAX_HISTORY_BYTES);
         assert!(matches!(
             history.prepare(history.document().revision(), "paint", PAINT),
             Err(Error::HistoryFull)
         ));
         assert!(history.pending().is_none());
+    }
+
+    #[test]
+    fn admission_reserves_the_forward_record_not_just_the_small_inverse() {
+        let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+        let mut history = super::History::new(document);
+        let text = format!(
+            r#"{{"format":"tilewright.transaction/1","operations":[{{"op":"document.create","path":"defs/proto/new.jsonc","text":"{{\"format\":\"tilewright.def/1\",\"type\":\"proto\",\"id\":\"new\",\"fields\":{{}}}}{}"}}]}}"#,
+            " ".repeat(8_192)
+        );
+        let preview = preview(history.document(), "create", &text).unwrap();
+        assert!(preview.sealed().len() > preview.inverse().len() * 5);
+        history.undo.push(super::Entry {
+            forward: " ".repeat(super::MAX_HISTORY_BYTES - preview.inverse().len() - 1),
+            inverse: String::new(),
+            before: history.document().revision(),
+            after: history.document().revision(),
+        });
+        assert!(matches!(
+            history.prepare(history.document().revision(), "create", &text),
+            Err(Error::HistoryFull)
+        ));
     }
 
     #[test]

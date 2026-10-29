@@ -36,6 +36,11 @@ semantic transaction without writes, verifies the plan's before-image against
 that revision, and calls World's `Plan::check_undo`. Callers inspect the pending
 plan's file before/after images, sealed transaction and inverse before committing.
 A failed preparation discards any older pending preview; cancel changes no files.
+A blocked recovery session retains its pending inverse even if another command
+or cancel is attempted. The document retains the toolkit source root opened at
+load time; its display path never becomes fresh write authority. On Unix this
+is a directory handle; Windows retains the toolkit's documented path-based
+limitations and explicit unchecked-access requirement.
 
 `History::commit` first asks the application's `RecoveryStore` to durably retain
 that exact inverse outside authored source. The integration must use toolkit
@@ -53,8 +58,21 @@ inspect the recovery record and source, and reopen after recovery. A recovery
 storage failure occurs before publication and permits retry. No-op commits do
 not write a record or consume history. Undo/redo are prepared inverse transactions
 with identical validation, recovery and publication requirements. A successful
-new edit discards the redo branch; failed edits do not. History is bounded by
-both entry count and retained UTF-8 record bytes.
+new edit discards the redo branch; failed edits do not. Each entry retains both
+the original sealed forward command and its inverse; undo/redo move that fixed
+entry between stacks. Both directions count toward the memory limit at edit
+admission, so asymmetric create/delete commands cannot exhaust the budget while
+undoing already accepted work. History is bounded by entry count and retained
+UTF-8 record bytes.
+
+Whole-world revision checks are optimistic. World rechecks consulted files and
+validates publication but permits concurrent valid changes to unrelated files.
+After publication the editor reloads its retained root and compares the actual
+world against the reviewed result. A mismatch or reopen error explicitly reports
+that the edit was applied, retains recovery and unadvanced history, and blocks
+the session. This does not promise a global atomic revision guard against
+noncooperating external writers; a change after the reload is caught at the next
+operation.
 
 The pre-migration application exposed version, synthetic headless state, and
 window lifecycle smoke commands. Editing and undo/redo existed as headless

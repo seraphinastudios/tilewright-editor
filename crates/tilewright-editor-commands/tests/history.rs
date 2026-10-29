@@ -211,3 +211,88 @@ fn symlink_and_traversal_operations_are_rejected_by_world() {
         );
     }
 }
+
+#[test]
+fn concurrent_unconsulted_change_reports_applied_and_preserves_recovery() {
+    struct Concurrent {
+        root: std::path::PathBuf,
+        records: Vec<String>,
+    }
+    impl RecoveryStore for Concurrent {
+        fn retain(&mut self, inverse: &str) -> Result<(), String> {
+            self.records.push(inverse.to_owned());
+            fs::write(
+                self.root.join("defs/proto/concurrent.jsonc"),
+                r#"{"format":"tilewright.def/1","type":"proto","id":"concurrent","fields":{}}"#,
+            )
+            .unwrap();
+            Ok(())
+        }
+    }
+    let (directory, mut history) = session();
+    let original = fs::read(directory.path().join(CHUNK)).unwrap();
+    history
+        .prepare(history.document().revision(), "paint", PAINT)
+        .unwrap();
+    let inverse = history.pending().unwrap().inverse().to_owned();
+    let mut recovery = Concurrent {
+        root: directory.path().to_path_buf(),
+        records: Vec::new(),
+    };
+    let result = history.commit(&mut recovery, &options());
+    assert!(matches!(result, Err(Error::PublishedStateChanged { .. })));
+    assert_ne!(fs::read(directory.path().join(CHUNK)).unwrap(), original);
+    assert_eq!(recovery.records, std::slice::from_ref(&inverse));
+    assert_eq!(history.depths(), (0, 0));
+    assert!(history.needs_reload());
+    assert!(matches!(history.prepare_undo(), Err(Error::NeedsReload)));
+    history.cancel();
+    assert_eq!(history.pending().unwrap().inverse(), inverse);
+}
+
+#[test]
+fn asymmetric_create_delete_keeps_the_reserved_budget_for_every_undo_and_redo() {
+    let (_directory, mut history) = session();
+    let text = format!(
+        r#"{{"format":"tilewright.transaction/1","operations":[{{"op":"document.create","path":"defs/proto/new.jsonc","text":"{{\"format\":\"tilewright.def/1\",\"type\":\"proto\",\"id\":\"new\",\"fields\":{{}}}}{}"}}]}}"#,
+        " ".repeat(8_192)
+    );
+    let preview = history
+        .prepare(history.document().revision(), "create", &text)
+        .unwrap();
+    assert!(preview.sealed().len() > preview.inverse().len() * 5);
+    let reserved = preview.sealed().len() + preview.inverse().len();
+    let mut records = Records::default();
+    history.commit(&mut records, &options()).unwrap();
+    for _ in 0..4 {
+        assert_eq!(history.retained_bytes(), reserved);
+        history.prepare_undo().unwrap();
+        history.commit(&mut records, &options()).unwrap();
+        assert_eq!(history.retained_bytes(), reserved);
+        history.prepare_redo().unwrap();
+        history.commit(&mut records, &options()).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn retargeting_the_opened_root_symlink_cannot_redirect_publication() {
+    let (original, _) = session();
+    let (other, _) = session();
+    let links = tempfile::tempdir().unwrap();
+    let link = links.path().join("project");
+    std::os::unix::fs::symlink(original.path(), &link).unwrap();
+    let mut history = History::new(WorldDocument::open(&link).unwrap());
+    let before = fs::read(other.path().join(CHUNK)).unwrap();
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(other.path(), &link).unwrap();
+    history
+        .prepare(history.document().revision(), "paint", PAINT)
+        .unwrap();
+    history.commit(&mut Records::default(), &options()).unwrap();
+    assert_eq!(fs::read(other.path().join(CHUNK)).unwrap(), before);
+    assert_ne!(fs::read(original.path().join(CHUNK)).unwrap(), before);
+    history.prepare_undo().unwrap();
+    history.commit(&mut Records::default(), &options()).unwrap();
+    assert_eq!(fs::read(original.path().join(CHUNK)).unwrap(), before);
+}

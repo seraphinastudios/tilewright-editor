@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tilewright_source::{Diagnostic, LoadOptions, Projection, World};
+use tilewright_source::{Diagnostic, LoadOptions, Overlay, Projection, SourceRoot, World};
 
 /// The world format and toolkit release the editor builds against.
 pub const TOOLKIT_COMPATIBILITY: &str = "tilewright.world/1 tilewright-source/0.1.0";
@@ -34,20 +34,11 @@ pub fn load_options() -> LoadOptions {
 #[derive(Clone, Debug)]
 pub struct WorldDocument {
     root: PathBuf,
+    source: Arc<SourceRoot>,
     world: Arc<World>,
 }
 
 impl WorldDocument {
-    /// Adopts a world already validated by the toolkit for this source root.
-    /// Command history uses this after publishing its exact reviewed plan.
-    #[must_use]
-    pub fn with_validated_world(&self, world: World) -> Self {
-        Self {
-            root: self.root.clone(),
-            world: Arc::new(world),
-        }
-    }
-
     /// Loads and validates the world at `root` with the toolkit's default
     /// bounds.
     ///
@@ -55,14 +46,35 @@ impl WorldDocument {
     /// Returns the toolkit's diagnostics, at most [`MAXIMUM_DIAGNOSTICS`],
     /// when the tree does not load.
     pub fn open(root: &Path) -> Result<Self, Error> {
-        let world = tilewright_source::load_with(root, &load_options()).map_err(Error::Invalid)?;
+        let source = Arc::new(SourceRoot::new(root));
+        let world = tilewright_source::load_edited_in(&source, &load_options(), &Overlay::new())
+            .map_err(Error::Invalid)?;
         Ok(Self {
             root: root.to_path_buf(),
+            source,
             world: Arc::new(world),
         })
     }
 
-    /// The root the world was opened from.
+    /// Reload the originally opened toolkit root, never re-resolving its display path.
+    pub fn reload(&self) -> Result<Self, Error> {
+        let world =
+            tilewright_source::load_edited_in(&self.source, &load_options(), &Overlay::new())
+                .map_err(Error::Invalid)?;
+        Ok(Self {
+            root: self.root.clone(),
+            source: self.source.clone(),
+            world: Arc::new(world),
+        })
+    }
+
+    /// Filesystem authority retained from opening the document.
+    #[must_use]
+    pub fn source(&self) -> &SourceRoot {
+        &self.source
+    }
+
+    /// The display path the world was opened from; never use it as write authority.
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
