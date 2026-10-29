@@ -57,6 +57,9 @@ fn options() -> PublishOptions {
     }
 }
 
+// Durable publication supports continuing the same history on Unix.
+// Windows exercises its applied-but-nondurable contract separately below.
+#[cfg(unix)]
 #[test]
 fn edit_preview_commit_undo_redo_and_reopen_preserve_exact_bytes() {
     let (directory, mut history) = session();
@@ -147,6 +150,9 @@ fn recovery_failure_and_cancellation_preserve_source_and_history() {
     ));
 }
 
+// Durable publication supports continuing the same history on Unix.
+// Windows exercises its applied-but-nondurable contract separately below.
+#[cfg(unix)]
 #[test]
 fn failed_new_edit_keeps_redo_and_successful_new_edit_discards_it() {
     let (_directory, mut history) = session();
@@ -240,7 +246,13 @@ fn concurrent_unconsulted_change_reports_applied_and_preserves_recovery() {
         records: Vec::new(),
     };
     let result = history.commit(&mut recovery, &options());
+    #[cfg(unix)]
     assert!(matches!(result, Err(Error::PublishedStateChanged { .. })));
+    // Windows cannot sync directory entries: its nondurable outcome must be
+    // reported before the postpublication reload is reached.
+    #[cfg(windows)]
+    assert!(matches!(result, Err(Error::Publish(error))
+        if error.applied && !error.durable && error.cleaned));
     assert_ne!(fs::read(directory.path().join(CHUNK)).unwrap(), original);
     assert_eq!(recovery.records, std::slice::from_ref(&inverse));
     assert_eq!(history.depths(), (0, 0));
@@ -250,6 +262,9 @@ fn concurrent_unconsulted_change_reports_applied_and_preserves_recovery() {
     assert_eq!(history.pending().unwrap().inverse(), inverse);
 }
 
+// Durable publication supports continuing the same history on Unix.
+// Windows exercises its applied-but-nondurable contract separately below.
+#[cfg(unix)]
 #[test]
 fn asymmetric_create_delete_keeps_the_reserved_budget_for_every_undo_and_redo() {
     let (_directory, mut history) = session();
@@ -295,4 +310,83 @@ fn retargeting_the_opened_root_symlink_cannot_redirect_publication() {
     history.prepare_undo().unwrap();
     history.commit(&mut Records::default(), &options()).unwrap();
     assert_eq!(fs::read(original.path().join(CHUNK)).unwrap(), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_nondurable_publication_retains_recovery_and_blocks_all_history_commands() {
+    let (directory, mut history) = session();
+    let revision = history.document().revision();
+    let preview = history.prepare(revision, "paint", PAINT).unwrap();
+    let inverse = preview.inverse().to_owned();
+    let expected_revision = preview.world().source_digest();
+    let expected_files: Vec<_> = preview
+        .changed()
+        .map(|file| (file.path.clone(), file.after.clone()))
+        .collect();
+    let mut records = Records::default();
+    let result = history.commit(&mut records, &options());
+    let Err(Error::Publish(error)) = result else {
+        panic!("expected nondurable publication")
+    };
+    assert!(error.applied);
+    assert!(!error.durable);
+    assert!(error.cleaned);
+    assert!(error.problems.is_empty());
+    for (path, after) in expected_files {
+        assert_eq!(fs::read_to_string(directory.path().join(path)).ok(), after);
+    }
+    assert_eq!(
+        history.document().reload().unwrap().revision(),
+        expected_revision
+    );
+    assert_ne!(expected_revision, revision);
+    assert_eq!(history.document().revision(), revision);
+    assert_eq!(history.depths(), (0, 0));
+    assert_eq!(history.retained_bytes(), 0);
+    assert!(history.needs_reload());
+    assert_eq!(records.entries, std::slice::from_ref(&inverse));
+    assert!(matches!(
+        history.prepare(revision, "again", PAINT),
+        Err(Error::NeedsReload)
+    ));
+    assert!(matches!(history.prepare_undo(), Err(Error::NeedsReload)));
+    assert!(matches!(history.prepare_redo(), Err(Error::NeedsReload)));
+    assert!(matches!(
+        history.commit(&mut records, &options()),
+        Err(Error::NeedsReload)
+    ));
+    history.cancel();
+    assert_eq!(history.pending().unwrap().inverse(), inverse);
+    assert_eq!(records.entries.len(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_default_access_policy_refuses_publication_without_source_changes() {
+    let (directory, mut history) = session();
+    let revision = history.document().revision();
+    let original = fs::read(directory.path().join(CHUNK)).unwrap();
+    history.prepare(revision, "paint", PAINT).unwrap();
+    let inverse = history.pending().unwrap().inverse().to_owned();
+    let mut records = Records::default();
+    let result = history.commit(&mut records, &PublishOptions::default());
+    let Err(Error::Publish(error)) = result else {
+        panic!("default access policy was bypassed")
+    };
+    assert!(!error.applied);
+    assert!(error.durable);
+    assert!(error.cleaned);
+    assert!(
+        error
+            .problems
+            .iter()
+            .any(|problem| problem.code == "tx.io" && problem.message.contains("unchecked access"))
+    );
+    assert_eq!(fs::read(directory.path().join(CHUNK)).unwrap(), original);
+    assert!(!directory.path().join(NEW_CHUNK).exists());
+    assert_eq!(history.document().reload().unwrap().revision(), revision);
+    assert_eq!(records.entries, [inverse]);
+    assert_eq!(history.depths(), (0, 0));
+    assert!(history.needs_reload());
 }
