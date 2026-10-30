@@ -1,0 +1,16 @@
+[package]
+publish = false
+name = "tilewright-editor-recovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tilewright-editor-commands.workspace = true
+tilewright-source.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true
