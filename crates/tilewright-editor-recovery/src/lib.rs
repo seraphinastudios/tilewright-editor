@@ -7,7 +7,9 @@
 //! accepts an already retained root from the trusted prototype provisioner;
 //! see [`DurableRecovery::from_provisioned_session_root`]. Old records are never
 //! deleted, overwritten or automatically replayed. Every uncertain retention
-//! blocks this store permanently and preserves all possible artifacts.
+//! blocks this store permanently, without additional wrapper cleanup. The
+//! released write primitive may remove its own failed partial stage; surviving
+//! stages and final records are preserved.
 
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -116,9 +118,13 @@ impl DurableRecovery {
     /// **Caller proof boundary:** before calling, the provisioner must create a
     /// fresh private session, prove recovery and authored World directories are
     /// distinct and outside one another by retained Linux directory identities,
-    /// and durably sync their creation and parent entries. The app obtains this
-    /// root from the provisioner's inherited directory descriptor. This method
-    /// cannot establish separation from an arbitrary project using public World
+    /// and sync their creation and parent entries. The provisioner must also
+    /// verify that the retained root is on supported nonvolatile local storage,
+    /// rejecting volatile, unknown and unsupported filesystems before editing.
+    /// World's checked-filesystem classification includes tmpfs; it does not
+    /// prove persistence across power loss. The app obtains this root from the
+    /// provisioner's inherited directory descriptor. This method cannot prove
+    /// nonvolatility or separation from an arbitrary project using public World
     /// APIs. It neither creates directories nor repairs arbitrary permissions.
     ///
     /// Linux checked local filesystems only; 0700 ownership/ACL/labels and a

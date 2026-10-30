@@ -215,7 +215,8 @@ mod linux {
             .tempdir_in(root)
             .unwrap();
         fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        // Tests, like the provisioner, establish the creation durability first.
+        // Exercise the provisioner's creation-sync sequence. A tmpfs test root
+        // proves protocol behavior only, not persistence across power loss.
         fs::File::open(dir.path()).unwrap().sync_all().unwrap();
         fs::File::open(dir.path().parent().unwrap())
             .unwrap()

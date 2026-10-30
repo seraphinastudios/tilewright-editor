@@ -9,9 +9,14 @@ The application calls `from_provisioned_session_root(SourceRoot, RecoveryLimits)
 only with a retained root from its trusted prototype provisioner. The provisioner
 must first create and sync a fresh private session and distinct World/recovery
 children, establish their identity and separation, and pass inherited directory
-descriptors to the app. Public SourceRoot APIs alone cannot prove an arbitrary
-recovery path is outside a selected project. The constructor name documents this
-caller proof boundary; it is not a general path-safety certification.
+descriptors to the app. It must also verify through those retained descriptors
+that recovery uses supported nonvolatile local storage, refusing tmpfs, ramfs,
+memfd, unknown and unsupported filesystems before enabling editing. Public
+SourceRoot APIs alone cannot prove an arbitrary recovery path is outside a
+selected project or establish physical persistence. World's checked-filesystem
+classification includes tmpfs, where successful sync does not preserve data
+across power loss. The constructor name documents this caller proof boundary;
+it is not a general path-safety or storage-hardware certification.
 
 The store requires Linux, a checked local filesystem, current-user ownership,
 mode exactly 0700 without ACLs, and an exclusive advisory lock held for its entire
@@ -34,10 +39,13 @@ rename primitives can replace existing names: private storage, cooperating-write
 locking and absence checks are essential parts of this composition. They are
 not a hostile-writer no-clobber guarantee.
 
-No error triggers cleanup or retry. A failed operation may have taken effect;
-its stage/final identity and inverse digest remain available in `last_error()`.
-The instance stays blocked. `records()` contains successfully retained record
-identities; records remain after both successful and failed World publication.
+The wrapper performs no additional cleanup or retry after an error. The released
+World write primitive may remove its own partial stage on write, access or file
+sync failure. A failed operation may have taken effect; any surviving stage and
+final record remain preserved, with the attempted identity and inverse digest
+available in `last_error()`. The instance stays blocked and source publication
+cannot proceed through this failed retention. `records()` contains successfully
+retained record identities; records remain after both successful and failed World publication.
 Errors never include inverse text or absolute root paths. Quota errors include
 limits and requested size; oversized input is rejected before hashing. Quotas are
 at most 1024 records and 64 MiB exact inverse text; there is no automatic deletion.
@@ -61,6 +69,10 @@ tests are explicitly invoked by the ordinary parent tests.
 Run on a checked Linux filesystem, with Python 3 (already used by repository
 validation) for the Linux ACL fixture. `TILEWRIGHT_CHECKED_TEST_ROOT` may select a
 test directory; it does not bypass filesystem checks. The default is the OS temp
-directory. Tests deliberately fail when the selected storage cannot meet the
-checked contract. All direct filesystem fixture operations occur in test code;
-production storage exclusively uses released World public APIs.
+directory. Tests deliberately fail when the selected storage cannot meet World's
+checked contract. A tmpfs test root can exercise the retention protocol, faults
+and process-crash windows, but provides no persistent-storage acceptance proof.
+Production acceptance additionally requires the provisioner's nonvolatile-storage
+checks and evidence from the selected persistent filesystem. All direct filesystem
+fixture operations occur in test code; production storage exclusively uses
+released World public APIs.
