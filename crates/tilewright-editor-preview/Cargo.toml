@@ -11,9 +11,15 @@ repository.workspace = true
 tilewright-render-api.workspace = true
 tilewright-render-resources.workspace = true
 tilewright-scene.workspace = true
+tilewright-source.workspace = true
+tilewright-jsonc.workspace = true
+tilewright-render-world.workspace = true
+tilewright-render-testkit.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
-tilewright-render-testkit.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
