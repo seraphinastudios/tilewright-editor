@@ -80,3 +80,24 @@ library APIs, not a GUI or edit/save CLI. The World migration preserves those
 library capabilities and provides `headless ROOT` for the World-backed smoke
 path. A transactional desktop UI, persistence backend and automation interface
 remain separate work; the migration does not claim those features exist.
+
+
+## Bounded offline application composition
+
+The offline prototype adds a native persistent populated SDL window, a generic
+World session/action model, strict catalog/ready-resource loading, shared-renderer
+scene/mask adaptation and a durable recovery implementation. It continues using
+this ADR's existing History planning/publication/undo path. The document can now
+retain explicit prototype source budgets without changing ordinary open defaults.
+
+Trusted provisioning creates fresh separate private World/recovery/evidence
+roots on supported persistent local Linux storage, verifies retained-FD mount
+identity, syncs creation and passes descriptors to the app. This is a bounded
+deployment proof, not a general arbitrary-root constructor or alias-proof API.
+The native shell delegates source/recovery/evidence I/O to World and projection,
+geometry, rendering and exact masks to the released renderer. External game
+adapters remain separately owned; export is an explicit external toolkit command.
+
+Rich panels/text, arbitrary-root provisioning, persistent history, automatic
+recovery replay, broader platform durability and gameplay/content runtime cutover
+remain future work. See [offline prototype](../docs/OFFLINE-PROTOTYPE.md).
