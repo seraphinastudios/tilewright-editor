@@ -531,7 +531,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             ) {
                 break 'running;
             }
-            let result = native_event(&mut app, &mut renderer, &window, event, &mut minimized);
+            let result = native_event(&mut app, &mut renderer, &window, &event, &mut minimized);
             dirty = true;
             if let Err(error) = result {
                 eprintln!("{}", terminal_field(&error));
@@ -557,10 +557,10 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             dirty = true;
         }
         if dirty && !minimized {
-            if native_present(&mut app, &mut renderer, &mut window)? {
-                if let Some(name) = phase.take() {
-                    println!("native-phase={name}");
-                }
+            if native_present(&mut app, &mut renderer, &mut window)?
+                && let Some(name) = phase.take()
+            {
+                println!("native-phase={name}");
             }
             dirty = false;
         }
@@ -575,7 +575,7 @@ fn native_event(
     app: &mut Application,
     renderer: &mut WgpuRenderer,
     window: &sdl3::video::Window,
-    event: Event,
+    event: &Event,
     minimized: &mut bool,
 ) -> Result<()> {
     match event {
@@ -610,7 +610,7 @@ fn native_event(
             ..
         } if !*minimized => {
             let (px, py) =
-                crate::viewport::physical_pixel([x, y], window.size(), window.size_in_pixels())
+                crate::viewport::physical_pixel([*x, *y], window.size(), window.size_in_pixels())
                     .ok_or("pointer outside physical viewport")?;
             app.click(px, py)?;
             if app.terrain { app.paint() } else { Ok(()) }
@@ -619,7 +619,7 @@ fn native_event(
             keycode: Some(key),
             repeat: false,
             ..
-        } => native_key(app, key),
+        } => native_key(app, *key),
         _ => Ok(()),
     }
 }
