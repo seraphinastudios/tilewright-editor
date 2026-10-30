@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs};
+use std::{collections::BTreeSet, fmt::Write, fs};
 use tilewright_editor_testkit::fixture_world;
 use tilewright_source::{FieldValue, LoadOptions, Overlay};
 
@@ -96,10 +96,10 @@ fn resource_bytes_provenance_and_transition_mapping_are_complete() {
         );
         assert_eq!(u64::from(width), resource["width"].as_u64().unwrap());
         assert_eq!(u64::from(height), resource["height"].as_u64().unwrap());
-        let digest: String = Sha256::digest(&data)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        let mut digest = String::with_capacity(64);
+        for byte in Sha256::digest(&data) {
+            write!(digest, "{byte:02x}").unwrap();
+        }
         assert_eq!(resource["sha256"].as_str().unwrap(), digest);
         let relative = path.strip_prefix(repo).unwrap().to_str().unwrap();
         let asset = provenance["assets"]
