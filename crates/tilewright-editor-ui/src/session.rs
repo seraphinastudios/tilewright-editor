@@ -210,8 +210,15 @@ impl Session {
         }
     }
     fn prepare(&mut self, expected: [u8; 32], op: &Value) -> Result<(), SessionError> {
+        self.prepare_operations(expected, std::slice::from_ref(op))
+    }
+    fn prepare_operations(
+        &mut self,
+        expected: [u8; 32],
+        operations: &[Value],
+    ) -> Result<(), SessionError> {
         self.verify_revision(expected)?;
-        let text = json!({"format":"tilewright.transaction/1","title":"Editor semantic action","actor":"editor:prototype","operations":[op]}).to_string();
+        let text = json!({"format":"tilewright.transaction/1","title":"Editor semantic action","actor":"editor:prototype","operations":operations}).to_string();
         // History seals the complete consulted file base and enforces full World revision.
         self.history
             .prepare(expected, "editor:action", &text)
@@ -287,7 +294,40 @@ impl Session {
                         "only placed objects in the active spatial layer can move",
                     ));
                 }
-                self.prepare(expected,&json!({"op":"object.move","uid":uid,"expect":{"proto":object.proto},"to":{"at":[x,y]}}))
+                if location.chunk.1 == x.div_euclid(32) && location.chunk.2 == y.div_euclid(32) {
+                    let chunk = world
+                        .planes()
+                        .get(&location.plane)
+                        .and_then(|plane| plane.chunks.get(&location.chunk))
+                        .ok_or_else(|| refuse("missing authoritative object chunk"))?;
+                    let old_at = object
+                        .at
+                        .ok_or_else(|| refuse("placed object has no coordinates"))?;
+                    let at = [
+                        u16::try_from(x.rem_euclid(32)).map_err(|_| refuse("local x overflow"))?,
+                        u16::try_from(y.rem_euclid(32)).map_err(|_| refuse("local y overflow"))?,
+                    ];
+                    let index = location.path[0];
+                    // World 0.1 forbids object-relative set of `at`. A document
+                    // pointer plus UID/prototype/old-value tests provides the
+                    // supported order-preserving transaction for this chunk.
+                    let coordinate = if old_at == at {
+                        // A no-op move must preserve even the original coordinate
+                        // whitespace and must not create a recovery record.
+                        json!({"op":"test","path":chunk.path,"pointer":["objects",index,"at"],"value":at})
+                    } else {
+                        json!({"op":"set","path":chunk.path,"pointer":["objects",index,"at"],"expect":old_at,"value":at})
+                    };
+                    self.prepare_operations(expected, &[
+                        json!({"op":"test","object":{"uid":uid},"pointer":["proto"],"value":object.proto}),
+                        json!({"op":"test","path":chunk.path,"pointer":["objects",index,"uid"],"value":uid}),
+                        coordinate,
+                    ])
+                } else {
+                    // Crossing chunks uses the released relocation operation;
+                    // exporters may refuse order changes they cannot represent.
+                    self.prepare(expected, &json!({"op":"object.move","uid":uid,"expect":{"proto":object.proto},"to":{"at":[x,y]}}))
+                }
             }
             Action::SetField {
                 uid,

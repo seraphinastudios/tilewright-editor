@@ -21,8 +21,12 @@ fn copy_tree(source: &Path, destination: &Path) {
     }
 }
 fn fixture() -> (tempfile::TempDir, Session) {
+    fixture_with(|_| {})
+}
+fn fixture_with(configure: impl FnOnce(&Path)) -> (tempfile::TempDir, Session) {
     let dir = tempfile::tempdir().unwrap();
     copy_tree(&fixture_world("prototype-neutral"), dir.path());
+    configure(dir.path());
     let document = WorldDocument::open(dir.path()).unwrap();
     let (catalog, resources) = loader::load(
         document.source(),
@@ -405,4 +409,228 @@ fn windows_checked_publication_refuses_without_false_success_or_source_changes()
     }
     assert_eq!(records.inverses.len(), 1);
     assert_eq!(fs::read(chunk).unwrap(), original);
+}
+
+fn widen_view(root: &Path) {
+    let path = root.join("preview.jsonc");
+    let mut catalog: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    catalog["view"]["bounds"] = serde_json::json!([-34, 0, 72, 6]);
+    catalog["editing"]["movable_uids"] = serde_json::json!(["marker_1", "marker_negative"]);
+    fs::write(path, serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
+}
+#[cfg(target_os = "linux")]
+fn object_order(session: &Session, cx: i64) -> Vec<String> {
+    session.world().planes()["main"].chunks[&(0, cx, 0)]
+        .objects
+        .iter()
+        .map(|object| object.uid.clone().unwrap())
+        .collect()
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn same_chunk_move_preserves_interleaved_object_order_and_only_coordinate_bytes() {
+    let (dir, mut session) = fixture_with(|root| {
+        let path = root.join("planes/main/layers/0/0_0.jsonc");
+        let mut chunk: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let mut marker = chunk["objects"][0].clone();
+        marker["custom"] =
+            serde_json::json!({"example.org/editor":{"unknown":[1,true,"retained"]}});
+        let mut before = marker.clone();
+        before["uid"] = serde_json::json!("before_same");
+        let mut after_other = marker.clone();
+        after_other["uid"] = serde_json::json!("after_other");
+        after_other["at"] = serde_json::json!([7, 4]);
+        let mut after_same = marker.clone();
+        after_same["uid"] = serde_json::json!("after_same");
+        let mut destination = marker.clone();
+        destination["uid"] = serde_json::json!("destination");
+        destination["at"] = serde_json::json!([4, 2]);
+        chunk["objects"] =
+            serde_json::json!([before, marker, after_other, after_same, destination]);
+        fs::write(
+            path,
+            format!(
+                "// Keep all source comments and extension data\n{}",
+                serde_json::to_string_pretty(&chunk).unwrap()
+            ),
+        )
+        .unwrap();
+    });
+    let path = dir.path().join("planes/main/layers/0/0_0.jsonc");
+    let original = fs::read(&path).unwrap();
+    let order = object_order(&session, 0);
+    assert_eq!(
+        session.world().object_location("marker_1").unwrap().path,
+        [1]
+    );
+    let mut recovery = Records::default();
+    session
+        .dispatch(movement(&session, 4), &mut recovery)
+        .unwrap();
+    assert_eq!(object_order(&session, 0), order);
+    let preview = session.history().pending().unwrap();
+    let transaction: serde_json::Value = serde_json::from_str(preview.sealed()).unwrap();
+    assert_eq!(transaction["operations"][0]["op"], "test");
+    assert_eq!(
+        transaction["operations"][1]["pointer"],
+        serde_json::json!(["objects", 1, "uid"])
+    );
+    assert_eq!(transaction["operations"][2]["op"], "set");
+    assert!(
+        transaction["base"]
+            .as_array()
+            .is_some_and(|base| !base.is_empty())
+    );
+    let before_objects =
+        &session.history().document().world().planes()["main"].chunks[&(0, 0, 0)].objects;
+    let mut expected_objects = before_objects.clone();
+    expected_objects[1].at = Some([4, 2]);
+    assert_eq!(
+        session.world().planes()["main"].chunks[&(0, 0, 0)].objects,
+        expected_objects
+    );
+    let changed = preview.changed().next().unwrap();
+    let before = changed.before.as_ref().unwrap();
+    let after = changed.after.as_ref().unwrap();
+    let start = before.find("\"uid\": \"marker_1\"").unwrap();
+    let at_start = before[..start]
+        .rfind("[\n        3,\n        2\n      ]")
+        .unwrap();
+    let mut expected = before.clone();
+    expected.replace_range(
+        at_start..at_start + "[\n        3,\n        2\n      ]".len(),
+        "[4,2]",
+    );
+    assert_eq!(after, &expected);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    session.dispatch(Action::Accept, &mut recovery).unwrap();
+    let moved = fs::read(&path).unwrap();
+    session.dispatch(Action::Undo, &mut recovery).unwrap();
+    session.dispatch(Action::Accept, &mut recovery).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(object_order(&session, 0), order);
+    session.dispatch(Action::Redo, &mut recovery).unwrap();
+    session.dispatch(Action::Accept, &mut recovery).unwrap();
+    assert_eq!(fs::read(path).unwrap(), moved);
+    assert_eq!(object_order(&session, 0), order);
+}
+
+#[test]
+fn same_chunk_move_tests_uid_prototype_and_old_coordinates() {
+    let (_dir, mut session) = fixture();
+    let mut recovery = Records::default();
+    session
+        .dispatch(movement(&session, 4), &mut recovery)
+        .unwrap();
+    let sealed = session.history().pending().unwrap().sealed();
+    for (index, field, wrong) in [
+        (0, "value", serde_json::json!("grass")),
+        (1, "value", serde_json::json!("missing_uid")),
+        (2, "expect", serde_json::json!([0, 0])),
+    ] {
+        let mut transaction: serde_json::Value = serde_json::from_str(sealed).unwrap();
+        transaction["operations"][index][field] = wrong;
+        let result = tilewright_editor_commands::preview(
+            session.history().document(),
+            "wrong-precondition",
+            &transaction.to_string(),
+        );
+        let Err(tilewright_editor_commands::Error::Rejected(diagnostics)) = result else {
+            panic!("incorrect move precondition was accepted")
+        };
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "tx.conflict")
+        );
+    }
+}
+#[test]
+fn negative_coordinates_use_floor_chunks_and_cross_chunk_moves_use_relocation() {
+    let (_dir, mut session) = fixture_with(widen_view);
+    let mut recovery = Records::default();
+    session
+        .dispatch(
+            Action::Move {
+                uid: "marker_negative".into(),
+                x: -2,
+                y: 1,
+                expected: session.history().document().revision(),
+            },
+            &mut recovery,
+        )
+        .unwrap();
+    assert_eq!(
+        session
+            .world()
+            .object_location("marker_negative")
+            .unwrap()
+            .chunk,
+        (0, -1, 0)
+    );
+    assert_eq!(
+        session.world().object("marker_negative").unwrap().at,
+        Some([30, 1])
+    );
+    let transaction: serde_json::Value =
+        serde_json::from_str(session.history().pending().unwrap().sealed()).unwrap();
+    assert_eq!(
+        transaction["operations"][2]["value"],
+        serde_json::json!([30, 1])
+    );
+    session.dispatch(Action::Cancel, &mut recovery).unwrap();
+    session
+        .dispatch(movement(&session, -1), &mut recovery)
+        .unwrap();
+    let transaction: serde_json::Value =
+        serde_json::from_str(session.history().pending().unwrap().sealed()).unwrap();
+    assert_eq!(transaction["operations"][0]["op"], "object.move");
+    assert_eq!(
+        session.world().object_location("marker_1").unwrap().chunk,
+        (0, -1, 0)
+    );
+    assert_eq!(
+        session.world().object("marker_1").unwrap().at,
+        Some([31, 2])
+    );
+}
+
+#[test]
+fn same_tile_move_preserves_coordinate_whitespace_without_publication_or_recovery() {
+    let (dir, mut session) = fixture();
+    let mut recovery = Records::default();
+    let path = dir.path().join("planes/main/layers/0/0_0.jsonc");
+    let original = fs::read(&path).unwrap();
+    session
+        .dispatch(movement(&session, 3), &mut recovery)
+        .unwrap();
+    assert_eq!(session.history().pending().unwrap().changed().count(), 0);
+    session.dispatch(Action::Accept, &mut recovery).unwrap();
+    assert_eq!(fs::read(path).unwrap(), original);
+    assert!(recovery.inverses.is_empty());
+    assert_eq!(session.history().depths(), (0, 0));
+    assert_eq!(session.status().applied, Some(false));
+}
+
+#[test]
+fn read_only_or_unknown_uids_cannot_prepare_coordinate_edits() {
+    let (_dir, mut session) = fixture();
+    let mut recovery = Records::default();
+    for uid in ["marker_negative", "unknown_uid"] {
+        let error = session
+            .dispatch(
+                Action::Move {
+                    uid: uid.into(),
+                    x: 4,
+                    y: 2,
+                    expected: session.history().document().revision(),
+                },
+                &mut recovery,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("movement capability"));
+        assert!(session.history().pending().is_none());
+    }
+    assert!(recovery.inverses.is_empty());
 }
