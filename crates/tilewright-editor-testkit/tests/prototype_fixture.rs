@@ -96,7 +96,10 @@ fn resource_bytes_provenance_and_transition_mapping_are_complete() {
         );
         assert_eq!(u64::from(width), resource["width"].as_u64().unwrap());
         assert_eq!(u64::from(height), resource["height"].as_u64().unwrap());
-        let digest = format!("{:x}", Sha256::digest(&data));
+        let digest: String = Sha256::digest(&data)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         assert_eq!(resource["sha256"].as_str().unwrap(), digest);
         let relative = path.strip_prefix(repo).unwrap().to_str().unwrap();
         let asset = provenance["assets"]
