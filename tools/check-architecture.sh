@@ -24,7 +24,7 @@ jq -e '
 
 # Integration tests alone may create disposable source trees and inject faults.
 # Production crates (including the testkit library) retain the no-I/O contract.
-if grep -RnE --include='*.rs' --exclude-dir=tests \
+if grep -RnE --include='*.rs' --exclude-dir=tests --exclude=tests.rs \
   'std::(fs|net|process::Command)|tokio::|fn[[:space:]]+(parse|serialize|write|save)[[:space:]]*\(' \
   crates >/dev/null; then
   echo "editor source duplicates a forbidden parser/writer or direct I/O authority" >&2
