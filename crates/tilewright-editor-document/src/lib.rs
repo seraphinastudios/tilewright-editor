@@ -83,9 +83,8 @@ impl WorldDocument {
 
     /// Reload the originally opened toolkit root, never re-resolving its display path.
     pub fn reload(&self) -> Result<Self, Error> {
-        let world =
-            tilewright_source::load_edited_in(&self.source, &self.options, &Overlay::new())
-                .map_err(Error::Invalid)?;
+        let world = tilewright_source::load_edited_in(&self.source, &self.options, &Overlay::new())
+            .map_err(Error::Invalid)?;
         Ok(Self {
             root: self.root.clone(),
             source: self.source.clone(),
@@ -332,7 +331,10 @@ mod tests {
         let root = fixture_world("prototype-neutral");
         let mut bounded = super::prototype_load_options();
         bounded.maximum_total_bytes = 1;
-        assert!(matches!(WorldDocument::open_with_options(&root, bounded), Err(Error::Invalid(_))));
+        assert!(matches!(
+            WorldDocument::open_with_options(&root, bounded),
+            Err(Error::Invalid(_))
+        ));
         let document = WorldDocument::open_prototype(&root).unwrap();
         assert_eq!(document.load_options(), super::prototype_load_options());
         let reopened = document.reload().unwrap();

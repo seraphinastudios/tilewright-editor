@@ -123,7 +123,9 @@ fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
 
 impl Application {
     fn rebuild(&mut self) -> Result<()> {
-        self.session.invalidate_frame().map_err(|error| error.to_string())?;
+        self.session
+            .invalidate_frame()
+            .map_err(|error| error.to_string())?;
         self.view.frame_revision = self.session.generation();
         loader::revalidate(
             self.session.history().document().source(),
@@ -601,7 +603,11 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             if app.demo_step(demo_step)? {
                 break 'running;
             }
-            phase = ["before", "pending", "after", "undo", "redo", "field", "terrain"].get(demo_step).copied();
+            phase = [
+                "before", "pending", "after", "undo", "redo", "field", "terrain",
+            ]
+            .get(demo_step)
+            .copied();
             demo_step += 1;
             next_demo = Instant::now() + Duration::from_millis(2500);
             dirty = true;
@@ -632,7 +638,9 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                         terminal_field(&proof.backend),
                         terminal_field(&proof.adapter_name)
                     );
-                    if let Some(name) = phase.take() { println!("native-phase={name}"); }
+                    if let Some(name) = phase.take() {
+                        println!("native-phase={name}");
+                    }
                 }
                 Err(error) => {
                     let reason = error.to_string();

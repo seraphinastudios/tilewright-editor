@@ -80,8 +80,9 @@ pub fn preview(document: &WorldDocument, name: &str, text: &str) -> Result<Previ
         .iter()
         .map(|file| (file.path.clone(), file.before.clone()))
         .collect();
-    let baseline = tilewright_source::load_edited_in(document.source(), &document.load_options(), &before)
-        .map_err(Error::Rejected)?;
+    let baseline =
+        tilewright_source::load_edited_in(document.source(), &document.load_options(), &before)
+            .map_err(Error::Rejected)?;
     if baseline.source_digest() != document.revision() {
         return Err(Error::StaleRevision);
     }
