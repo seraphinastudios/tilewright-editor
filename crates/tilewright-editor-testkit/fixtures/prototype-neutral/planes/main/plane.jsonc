@@ -1,0 +1,7 @@
+{
+  "format": "tilewright.plane/1",
+  "id": "main",
+  "title": "Authored geometric meadow",
+  "kind": "shared",
+  "chunk_size": 32
+}
