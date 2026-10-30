@@ -84,10 +84,12 @@ class PackageProvenanceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'registry lock identity mismatch'):
                 provenance.dependency_provenance(root)
 
-    def test_actual_editor_lock_has_all_six_dependency_coordinates(self):
+    def test_actual_editor_lock_has_all_released_dependency_coordinates(self):
         root = Path(__file__).resolve().parents[1]
         result = provenance.dependency_provenance(root)
-        self.assertEqual(len(result['dependencies']), 6)
+        policy = json.loads((root / 'policy/released-dependencies.json').read_text())
+        self.assertEqual({record['name'] for record in result['dependencies']},
+                         {record['name'] for record in policy['dependencies']})
         self.assertEqual({record['repository'] for record in result['dependencies']},
                          {'seraphinastudios/tilewright-renderer', 'seraphinastudios/tilewright-world'})
 

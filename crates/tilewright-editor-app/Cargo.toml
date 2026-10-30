@@ -11,6 +11,20 @@ repository.workspace = true
 tilewright-editor-commands.workspace = true
 tilewright-editor-document.workspace = true
 tilewright-editor-preview.workspace = true
+tilewright-editor-ui.workspace = true
+tilewright-editor-recovery.workspace = true
+tilewright-source.workspace = true
+tilewright-edit.workspace = true
+tilewright-render-api.workspace = true
+tilewright-render-world.workspace = true
+tilewright-render-resources.workspace = true
+tilewright-render-testkit.workspace = true
+tilewright-render-wgpu.workspace = true
+tilewright-render-sdl3.workspace = true
+tilewright-scene.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+png.workspace = true
 sdl3.workspace = true
 
 [lints]
