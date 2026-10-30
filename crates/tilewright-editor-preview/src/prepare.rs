@@ -11,6 +11,9 @@ use tilewright_render_world::{Anchor, HeightField, Stretch, TextureRef, WorldObj
 use tilewright_scene::{Digest256, ResourceId, SemanticId};
 use tilewright_source::{CHUNK_SIZE, World};
 
+// Preserve source insertion order independently of sorted semantic-ID allocation.
+type SceneObjects = BTreeMap<SelectionKey, (usize, WorldObject)>;
+
 fn global(chunk: i64, local: u16) -> Result<i64, PreviewError> {
     chunk
         .checked_mul(i64::from(CHUNK_SIZE))
@@ -50,11 +53,11 @@ fn texture(
     Ok((texture, *anchor))
 }
 fn identified(
-    objects: BTreeMap<SelectionKey, WorldObject>,
+    objects: SceneObjects,
 ) -> Result<(Vec<WorldObject>, BTreeMap<SemanticId, SelectionKey>), PreviewError> {
     let mut ordered = Vec::with_capacity(objects.len());
     let mut picks = BTreeMap::new();
-    for (index, (key, mut object)) in objects.into_iter().enumerate() {
+    for (index, (key, (sequence, mut object))) in objects.into_iter().enumerate() {
         let id = SemanticId(
             u32::try_from(index)
                 .ok()
@@ -63,17 +66,22 @@ fn identified(
         );
         object.semantic_id = id;
         picks.insert(id, key);
-        ordered.push(object);
+        ordered.push((sequence, object));
     }
-    Ok((ordered, picks))
+    ordered.sort_by_key(|(sequence, _)| *sequence);
+    Ok((
+        ordered.into_iter().map(|(_, object)| object).collect(),
+        picks,
+    ))
 }
 fn insert(
-    objects: &mut BTreeMap<SelectionKey, WorldObject>,
+    objects: &mut SceneObjects,
     key: SelectionKey,
     object: WorldObject,
     limits: PreviewLimits,
 ) -> Result<(), PreviewError> {
-    if objects.len() >= limits.maximum_objects || objects.insert(key, object).is_some() {
+    let sequence = objects.len();
+    if sequence >= limits.maximum_objects || objects.insert(key, (sequence, object)).is_some() {
         return Err(failure("duplicate semantic key or object budget exceeded"));
     }
     Ok(())
@@ -126,8 +134,9 @@ pub fn prepare(
         limits,
     };
     let heights = adapter.heights()?;
-    let (mut objects, inventory) = adapter.objects()?;
+    let mut objects = BTreeMap::new();
     adapter.terrain(&mut objects)?;
+    let inventory = adapter.objects(&mut objects)?;
     let (objects, picks) = identified(objects)?;
     let world_view = WorldView {
         revision: view.frame_revision,
@@ -244,7 +253,7 @@ impl Adapter<'_> {
             heights,
         })
     }
-    fn objects(&self) -> Result<(BTreeMap<SelectionKey, WorldObject>, usize), PreviewError> {
+    fn objects(&self, objects: &mut SceneObjects) -> Result<usize, PreviewError> {
         let Self {
             world,
             catalog,
@@ -253,7 +262,6 @@ impl Adapter<'_> {
             limits,
         } = *self;
         let plane = &world.planes()[&view.plane];
-        let mut objects = BTreeMap::new();
         let mut scanned = 0usize;
         let mut inventory = 0usize;
         for (&(layer, cx, cy), chunk) in &plane.chunks {
@@ -302,15 +310,12 @@ impl Adapter<'_> {
                 if !object.inventory.is_empty() {
                     inventory += 1;
                 }
-                insert(&mut objects, SelectionKey::Object { uid }, rendered, limits)?;
+                insert(objects, SelectionKey::Object { uid }, rendered, limits)?;
             }
         }
-        Ok((objects, inventory))
+        Ok(inventory)
     }
-    fn terrain(
-        &self,
-        objects: &mut BTreeMap<SelectionKey, WorldObject>,
-    ) -> Result<(), PreviewError> {
+    fn terrain(&self, objects: &mut SceneObjects) -> Result<(), PreviewError> {
         let Self {
             world,
             catalog,
@@ -391,9 +396,7 @@ impl Adapter<'_> {
         }
         Ok(())
     }
-    fn reference(
-        &self,
-    ) -> Result<(BTreeMap<SelectionKey, WorldObject>, MemoryResources), PreviewError> {
+    fn reference(&self) -> Result<(SceneObjects, MemoryResources), PreviewError> {
         let Self {
             world,
             cache,

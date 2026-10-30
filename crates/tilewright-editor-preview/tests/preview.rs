@@ -425,3 +425,43 @@ fn isometric_reference_diamonds_pick_centers_and_leave_corners_empty() {
     assert_eq!(p.pick(5, 40, 36, true).unwrap(), None);
     assert_eq!(p.pick(5, 87, 44, true).unwrap(), None);
 }
+
+#[test]
+fn coincident_object_source_order_survives_sorted_semantic_ids() {
+    let (dir, root, _, mut catalog) = fixture(false, false);
+    let path = dir.path().join("planes/main/layers/0/0_0.jsonc");
+    let mut chunk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    chunk["objects"][0]["uid"] = json!("z_first");
+    chunk["objects"][0]["layer"] = json!("floor");
+    let mut last = chunk["objects"][0].clone();
+    last["uid"] = json!("a_last");
+    chunk["objects"].as_array_mut().unwrap().push(last);
+    fs::write(path, chunk.to_string()).unwrap();
+    catalog["editing"]["movable_uids"] = json!([]);
+    put(dir.path(), "preview.jsonc", &catalog.to_string());
+    let world = tilewright_source::load(dir.path()).unwrap();
+    let limits = PreviewLimits::default();
+    let (catalog, cache) = loader::load(&root, &world, limits).unwrap();
+    let p = prepare(
+        &world,
+        &catalog,
+        &cache,
+        &catalog.default_view(&world, 128, 96, 1),
+        limits,
+    )
+    .unwrap();
+    // Alphabetical identity allocation gives a_last the smaller ID, while
+    // source ordering still lets the later coincident object cover z_first.
+    assert_eq!(
+        p.picks[&tilewright_scene::SemanticId(1)],
+        SelectionKey::Object {
+            uid: "a_last".into()
+        }
+    );
+    assert_eq!(
+        p.pick(1, 40, 32, false).unwrap(),
+        Some(SelectionKey::Object {
+            uid: "a_last".into()
+        })
+    );
+}
