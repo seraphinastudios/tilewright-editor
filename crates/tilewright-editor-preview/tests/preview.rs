@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path};
+use std::{fmt::Write, fs, path::Path};
 use tilewright_editor_preview::{PreviewLimits, SelectionKey, loader, prepare, render_scene};
 use tilewright_render_api::{BackendPreference, TargetDescriptor, TargetKind};
 use tilewright_render_resources::ResourceRequest;
@@ -17,7 +17,11 @@ fn put(root: &Path, path: &str, text: &str) {
     fs::write(p, text).unwrap();
 }
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    let mut output = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        write!(output, "{byte:02x}").unwrap();
+    }
+    output
 }
 fn atx(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
     let mut b = b"ATX1".to_vec();
