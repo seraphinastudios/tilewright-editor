@@ -262,6 +262,7 @@ fn retention_failure_keeps_reviewable_pending_and_source() {
     assert!(records.inverses.is_empty());
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn accept_undo_redo_reopen_preserve_exact_world_bytes_and_scene() {
     let (dir, mut session) = fixture();
@@ -356,4 +357,52 @@ fn semantic_field_encoding_rejects_large_or_deep_values_before_planning() {
         );
         assert!(session.history().pending().is_none());
     }
+}
+
+// The prototype deliberately uses checked publication on every platform. Windows
+// cannot provide the released toolkit's checked-access guarantee and must refuse.
+#[cfg(windows)]
+#[test]
+fn windows_checked_publication_refuses_without_false_success_or_source_changes() {
+    let (dir, mut session) = fixture();
+    let chunk = dir.path().join("planes/main/layers/0/0_0.jsonc");
+    let original = fs::read(&chunk).unwrap();
+    let original_revision = session.history().document().revision();
+    let mut records = Records::default();
+    session
+        .dispatch(movement(&session, 4), &mut records)
+        .unwrap();
+    let inverse = session.history().pending().unwrap().inverse().to_owned();
+
+    let error = session.dispatch(Action::Accept, &mut records).unwrap_err();
+    assert!(error.to_string().contains("tx.io"), "{error}");
+    assert!(error.to_string().contains("unchecked access"), "{error}");
+    assert_eq!(session.status().phase, SessionPhase::Blocked);
+    assert_eq!(session.status().applied, Some(false));
+    assert_eq!(session.status().durable, Some(true));
+    assert_eq!(session.status().cleaned, Some(true));
+    assert!(
+        !session
+            .status()
+            .message
+            .contains("Published World workspace")
+    );
+    assert_eq!(fs::read(&chunk).unwrap(), original);
+    assert_eq!(
+        session.history().document().reload().unwrap().revision(),
+        original_revision
+    );
+    assert_eq!(session.history().document().revision(), original_revision);
+    assert_eq!(session.history().depths(), (0, 0));
+    assert!(session.history().needs_reload());
+    assert_eq!(session.history().pending().unwrap().inverse(), inverse);
+    // History retains recovery before asking the toolkit to publish. Refusal
+    // preserves that exact record; it never acknowledges a successful edit.
+    assert_eq!(records.inverses, [inverse]);
+    for action in [Action::Accept, Action::Undo, Action::Redo, Action::Reopen] {
+        assert!(session.dispatch(action, &mut records).is_err());
+        assert_eq!(session.status().phase, SessionPhase::Blocked);
+    }
+    assert_eq!(records.inverses.len(), 1);
+    assert_eq!(fs::read(chunk).unwrap(), original);
 }
