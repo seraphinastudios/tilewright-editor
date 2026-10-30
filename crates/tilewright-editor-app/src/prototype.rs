@@ -215,17 +215,15 @@ impl Application {
             PreviewLimits::default(),
         )
         .map_err(|error| error.to_string())?;
-        if let Some(key) = self
+        let key = self
             .prepared
             .pick(self.view.frame_revision, x, y, self.terrain)
             .map_err(|error| error.to_string())?
-        {
-            self.action(Action::Select {
-                generation: self.view.frame_revision,
-                key,
-            })?;
-        }
-        Ok(())
+            .ok_or("no selectable semantic hit at this pixel")?;
+        self.action(Action::Select {
+            generation: self.view.frame_revision,
+            key,
+        })
     }
 
     fn nudge(&mut self, delta: [i64; 2]) -> Result<()> {

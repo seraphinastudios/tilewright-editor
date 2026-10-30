@@ -118,3 +118,18 @@ fn failed_empty_undo_refreshes_pending_scene_and_invalidates_its_pick_generation
     assert_eq!(app.frame(false).unwrap().rgba8, before);
     assert!(app.prepared.pick(pending_generation, 1, 1, false).is_err());
 }
+
+#[test]
+fn background_click_cannot_paint_an_earlier_cell_selection() {
+    let (_temporary, mut app) = application();
+    app.select_empty_cell().unwrap();
+    let original = app.session.world().source_digest();
+    let frame = app.frame(true).unwrap();
+    let background = frame.semantic_ids.iter().position(|id| *id == 0).unwrap();
+    let x = u32::try_from(background % usize::try_from(frame.width).unwrap()).unwrap();
+    let y = u32::try_from(background / usize::try_from(frame.width).unwrap()).unwrap();
+    let result = app.click(x, y).and_then(|()| app.paint());
+    assert!(result.unwrap_err().contains("no selectable semantic hit"));
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.session.world().source_digest(), original);
+}
