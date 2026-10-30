@@ -45,7 +45,7 @@ impl Storage for Memory {
     fn check_name(&self, _: &str, _: &str) -> Result<(), StorageError> {
         self.operation(FailureKind::CheckName, || Ok(()))
     }
-    fn write(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError> {
+    fn stage_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError> {
         self.operation(FailureKind::Write, || {
             assert!(
                 !self.files.borrow().contains_key(name),
@@ -457,7 +457,7 @@ mod linux {
         store
             .store
             .storage
-            .write("inverse-0001.json.stage", b"correct")
+            .stage_bytes("inverse-0001.json.stage", b"correct")
             .unwrap();
         fs::write(dir.path().join("inverse-0001.json.stage"), b"corrupt").unwrap();
         assert_eq!(
@@ -499,8 +499,8 @@ mod linux {
         fn check_name(&self, stage: &str, name: &str) -> Result<(), StorageError> {
             self.finish(self.storage.check_name(stage, name))
         }
-        fn write(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError> {
-            let result = self.storage.write(name, bytes);
+        fn stage_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError> {
+            let result = self.storage.stage_bytes(name, bytes);
             self.finish(result)
         }
         fn verify(&self, name: &str, bytes: &[u8]) -> Result<(), StorageError> {

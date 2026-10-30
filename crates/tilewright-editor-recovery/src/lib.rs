@@ -231,7 +231,7 @@ trait Storage {
     fn validate(&self) -> Result<(), StorageError>;
     fn exists(&self, name: &str) -> Result<bool, StorageError>;
     fn check_name(&self, stage: &str, name: &str) -> Result<(), StorageError>;
-    fn write(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError>;
+    fn stage_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError>;
     fn verify(&self, name: &str, bytes: &[u8]) -> Result<(), StorageError>;
     fn rename(&mut self, stage: &str, name: &str) -> Result<(), StorageError>;
     fn sync(&mut self) -> Result<bool, StorageError>;
@@ -302,7 +302,7 @@ impl Storage for RootStorage {
             .check_final_name(stage, name)
             .map_err(|e| (FailureKind::CheckName, access_detail(&e)))
     }
-    fn write(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError> {
+    fn stage_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), StorageError> {
         self.directory
             .write(name, Some(&self.access.new_file()), bytes)
             .map_err(|e| (FailureKind::Write, access_detail(&e)))
@@ -424,7 +424,7 @@ impl<S: Storage> Store<S> {
         self.storage.check_name(stage, &record.name)?;
         // World write removes an existing target. Only a private, exclusively
         // locked store plus these absence checks makes this fresh-name write safe.
-        self.storage.write(stage, bytes)?;
+        self.storage.stage_bytes(stage, bytes)?;
         self.storage.verify(stage, bytes)?;
         self.absent(&record.name)?;
         self.storage.rename(stage, &record.name)?;
