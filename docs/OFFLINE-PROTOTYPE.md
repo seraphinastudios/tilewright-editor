@@ -17,7 +17,9 @@ baseline belong to the external adapter workspace and are never bundled here.
 World into a **new absent** task directory, with distinct World, recovery and
 evidence children. It refuses links and special input files, bounds the copy,
 uses private 0700 directories and 0600 files, syncs creation, records directory
-identities and passes already-open directory descriptors to the child editor.
+identities and kernel FD mount IDs/filesystem types, rejects volatile/unknown
+backing (including tmpfs, ramfs and overlay), rechecks the retained identities
+at launch and passes already-open directory descriptors to the child editor.
 Source paths are data only. The executable is an explicit trusted operator
 argument; it is never read from the project.
 

@@ -123,6 +123,14 @@ fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
 
 impl Application {
     fn rebuild(&mut self) -> Result<()> {
+        let result = self.rebuild_inner();
+        if let Err(reason) = &result {
+            self.blocked = Some(reason.clone());
+        }
+        result
+    }
+
+    fn rebuild_inner(&mut self) -> Result<()> {
         self.session
             .invalidate_frame()
             .map_err(|error| error.to_string())?;
@@ -153,7 +161,9 @@ impl Application {
             .session
             .dispatch(action, &mut self.recovery)
             .map_err(|error| error.to_string());
-        if let Some(record) = self.recovery.records().last() {
+        if let Some(error) = self.recovery.last_error() {
+            self.session.set_recovery_descriptor(error.to_string());
+        } else if let Some(record) = self.recovery.records().last() {
             self.session.set_recovery_descriptor(format!(
                 "{} sha256={}",
                 record.name,
@@ -507,93 +517,21 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
     let mut minimized = false;
     'running: loop {
         for event in events.poll_iter() {
-            let result = match event {
+            if matches!(
+                event,
                 Event::Quit { .. }
-                | Event::Window {
-                    win_event: WindowEvent::CloseRequested,
-                    ..
-                } => break 'running,
-                Event::Window {
-                    win_event: WindowEvent::Minimized,
-                    ..
-                } => {
-                    minimized = true;
-                    Ok(())
-                }
-                Event::Window {
-                    win_event:
-                        WindowEvent::Restored
-                        | WindowEvent::PixelSizeChanged(..)
-                        | WindowEvent::Resized(..),
-                    ..
-                } => {
-                    let size = window.size_in_pixels();
-                    minimized = size.0 == 0 || size.1 == 0;
-                    if minimized {
-                        Ok(())
-                    } else {
-                        renderer
-                            .resize(size.0, size.1)
-                            .map_err(|error| error.to_string())
-                            .and_then(|()| {
-                                app.view.camera.width = size.0;
-                                app.view.camera.height = size.1;
-                                app.rebuild()
-                            })
+                    | Event::Window {
+                        win_event: WindowEvent::CloseRequested,
+                        ..
                     }
-                }
-                Event::MouseButtonDown {
-                    mouse_btn: MouseButton::Left,
-                    x,
-                    y,
-                    ..
-                } if !minimized => {
-                    crate::viewport::physical_pixel([x, y], window.size(), window.size_in_pixels())
-                        .ok_or("pointer outside physical viewport".to_owned())
-                        .and_then(|(px, py)| app.click(px, py))
-                        .and_then(|()| if app.terrain { app.paint() } else { Ok(()) })
-                }
-                Event::KeyDown {
-                    keycode: Some(key),
-                    repeat: false,
-                    ..
-                } => match key {
-                    Keycode::Q => break 'running,
-                    Keycode::Return | Keycode::KpEnter => app.action(Action::Accept),
-                    Keycode::Escape => app.action(Action::Cancel),
-                    Keycode::Z => app.action(Action::Undo),
-                    Keycode::Y => app.action(Action::Redo),
-                    Keycode::R => app.action(Action::Reopen),
-                    Keycode::F => app.field(),
-                    Keycode::Left => app.nudge([-1, 0]),
-                    Keycode::Right => app.nudge([1, 0]),
-                    Keycode::Up => app.nudge([0, -1]),
-                    Keycode::Down => app.nudge([0, 1]),
-                    Keycode::T => {
-                        app.terrain = !app.terrain;
-                        println!("terrain mode={}", app.terrain);
-                        Ok(())
+                    | Event::KeyDown {
+                        keycode: Some(Keycode::Q),
+                        ..
                     }
-                    Keycode::W | Keycode::A | Keycode::S | Keycode::D => {
-                        let change = match key {
-                            Keycode::W => [0.0, -1.0],
-                            Keycode::A => [-1.0, 0.0],
-                            Keycode::S => [0.0, 1.0],
-                            _ => [1.0, 0.0],
-                        };
-                        app.view.camera.center[0] += change[0];
-                        app.view.camera.center[1] += change[1];
-                        app.rebuild()
-                    }
-                    Keycode::Plus | Keycode::Equals | Keycode::Minus => {
-                        let factor = if key == Keycode::Minus { 0.8 } else { 1.25 };
-                        app.view.camera.zoom = (app.view.camera.zoom * factor).clamp(0.25, 8.0);
-                        app.rebuild()
-                    }
-                    _ => Ok(()),
-                },
-                _ => Ok(()),
-            };
+            ) {
+                break 'running;
+            }
+            let result = native_event(&mut app, &mut renderer, &window, event, &mut minimized);
             dirty = true;
             if let Err(error) = result {
                 eprintln!("{}", terminal_field(&error));
@@ -603,55 +541,25 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             if app.demo_step(demo_step)? {
                 break 'running;
             }
-            phase = [
-                "before", "pending", "after", "undo", "redo", "field", "terrain",
-            ]
-            .get(demo_step)
-            .copied();
+            phase = if (demo_step == 5 && app.session.catalog().editing().fields.is_empty())
+                || (demo_step == 6 && app.session.catalog().editing().terrain.is_empty())
+            {
+                None
+            } else {
+                [
+                    "before", "pending", "after", "undo", "redo", "field", "terrain",
+                ]
+                .get(demo_step)
+                .copied()
+            };
             demo_step += 1;
             next_demo = Instant::now() + Duration::from_millis(2500);
             dirty = true;
         }
         if dirty && !minimized {
-            let title = format!(
-                "Tilewright {} | {} | {}",
-                app.session.catalog().presentation(),
-                app.session.status(),
-                HELP
-            );
-            window
-                .set_title(&terminal_field(&title))
-                .map_err(|error| error.to_string())?;
-            match tilewright_render_sdl3::present_existing(
-                &mut renderer,
-                &window,
-                RenderRequest {
-                    scene: &app.prepared.scene,
-                    resources: app.prepared.resources.clone(),
-                },
-            ) {
-                Ok(proof) => {
-                    println!(
-                        "native presented {}x{} backend={} adapter={}",
-                        proof.width,
-                        proof.height,
-                        terminal_field(&proof.backend),
-                        terminal_field(&proof.adapter_name)
-                    );
-                    if let Some(name) = phase.take() {
-                        println!("native-phase={name}");
-                    }
-                }
-                Err(error) => {
-                    let reason = error.to_string();
-                    app.blocked = Some(reason.clone());
-                    window
-                        .set_title(&format!(
-                            "Tilewright BLOCKED: {} | Q quit",
-                            terminal_field(&reason)
-                        ))
-                        .map_err(|error| error.to_string())?;
-                    eprintln!("{}", terminal_field(&reason));
+            if native_present(&mut app, &mut renderer, &mut window)? {
+                if let Some(name) = phase.take() {
+                    println!("native-phase={name}");
                 }
             }
             dirty = false;
@@ -661,4 +569,145 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
     pollster::block_on(renderer.finish()).map_err(|error| error.to_string())?;
     println!("native window closed cleanly");
     Ok(())
+}
+
+fn native_event(
+    app: &mut Application,
+    renderer: &mut WgpuRenderer,
+    window: &sdl3::video::Window,
+    event: Event,
+    minimized: &mut bool,
+) -> Result<()> {
+    match event {
+        Event::Window {
+            win_event: WindowEvent::Minimized,
+            ..
+        } => {
+            *minimized = true;
+            Ok(())
+        }
+        Event::Window {
+            win_event:
+                WindowEvent::Restored | WindowEvent::PixelSizeChanged(..) | WindowEvent::Resized(..),
+            ..
+        } => {
+            let size = window.size_in_pixels();
+            *minimized = size.0 == 0 || size.1 == 0;
+            if *minimized {
+                return Ok(());
+            }
+            renderer
+                .resize(size.0, size.1)
+                .map_err(|error| error.to_string())?;
+            app.view.camera.width = size.0;
+            app.view.camera.height = size.1;
+            app.rebuild()
+        }
+        Event::MouseButtonDown {
+            mouse_btn: MouseButton::Left,
+            x,
+            y,
+            ..
+        } if !*minimized => {
+            let (px, py) =
+                crate::viewport::physical_pixel([x, y], window.size(), window.size_in_pixels())
+                    .ok_or("pointer outside physical viewport")?;
+            app.click(px, py)?;
+            if app.terrain { app.paint() } else { Ok(()) }
+        }
+        Event::KeyDown {
+            keycode: Some(key),
+            repeat: false,
+            ..
+        } => native_key(app, key),
+        _ => Ok(()),
+    }
+}
+
+fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
+    match key {
+        Keycode::Return | Keycode::KpEnter => app.action(Action::Accept),
+        Keycode::Escape => app.action(Action::Cancel),
+        Keycode::Z => app.action(Action::Undo),
+        Keycode::Y => app.action(Action::Redo),
+        Keycode::R => app.action(Action::Reopen),
+        Keycode::F => app.field(),
+        Keycode::Left => app.nudge([-1, 0]),
+        Keycode::Right => app.nudge([1, 0]),
+        Keycode::Up => app.nudge([0, -1]),
+        Keycode::Down => app.nudge([0, 1]),
+        Keycode::T => {
+            app.terrain = !app.terrain;
+            println!("terrain mode={}", app.terrain);
+            Ok(())
+        }
+        Keycode::W | Keycode::A | Keycode::S | Keycode::D => {
+            let change = match key {
+                Keycode::W => [0.0, -1.0],
+                Keycode::A => [-1.0, 0.0],
+                Keycode::S => [0.0, 1.0],
+                _ => [1.0, 0.0],
+            };
+            app.view.camera.center[0] += change[0];
+            app.view.camera.center[1] += change[1];
+            app.rebuild()
+        }
+        Keycode::Plus | Keycode::Equals | Keycode::Minus => {
+            let factor = if key == Keycode::Minus { 0.8 } else { 1.25 };
+            app.view.camera.zoom = (app.view.camera.zoom * factor).clamp(0.25, 8.0);
+            app.rebuild()
+        }
+        _ => Ok(()),
+    }
+}
+
+fn native_present(
+    app: &mut Application,
+    renderer: &mut WgpuRenderer,
+    window: &mut sdl3::video::Window,
+) -> Result<bool> {
+    let title = if let Some(reason) = &app.blocked {
+        format!("Tilewright BLOCKED: {reason} | Q quit")
+    } else {
+        format!(
+            "Tilewright {} | {} | {}",
+            app.session.catalog().presentation(),
+            app.session.status(),
+            HELP
+        )
+    };
+    window
+        .set_title(&terminal_field(&title))
+        .map_err(|error| error.to_string())?;
+    match tilewright_render_sdl3::present_existing(
+        renderer,
+        window,
+        RenderRequest {
+            scene: &app.prepared.scene,
+            resources: app.prepared.resources.clone(),
+        },
+    ) {
+        Ok(proof) => {
+            println!(
+                "native presented {}x{} backend={} adapter={}",
+                proof.width,
+                proof.height,
+                terminal_field(&proof.backend),
+                terminal_field(&proof.adapter_name)
+            );
+            Ok(true)
+        }
+        Err(error) => {
+            let reason = error.to_string();
+            app.blocked = Some(reason.clone());
+            window
+                .set_title(&format!(
+                    "Tilewright BLOCKED: {} | Q quit",
+                    terminal_field(&reason)
+                ))
+                .map_err(|error| error.to_string())?;
+            eprintln!("{}", terminal_field(&reason));
+            Ok(false)
+        }
+    }
 }

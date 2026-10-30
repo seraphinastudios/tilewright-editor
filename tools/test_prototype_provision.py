@@ -18,8 +18,16 @@ spec.loader.exec_module(provision)
 @unittest.skipUnless(sys.platform == 'linux', 'Linux descriptor provisioning')
 class ProvisionTests(unittest.TestCase):
     def test_private_fresh_copy_preserves_original_and_refuses_existing(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
             root = Path(temporary)
+            fd = provision.directory(root)
+            try:
+                try:
+                    provision.persistent_mount(fd)
+                except ValueError as error:
+                    self.skipTest(f'persistent test root unavailable: {error}')
+            finally:
+                os.close(fd)
             source = root / 'source'
             source.mkdir()
             (source / 'world.jsonc').write_bytes(b'{"original": true}\n')
@@ -37,6 +45,26 @@ class ProvisionTests(unittest.TestCase):
             before = (destination/'provision.json').read_bytes()
             self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
             self.assertEqual((destination/'provision.json').read_bytes(), before)
+
+    def test_volatile_tmpfs_is_refused_before_creating_a_session(self):
+        with tempfile.TemporaryDirectory(dir='/dev/shm' if Path('/dev/shm').is_dir() and os.access('/dev/shm', os.W_OK) else '/tmp') as temporary:
+            root = Path(temporary)
+            fd = provision.directory(root)
+            try:
+                try:
+                    provision.persistent_mount(fd)
+                except ValueError:
+                    pass
+                else:
+                    self.skipTest('no writable volatile test mount available')
+            finally:
+                os.close(fd)
+            source = root/'source'
+            source.mkdir()
+            destination = root/'session'
+            result = subprocess.run([sys.executable,str(SCRIPT),'--world',str(source),'--destination',str(destination)],capture_output=True)
+            self.assertNotEqual(result.returncode,0)
+            self.assertFalse(destination.exists())
 
     def test_copy_refuses_links_and_retains_any_partial_data(self):
         with tempfile.TemporaryDirectory() as temporary:

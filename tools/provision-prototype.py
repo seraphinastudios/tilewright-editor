@@ -17,17 +17,54 @@ import sys
 
 MAX_FILES = 4096
 MAX_BYTES = 64 << 20
+PERSISTENT_LOCAL = {'ext2', 'ext3', 'ext4', 'xfs', 'btrfs', 'f2fs', 'zfs', 'bcachefs'}
 
 
 def directory(path):
     return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
+def kernel_text(path, maximum=1 << 20):
+    with open(path, 'rb') as stream:
+        data = stream.read(maximum + 1)
+    if len(data) > maximum:
+        raise ValueError('kernel mount evidence exceeds bound')
+    return data.decode('ascii')
+
+
+def persistent_mount(fd):
+    """Correlate this retained directory FD with current kernel mount evidence.
+
+    World also checks ACL/filesystem compatibility. This additional deployment
+    check excludes volatile filesystems whose fsync succeeds without surviving
+    reboot. It does not attest physical hardware or hostile root processes.
+    """
+    value = os.fstat(fd)
+    ids = [line.split()[1] for line in kernel_text(f'/proc/self/fdinfo/{fd}', 4096).splitlines()
+           if line.startswith('mnt_id:')]
+    if len(ids) != 1 or not ids[0].isdigit():
+        raise ValueError('cannot identify retained directory mount')
+    matches = [line for line in kernel_text('/proc/self/mountinfo').splitlines()
+               if line.split(' ', 1)[0] == ids[0]]
+    if len(matches) != 1 or matches[0].count(' - ') != 1:
+        raise ValueError('retained directory mount is unknown')
+    before, after = matches[0].split(' - ')
+    fields, filesystem = before.split(), after.split()
+    device = f'{os.major(value.st_dev)}:{os.minor(value.st_dev)}'
+    if len(fields) < 6 or len(filesystem) < 3 or fields[2] != device:
+        raise ValueError('retained mount identity does not match directory device')
+    kind = filesystem[0]
+    if kind not in PERSISTENT_LOCAL or 'rw' not in fields[5].split(','):
+        raise ValueError(f'prototype durable editing refuses volatile, unknown or unsupported filesystem: {kind}')
+    return {'mount_id': int(ids[0]), 'device': device, 'filesystem': kind}
+
+
 def identity(fd):
     value = os.fstat(fd)
     if not stat.S_ISDIR(value.st_mode) or value.st_uid != os.getuid() or stat.S_IMODE(value.st_mode) != 0o700:
         raise ValueError('session directories must be owned by this user with mode 0700')
-    return {'device': value.st_dev, 'inode': value.st_ino, 'uid': value.st_uid, 'mode': '0700'}
+    return {'device': value.st_dev, 'inode': value.st_ino, 'uid': value.st_uid, 'mode': '0700',
+            'mount': persistent_mount(fd)}
 
 
 def copy_tree(source, destination):
@@ -113,6 +150,7 @@ def main():
     parent_fd = directory(parent)
     held = []
     try:
+        persistent_mount(parent_fd)
         os.mkdir(name, mode=0o700, dir_fd=parent_fd)
         task_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
         held.append(task_fd)
@@ -140,6 +178,12 @@ def main():
             os.fsync(stream.fileno())
         os.fsync(task_fd)
         print(json.dumps({'session': str(parent / name), 'provision': receipt}), flush=True)
+        # Revalidate the same retained FDs at use, after copying and syncing.
+        for child, fd in children.items():
+            if identity(fd) != ids[child]:
+                raise ValueError('provisioned directory identity or mount changed before launch')
+        if identity(task_fd) != ids['session']:
+            raise ValueError('session identity or mount changed before launch')
         if args.editor:
             executable = args.editor.resolve(strict=True)
             command = [str(executable), 'prototype',
