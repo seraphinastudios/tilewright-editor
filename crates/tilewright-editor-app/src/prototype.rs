@@ -181,6 +181,13 @@ impl Application {
     }
 
     fn report(&self) {
+        for diagnostic in &self.prepared.diagnostics {
+            println!(
+                "diagnostic {}: {}",
+                terminal_field(diagnostic.code),
+                terminal_field(&diagnostic.message)
+            );
+        }
         println!(
             "state={} selection={:?} history={:?}",
             terminal_field(&self.session.status().to_string()),

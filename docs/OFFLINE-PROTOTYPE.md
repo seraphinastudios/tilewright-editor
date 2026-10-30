@@ -76,7 +76,11 @@ Reopen is explicit inspection/reload, never blind recovery or retry.
 
 The first Classic edit moves an eligible UID-bearing top-level object only
 when its original block has one existing `x` and `y`, within original bounds.
-Other fields, ordering and bytes are preserved by the adapter's checked export.
+Same-chunk coordinate changes use guarded generic World path transactions to
+preserve source object order. Cross-chunk relocation still uses World's
+`object.move` and may exceed the adapter's export allowlist; the exporter refuses
+unsupported structural/order changes. Other fields, ordering and bytes are
+preserved by the adapter's checked export.
 The neutral sample also exposes a typed field and terrain paint operation.
 Classic floors remain objects; no generic terrain capability is inferred.
 
