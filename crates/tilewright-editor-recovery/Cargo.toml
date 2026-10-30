@@ -12,5 +12,11 @@ tilewright-editor-commands.workspace = true
 tilewright-source.workspace = true
 sha2.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+tilewright-editor-document.workspace = true
+tilewright-editor-testkit.workspace = true
+tilewright-edit.workspace = true
+
 [lints]
 workspace = true
