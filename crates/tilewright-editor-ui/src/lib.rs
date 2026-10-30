@@ -135,3 +135,7 @@ mod tests {
         assert_eq!(ui.selection().unwrap().semantic_id, 42);
     }
 }
+
+mod session;
+pub use session::{Action, Session, SessionError, SessionPhase, SessionStatus};
+pub use tilewright_editor_preview::SelectionKey;
