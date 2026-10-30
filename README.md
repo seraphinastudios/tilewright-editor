@@ -41,10 +41,20 @@ commands/history, UI panels/tools, preview integration, and deterministic test
 fakes. None owns a parser, serializer, filesystem writer, renderer, network
 service, or server lifecycle.
 
-The current dependencies are the renderer and toolkit crates published under
-their earlier names (`atrinik-render-*`, `atrinik-scene`, `atrinik-source`,
-`atrinik-transaction`); they switch to `tilewright-render-*` and
-`tilewright-world` crates as those are released.
+The editor opens world source trees with tilewright-world's `tilewright-source`
+and carries out edits as its `tilewright-edit` transactions; it builds scenes
+with tilewright-renderer 0.5.1. The production manifests target exact crates.io
+versions, recorded with their repositories in `policy/released-dependencies.json`.
+The World migration is pending their actual registry publication and a registry
+lockfile; local candidate overrides are compatibility evidence only, never
+release or package provenance acceptance.
+
+`tilewright-editor-commands::History` provides semantic transaction preparation,
+reviewable file diffs, explicit commit, and undo/redo. It checks the opened world
+revision and inverse plannability, retains a durable recovery record through the
+application's `RecoveryStore` before publication, and delegates every source
+write to World. See [the transaction contract](decisions/0001-editor-architecture.md)
+for required recovery integration and uncertain-publication handling.
 
 ## Build and validation
 
@@ -58,7 +68,8 @@ headers installed by `tools/install-linux-native-deps.sh`.
 cargo build --locked --workspace
 cargo test --locked --workspace --all-targets
 cargo run --locked --package tilewright-editor -- version
-cargo run --locked --package tilewright-editor -- headless
+cargo run --locked --package tilewright-editor -- open crates/tilewright-editor-testkit/fixtures/meadow
+cargo run --locked --package tilewright-editor -- headless crates/tilewright-editor-testkit/fixtures/meadow
 SDL_VIDEO_DRIVER=dummy cargo run --locked --package tilewright-editor -- window
 tools/validate.sh
 ```

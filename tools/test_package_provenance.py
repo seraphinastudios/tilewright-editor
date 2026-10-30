@@ -10,7 +10,7 @@ import unittest
 spec = importlib.util.spec_from_file_location('package_provenance', Path(__file__).with_name('package-provenance.py'))
 provenance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(provenance)
-NAME = 'atrinik-scene'
+NAME = 'tilewright-scene'
 REVISION = 'a' * 40
 CHECKSUM = 'b' * 64
 LEGACY = {'git': 'https://github.com/seraphinastudios/tilewright-renderer', 'rev': REVISION, 'version': '0.1.0'}
@@ -89,7 +89,7 @@ class PackageProvenanceTests(unittest.TestCase):
         result = provenance.dependency_provenance(root)
         self.assertEqual(len(result['dependencies']), 6)
         self.assertEqual({record['repository'] for record in result['dependencies']},
-                         {'seraphinastudios/tilewright-renderer', 'atrinik/content-toolkit'})
+                         {'seraphinastudios/tilewright-renderer', 'seraphinastudios/tilewright-world'})
 
 
 if __name__ == '__main__':

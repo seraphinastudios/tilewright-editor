@@ -3,8 +3,23 @@
 
 #![forbid(unsafe_code)]
 
-use std::{collections::BTreeMap, sync::RwLock};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::RwLock,
+};
 use tilewright_editor_project::{Error, FileKind, FileStamp, PathProbe, RelativePath};
+
+/// The root of a committed fixture world under this crate's `fixtures`
+/// directory, such as `meadow`: a small top-down world whose source holds
+/// only painted terrain, with transitions that derive shores, grass edges
+/// and grass details.
+#[must_use]
+pub fn fixture_world(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(name)
+}
 
 #[derive(Default)]
 pub struct MemoryPathProbe {

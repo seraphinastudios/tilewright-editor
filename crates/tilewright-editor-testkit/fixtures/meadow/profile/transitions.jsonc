@@ -1,0 +1,44 @@
+// Terrains from lowest to highest precedence. A brush paints the first
+// prototype of a terrain into the ground layer.
+{
+  "format": "tilewright.transitions/1",
+  "layer": "ground",
+  "terrains": [
+    {
+      "id": "water",
+      "protos": ["water"],
+      "transitions": [
+        // Shores inside the water where a side meets land (N 1, E 2, S 4, W 8).
+        {
+          "draw": "inside",
+          "model": "sides",
+          "layer": "edge",
+          "tiles": {"14": "shore_n", "13": "shore_e", "11": "shore_s", "7": "shore_w"}
+        }
+      ]
+    },
+    {"id": "sand", "protos": ["sand"]},
+    {
+      "id": "grass",
+      "protos": ["grass", "grass_tall"],
+      "transitions": [
+        // Grass edges drawn onto the sand next to the grass.
+        {
+          "draw": "outside",
+          "model": "sides",
+          "layer": "edge",
+          "with": ["sand"],
+          "tiles": {"1": "grass_edge_n", "2": "grass_edge_e", "4": "grass_edge_s", "8": "grass_edge_w"}
+        },
+        // Weighted details on every grass tile.
+        {
+          "draw": "inside",
+          "model": "none",
+          "layer": "detail",
+          "seed": 3,
+          "tiles": {"0": [{"proto": "clover", "weight": 3}, "daisies"]}
+        }
+      ]
+    }
+  ]
+}

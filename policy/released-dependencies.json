@@ -3,64 +3,34 @@
   "repository": "seraphinastudios/tilewright-editor",
   "dependencies": [
     {
-      "name": "atrinik-render-api",
+      "name": "tilewright-edit",
+      "repository": "seraphinastudios/tilewright-world",
+      "repository_id": 1423814231
+    },
+    {
+      "name": "tilewright-render-api",
       "repository": "seraphinastudios/tilewright-renderer",
-      "legacy_git": {
-        "git": "https://github.com/seraphinastudios/tilewright-renderer",
-        "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
-        "version": "0.1.0"
-      },
       "repository_id": 1327106998
     },
     {
-      "name": "atrinik-render-resources",
+      "name": "tilewright-render-resources",
       "repository": "seraphinastudios/tilewright-renderer",
-      "legacy_git": {
-        "git": "https://github.com/seraphinastudios/tilewright-renderer",
-        "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
-        "version": "0.1.0"
-      },
       "repository_id": 1327106998
     },
     {
-      "name": "atrinik-render-testkit",
+      "name": "tilewright-render-testkit",
       "repository": "seraphinastudios/tilewright-renderer",
-      "legacy_git": {
-        "git": "https://github.com/seraphinastudios/tilewright-renderer",
-        "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
-        "version": "0.1.0"
-      },
       "repository_id": 1327106998
     },
     {
-      "name": "atrinik-scene",
+      "name": "tilewright-scene",
       "repository": "seraphinastudios/tilewright-renderer",
-      "legacy_git": {
-        "git": "https://github.com/seraphinastudios/tilewright-renderer",
-        "rev": "3a6bbeabc2b7eac8d162d758732a0495fe8a9dd9",
-        "version": "0.1.0"
-      },
       "repository_id": 1327106998
     },
     {
-      "name": "atrinik-source",
-      "repository": "atrinik/content-toolkit",
-      "legacy_git": {
-        "git": "https://github.com/atrinik/content-toolkit",
-        "rev": "b2178d442af5d897a45619c200fec5ceb39fc3cf",
-        "version": "0.1.0"
-      },
-      "repository_id": 1327107043
-    },
-    {
-      "name": "atrinik-transaction",
-      "repository": "atrinik/content-toolkit",
-      "legacy_git": {
-        "git": "https://github.com/atrinik/content-toolkit",
-        "rev": "b2178d442af5d897a45619c200fec5ceb39fc3cf",
-        "version": "0.1.0"
-      },
-      "repository_id": 1327107043
+      "name": "tilewright-source",
+      "repository": "seraphinastudios/tilewright-world",
+      "repository_id": 1423814231
     }
   ],
   "repository_id": 1327106902

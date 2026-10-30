@@ -3,18 +3,18 @@
 
 #![forbid(unsafe_code)]
 
-use atrinik_render_api::{Error as RenderError, FrameOutput, RenderRequest, Renderer};
-use atrinik_render_resources::ResourceProvider;
-use atrinik_scene::{SceneBundle, SceneLimits, Viewport};
 use std::sync::Arc;
+use tilewright_render_api::{Error as RenderError, FrameOutput, RenderRequest, Renderer};
+use tilewright_render_resources::ResourceProvider;
+use tilewright_scene::{SceneBundle, SceneLimits, Viewport};
 
-pub const RENDERER_COMPATIBILITY: &str = "scene-bundle-v1/0.1.0";
+pub const RENDERER_COMPATIBILITY: &str = "scene-bundle-v3/0.5.1";
 
 pub fn empty_scene(
     width: u32,
     height: u32,
     revision: u64,
-) -> Result<SceneBundle, atrinik_scene::Error> {
+) -> Result<SceneBundle, tilewright_scene::Error> {
     SceneBundle::new(
         revision,
         0,
@@ -40,8 +40,8 @@ pub fn render_scene<R: Renderer>(
 #[cfg(test)]
 mod tests {
     use super::{empty_scene, render_scene};
-    use atrinik_render_api::{BackendPreference, TargetDescriptor, TargetKind};
-    use atrinik_render_testkit::{ReferenceRenderer, synthetic_provider};
+    use tilewright_render_api::{BackendPreference, TargetDescriptor, TargetKind};
+    use tilewright_render_testkit::{ReferenceRenderer, synthetic_provider};
 
     #[test]
     fn released_shared_renderer_draws_empty_viewport() {
@@ -53,6 +53,14 @@ mod tests {
             backend: BackendPreference::Automatic,
         })
         .unwrap();
+        assert_eq!(
+            super::RENDERER_COMPATIBILITY,
+            format!(
+                "scene-bundle-v{}/0.5.1",
+                tilewright_scene::SCENE_BUNDLE_VERSION
+            )
+        );
+        assert_eq!(scene.version(), tilewright_scene::SCENE_BUNDLE_VERSION);
         let frame = render_scene(&mut renderer, &scene, synthetic_provider().unwrap()).unwrap();
         assert_eq!((frame.width, frame.height), (32, 24));
         assert!(frame.semantic_ids.iter().all(|identity| *identity == 0));

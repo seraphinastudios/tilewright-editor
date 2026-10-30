@@ -8,7 +8,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-atrinik-source.workspace = true
+tilewright-source.workspace = true
+
+[dev-dependencies]
+tilewright-editor-testkit.workspace = true
 
 [lints]
 workspace = true
