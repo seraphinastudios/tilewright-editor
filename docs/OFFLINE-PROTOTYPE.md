@@ -23,13 +23,12 @@ argument; it is never read from the project.
 
 ```sh
 python3 tools/provision-prototype.py \
-  --world crates/tilewright-editor-testkit/fixtures/neutral \
+  --world crates/tilewright-editor-testkit/fixtures/prototype-neutral \
   --destination /absolute/private/task-session \
   --editor target/debug/tilewright-editor
 ```
 
-The exact neutral fixture path and command should be checked against the
-integrated testkit. The helper never adopts existing state, changes permissions
+The helper never adopts existing state, changes permissions
 on owner directories or deletes failed sessions. Inspect and preserve them;
 choose a different new session directory for a new attempt.
 

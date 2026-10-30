@@ -2,8 +2,9 @@
 
 Tilewright editor is an MIT-licensed Rust world editor for isometric and
 top-down tile games, with built-in agent tooling. Humans and agents edit the
-same world through one command engine: the desktop app, a headless CLI, and an
-MCP server all produce the same reviewable changesets.
+same world through one command engine. The bounded offline prototype provides
+a native desktop session and deterministic scripted reference proof; an editor
+MCP server and rich panels remain future work.
 
 Tilewright is maintained by Seraphina Studios alongside
 [tilewright-world](https://github.com/seraphinastudios/tilewright-world), the
@@ -35,7 +36,7 @@ renderer release ------> scene/preview adapter ----------+
 
 The world toolkit owns source syntax, lossless documents, schemas, catalogs,
 diagnostics, compilers, semantic diffs, and atomic file transactions. The
-renderer owns scenes and GPU resources. The seven editor crates own application
+renderer owns scenes and GPU resources. The eight editor crates own application
 composition, project/tab and safe path state, document adaptation,
 commands/history, UI panels/tools, preview integration, and deterministic test
 fakes. None owns a parser, serializer, filesystem writer, renderer, network
@@ -45,9 +46,8 @@ The editor opens world source trees with tilewright-world's `tilewright-source`
 and carries out edits as its `tilewright-edit` transactions; it builds scenes
 with tilewright-renderer 0.5.1. The production manifests target exact crates.io
 versions, recorded with their repositories in `policy/released-dependencies.json`.
-The World migration is pending their actual registry publication and a registry
-lockfile; local candidate overrides are compatibility evidence only, never
-release or package provenance acceptance.
+The registry lockfile records their actual archive checksums; producer path/Git
+overrides are not part of builds or package provenance.
 
 `tilewright-editor-commands::History` provides semantic transaction preparation,
 reviewable file diffs, explicit commit, and undo/redo. It checks the opened world
@@ -64,6 +64,11 @@ use compatible SemVer ranges so routine updates can refresh the lockfile
 without editing a second version inventory. Linux builds need the native SDL
 headers installed by `tools/install-linux-native-deps.sh`.
 
+The [offline prototype guide](docs/OFFLINE-PROTOTYPE.md) describes the authored
+neutral sample, safe fresh session provisioning, controls, external adapter
+workflow and Linux checked-editing limits. A Classic map remains external data;
+its first preview uses authored schematic resources.
+
 ```sh
 cargo build --locked --workspace
 cargo test --locked --workspace --all-targets
@@ -71,6 +76,7 @@ cargo run --locked --package tilewright-editor -- version
 cargo run --locked --package tilewright-editor -- open crates/tilewright-editor-testkit/fixtures/meadow
 cargo run --locked --package tilewright-editor -- headless crates/tilewright-editor-testkit/fixtures/meadow
 SDL_VIDEO_DRIVER=dummy cargo run --locked --package tilewright-editor -- window
+python3 tools/provision-prototype.py --world crates/tilewright-editor-testkit/fixtures/prototype-neutral --destination /absolute/private/new-session --editor target/debug/tilewright-editor
 tools/validate.sh
 ```
 
@@ -92,4 +98,5 @@ define authority.
 Every squash merge uses a Conventional Commit PR title and semantic-release.
 Linux and Windows packages include checksums, CycloneDX SBOMs, provenance,
 license, and third-party notices; no game content, server or client, recovery
-data, or mutable project state is bundled.
+data, or mutable project state is bundled. The original MIT neutral sample is
+included through an exact data/resource allowlist.

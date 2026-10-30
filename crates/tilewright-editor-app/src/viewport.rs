@@ -37,10 +37,14 @@ mod tests {
     #[test]
     fn logical_input_is_scaled_once_and_invalid_input_is_rejected() {
         assert_eq!(physical_pixel([1.5, 0.5], (2, 2), (4, 4)), Some((3, 1)));
-        for input in [[-0.1, 0.0], [2.0, 0.0], [f32::NAN, 0.0], [0.0, f32::INFINITY]] {
+        for input in [
+            [-0.1, 0.0],
+            [2.0, 0.0],
+            [f32::NAN, 0.0],
+            [0.0, f32::INFINITY],
+        ] {
             assert_eq!(physical_pixel(input, (2, 2), (4, 4)), None);
         }
         assert_eq!(physical_pixel([0.0, 0.0], (0, 0), (0, 0)), None);
     }
-
 }

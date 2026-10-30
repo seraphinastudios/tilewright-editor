@@ -34,11 +34,17 @@ def copy_tree(source, destination):
     """Copy bounded regular data without links or special files, then sync it."""
     files = 0
     total = 0
+    entries = 0
     # Source is explicitly supplied data, not executable input. No ignored files
     # or ambient contents are bundled into releases by this provisioning helper.
-    def visit(src_fd, dst_fd):
-        nonlocal files, total
+    def visit(src_fd, dst_fd, depth=0):
+        nonlocal files, total, entries
+        if depth > 32:
+            raise ValueError('sample exceeds directory depth bound')
         for name in sorted(os.listdir(src_fd)):
+            entries += 1
+            if entries > MAX_FILES:
+                raise ValueError('sample exceeds entry bound')
             if name in ('.', '..') or '/' in name:
                 raise ValueError('invalid source entry')
             value = os.stat(name, dir_fd=src_fd, follow_symlinks=False)
@@ -47,7 +53,7 @@ def copy_tree(source, destination):
                 child_src = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=src_fd)
                 child_dst = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dst_fd)
                 try:
-                    visit(child_src, child_dst)
+                    visit(child_src, child_dst, depth + 1)
                 finally:
                     os.close(child_src)
                     os.close(child_dst)

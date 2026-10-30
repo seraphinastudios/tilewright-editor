@@ -12,7 +12,7 @@ use std::fmt;
 use tilewright_edit::{
     FileChange, Options, Plan, PublishError, PublishOptions, Published, Transaction,
 };
-use tilewright_editor_document::{WorldDocument, load_options};
+use tilewright_editor_document::WorldDocument;
 use tilewright_source::{Diagnostic, Overlay, World};
 
 /// A transaction carried out in memory against the tree of an open world.
@@ -68,7 +68,7 @@ pub fn preview(document: &WorldDocument, name: &str, text: &str) -> Result<Previ
         document.source(),
         &transaction,
         &Options {
-            load: load_options(),
+            load: document.load_options(),
             rebase: false,
         },
     )
@@ -80,7 +80,7 @@ pub fn preview(document: &WorldDocument, name: &str, text: &str) -> Result<Previ
         .iter()
         .map(|file| (file.path.clone(), file.before.clone()))
         .collect();
-    let baseline = tilewright_source::load_edited_in(document.source(), &load_options(), &before)
+    let baseline = tilewright_source::load_edited_in(document.source(), &document.load_options(), &before)
         .map_err(Error::Rejected)?;
     if baseline.source_digest() != document.revision() {
         return Err(Error::StaleRevision);

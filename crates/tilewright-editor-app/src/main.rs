@@ -3,6 +3,9 @@
 
 #![forbid(unsafe_code)]
 
+mod prototype;
+mod viewport;
+
 fn main() {
     let command = std::env::args()
         .nth(1)
@@ -53,6 +56,10 @@ fn main() {
                 }
             }
         }
+        "prototype" => {
+            let arguments: Vec<String> = std::env::args().skip(2).collect();
+            prototype::run(&arguments).unwrap_or_else(|error| fail(&error));
+        }
         "window" => {
             let sdl = sdl3::init().unwrap_or_else(|error| fail(&error));
             let video = sdl.video().unwrap_or_else(|error| fail(&error));
@@ -74,7 +81,9 @@ fn main() {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: tilewright-editor [version | open ROOT | headless ROOT | window]");
+    eprintln!(
+        "usage: tilewright-editor [version | open ROOT | headless ROOT | window | prototype (use provision helper)]"
+    );
     std::process::exit(2);
 }
 

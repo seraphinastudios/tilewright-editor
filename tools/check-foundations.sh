@@ -5,7 +5,7 @@ repository=$(git rev-parse --show-toplevel)
 cd "${repository}"
 
 jq -e '.schema_version == 1 and .grant_used == false and all(.records[]; .status == "excluded")' provenance/reuse.json >/dev/null
-jq -e '.schema_version == 1 and .assets == []' provenance/assets.json >/dev/null
+python3 tools/check-prototype-assets.py
 
 if grep -RhE '^[[:space:]]*uses:' .github/workflows 2>/dev/null \
   | grep -Ev '@[0-9a-f]{40}([[:space:]]|$)' >/dev/null; then
