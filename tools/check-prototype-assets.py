@@ -11,6 +11,10 @@ PREFIX = 'crates/tilewright-editor-testkit/fixtures/prototype-neutral/preview-as
 REQUIRED = {'path', 'source', 'author', 'license', 'sha256', 'transformation', 'notice', 'width', 'height'}
 
 
+def portable_relative(path, root):
+    return path.relative_to(root).as_posix()
+
+
 def validate():
     manifest = json.loads((ROOT / 'provenance/assets.json').read_text())
     if manifest.get('schema_version') != 1 or set(manifest) != {'schema_version', 'assets'}:
@@ -37,7 +41,7 @@ def validate():
         width, height = struct.unpack('<II', data[4:12])
         if width != record['width'] or height != record['height'] or not 1 <= width <= 512 or not 1 <= height <= 512 or len(data) != 12 + width * height * 4:
             raise ValueError('asset dimensions/payload mismatch')
-    actual = {str(path.relative_to(ROOT)) for path in (ROOT / PREFIX).glob('*') if path.is_file()}
+    actual = {portable_relative(path, ROOT) for path in (ROOT / PREFIX).glob('*') if path.is_file()}
     if actual != seen or not seen:
         raise ValueError('asset allowlist does not exactly match authored resources')
 

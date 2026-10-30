@@ -30,6 +30,14 @@ python3 tools/provision-prototype.py \
   --editor target/debug/tilewright-editor
 ```
 
+A Linux binary archive includes the same trusted helper and authored sample.
+From the extracted archive, use Python 3 (standard library only):
+
+```sh
+python3 tools/provision-prototype.py --world samples/prototype-neutral \
+  --destination /absolute/private/new-session --editor bin/tilewright-editor
+```
+
 The helper never adopts existing state, changes permissions
 on owner directories or deletes failed sessions. Inspect and preserve them;
 choose a different new session directory for a new attempt.

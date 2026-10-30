@@ -170,9 +170,14 @@ impl Application {
                 tilewright_editor_document::revision_hex(&record.sha256)
             ));
         }
+        // Failed commands may still invalidate pending state (for example an
+        // empty Undo). Always rebuild from Session's actual current World.
+        let refreshed = self.rebuild();
         self.report();
-        result?;
-        self.rebuild()
+        match result {
+            Err(original) => Err(original),
+            Ok(()) => refreshed,
+        }
     }
 
     fn report(&self) {
@@ -357,7 +362,7 @@ impl Application {
         })).map_err(|error| error.to_string())?.as_bytes())
     }
 
-    fn select_visible_object(&mut self) -> Result<()> {
+    fn select_visible_object(&mut self, for_field: bool) -> Result<()> {
         let frame = self.frame(false)?;
         let hit = self
             .prepared
@@ -367,12 +372,18 @@ impl Application {
                 let SelectionKey::Object { uid } = key else {
                     return None;
                 };
-                if !self.session.catalog().editing().movable_uids.contains(uid) {
+                let capabilities = self.session.catalog().editing();
+                let eligible = if for_field {
+                    capabilities.fields.iter().any(|(object, _)| object == uid)
+                } else {
+                    capabilities.movable_uids.contains(uid)
+                };
+                if !eligible {
                     return None;
                 }
                 pixel_for(&frame, *id)
             })
-            .ok_or("no visible movable object in reference mask")?;
+            .ok_or("no visible object with the requested edit capability in reference mask")?;
         self.terrain = false;
         self.click(hit.0, hit.1)
     }
@@ -398,7 +409,7 @@ impl Application {
         match step {
             0 => {
                 self.capture("before")?;
-                self.select_visible_object()?;
+                self.select_visible_object(false)?;
             }
             1 => {
                 self.nudge([1, 0])?;
@@ -422,6 +433,7 @@ impl Application {
                 self.capture("redo")?;
             }
             5 if !self.session.catalog().editing().fields.is_empty() => {
+                self.select_visible_object(true)?;
                 self.field()?;
                 self.action(Action::Accept)?;
                 self.capture("field")?;
@@ -711,3 +723,7 @@ fn native_present(
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "tests/prototype.rs"]
+mod tests;

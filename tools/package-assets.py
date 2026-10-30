@@ -30,7 +30,8 @@ def package_assets(root, stage):
             shutil.copyfileobj(incoming, outgoing)
     if not seen:
         raise ValueError('sample package allowlist is empty')
-    for source, target in [('provenance/assets.json','asset-provenance.json'), ('docs/OFFLINE-PROTOTYPE.md','OFFLINE-PROTOTYPE.md')]:
+    for source, target in [('provenance/assets.json','asset-provenance.json'), ('docs/OFFLINE-PROTOTYPE.md','OFFLINE-PROTOTYPE.md'), ('tools/provision-prototype.py','tools/provision-prototype.py')]:
+        (stage/target).parent.mkdir(parents=True, exist_ok=True)
         with (root/source).open('rb') as incoming, (stage/target).open('xb') as outgoing:
             shutil.copyfileobj(incoming, outgoing)
 

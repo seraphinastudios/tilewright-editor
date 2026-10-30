@@ -101,12 +101,11 @@ fn resource_bytes_provenance_and_transition_mapping_are_complete() {
             write!(digest, "{byte:02x}").unwrap();
         }
         assert_eq!(resource["sha256"].as_str().unwrap(), digest);
-        let relative = path.strip_prefix(repo).unwrap().to_str().unwrap();
         let asset = provenance["assets"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|a| a["path"] == relative)
+            .find(|a| repo.join(a["path"].as_str().unwrap()) == path)
             .expect("asset has provenance");
         for key in ["sha256", "author", "license", "notice", "width", "height"] {
             assert_eq!(asset[key], resource[key], "provenance mismatch: {key}");
