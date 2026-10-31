@@ -16,6 +16,7 @@ pub enum Action {
         generation: u64,
         key: SelectionKey,
     },
+    ClearSelection,
     Move {
         uid: String,
         x: i64,
@@ -135,6 +136,13 @@ impl Session {
     pub fn status(&self) -> &SessionStatus {
         &self.status
     }
+    /// Whether a new edit or history preview may be prepared. Dispatch still
+    /// checks the catalog and the action author's original source revision.
+    pub fn can_prepare(&self) -> bool {
+        self.status.phase == SessionPhase::Ready
+            && !self.history.needs_reload()
+            && self.history.pending().is_none()
+    }
     pub fn world(&self) -> &World {
         self.history
             .pending()
@@ -209,6 +217,15 @@ impl Session {
             }
         }
     }
+    fn revalidate_selection(&mut self) {
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(|key| !self.valid_key(key))
+        {
+            self.selection = None;
+        }
+    }
     fn prepare(&mut self, expected: [u8; 32], op: &Value) -> Result<(), SessionError> {
         self.prepare_operations(expected, std::slice::from_ref(op))
     }
@@ -261,10 +278,31 @@ impl Session {
                 "session blocked: inspect recovery and reopen explicitly",
             ));
         }
-        if !matches!(action, Action::Cancel) {
+        // A pending transaction is the exact diff the author is reviewing.
+        // History's general preparation API can replace it, so fence every
+        // preparation action here before any call can discard that evidence.
+        if self.history.pending().is_some()
+            && matches!(
+                action,
+                Action::Move { .. }
+                    | Action::SetField { .. }
+                    | Action::Paint { .. }
+                    | Action::Undo
+                    | Action::Redo
+            )
+        {
+            return Err(refuse(
+                "review pending transaction: Accept or Cancel before another edit",
+            ));
+        }
+        if !matches!(action, Action::Cancel | Action::ClearSelection) {
             self.verify_catalog()?;
         }
         match action {
+            Action::ClearSelection => {
+                self.selection = None;
+                Ok(())
+            }
             Action::Select { generation, key } => {
                 self.verify_revision(self.history.document().revision())?;
                 if generation != self.generation || !self.valid_key(&key) {
@@ -397,6 +435,7 @@ impl Session {
             Action::Accept => self.accept(recovery),
             Action::Cancel => {
                 self.history.cancel();
+                self.revalidate_selection();
                 self.status.phase = SessionPhase::Ready;
                 self.status.message = "Pending action cancelled; no publication".into();
                 self.invalidate_frame()
@@ -443,7 +482,7 @@ impl Session {
                 self.status.cleaned = Some(true);
                 self.status.message =
                     "Published World workspace and reloaded verified result".into();
-                self.selection = None;
+                self.revalidate_selection();
                 self.invalidate_frame()
             }
             Err(error) => {

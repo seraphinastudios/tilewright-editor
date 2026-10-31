@@ -72,6 +72,153 @@ fn movement(session: &Session, x: i64) -> Action {
         expected: session.history().document().revision(),
     }
 }
+
+#[derive(Debug, Eq, PartialEq)]
+struct PendingSnapshot {
+    sealed: String,
+    inverse: String,
+    files: Vec<tilewright_edit::FileChange>,
+    revision: [u8; 32],
+}
+fn pending_snapshot(session: &Session) -> PendingSnapshot {
+    let pending = session.history().pending().unwrap();
+    PendingSnapshot {
+        sealed: pending.sealed().into(),
+        inverse: pending.inverse().into(),
+        files: pending.files().to_vec(),
+        revision: pending.world().source_digest(),
+    }
+}
+
+fn object_key() -> SelectionKey {
+    SelectionKey::Object {
+        uid: "marker_1".into(),
+    }
+}
+fn cell_key() -> SelectionKey {
+    SelectionKey::Cell {
+        plane: "main".into(),
+        layer: 0,
+        grid: "floor".into(),
+        x: 6,
+        y: 4,
+    }
+}
+fn select(session: &mut Session, key: SelectionKey, records: &mut impl RecoveryStore) {
+    session
+        .dispatch(
+            Action::Select {
+                generation: session.generation(),
+                key,
+            },
+            records,
+        )
+        .unwrap();
+}
+
+#[test]
+fn pending_review_rejects_every_new_preparation_without_replacing_evidence() {
+    let (dir, mut session) = fixture();
+    let chunk = dir.path().join("planes/main/layers/0/0_0.jsonc");
+    let original = fs::read(&chunk).unwrap();
+    let mut records = Records::default();
+    assert!(session.can_prepare());
+    select(&mut session, object_key(), &mut records);
+    session
+        .dispatch(movement(&session, 4), &mut records)
+        .unwrap();
+    let pending = pending_snapshot(&session);
+    let generation = session.generation();
+    assert!(!session.can_prepare());
+    for action in [
+        movement(&session, 5),
+        Action::SetField {
+            uid: "marker_1".into(),
+            field: "label".into(),
+            value: serde_json::json!("replacement"),
+            expected: session.history().document().revision(),
+        },
+        paint(&session, 6, 4),
+        Action::Undo,
+        Action::Redo,
+    ] {
+        let error = session.dispatch(action, &mut records).unwrap_err();
+        assert!(error.to_string().contains("review pending transaction"));
+        assert_eq!(pending_snapshot(&session), pending);
+        assert_eq!(session.status().phase, SessionPhase::Pending);
+        assert_eq!(session.generation(), generation);
+        assert_eq!(session.selection(), Some(&object_key()));
+        assert_eq!(session.history().depths(), (0, 0));
+        assert_eq!(fs::read(&chunk).unwrap(), original);
+        assert!(records.inverses.is_empty());
+    }
+    // Navigation and deselection do not discard the reviewed transaction.
+    session.invalidate_frame().unwrap();
+    select(&mut session, cell_key(), &mut records);
+    session
+        .dispatch(Action::ClearSelection, &mut records)
+        .unwrap();
+    assert!(session.selection().is_none());
+    assert_eq!(pending_snapshot(&session), pending);
+    session.dispatch(Action::Cancel, &mut records).unwrap();
+    assert!(session.can_prepare());
+    assert_eq!(fs::read(chunk).unwrap(), original);
+    assert!(records.inverses.is_empty());
+}
+
+#[test]
+fn invalid_selection_keys_preserve_selection_and_explicit_clear_is_idempotent() {
+    let (_dir, mut session) = fixture();
+    let mut records = Records::default();
+    select(&mut session, object_key(), &mut records);
+    for key in [
+        SelectionKey::Object {
+            uid: "missing".into(),
+        },
+        SelectionKey::Cell {
+            plane: "main".into(),
+            layer: 0,
+            grid: "floor".into(),
+            x: -1,
+            y: 0,
+        },
+        SelectionKey::Cell {
+            plane: "main".into(),
+            layer: 0,
+            grid: "missing".into(),
+            x: 0,
+            y: 0,
+        },
+        SelectionKey::Cell {
+            plane: "main".into(),
+            layer: 1,
+            grid: "floor".into(),
+            x: 0,
+            y: 0,
+        },
+    ] {
+        assert!(
+            session
+                .dispatch(
+                    Action::Select {
+                        generation: session.generation(),
+                        key,
+                    },
+                    &mut records
+                )
+                .is_err()
+        );
+        assert_eq!(session.selection(), Some(&object_key()));
+    }
+    for _ in 0..2 {
+        session
+            .dispatch(Action::ClearSelection, &mut records)
+            .unwrap();
+        assert!(session.selection().is_none());
+        assert!(session.can_prepare());
+    }
+    assert!(records.inverses.is_empty());
+}
 #[test]
 fn pending_scene_diff_and_cancel_never_write() {
     let (dir, mut session) = fixture();
@@ -206,6 +353,9 @@ fn typed_strings_escape_and_invalid_types_never_publish() {
         WorldDocument::open(dir.path()).unwrap().revision(),
         original
     );
+    // Finish reviewing the valid draft first so the next action exercises
+    // World's type validation, rather than the one-pending-action fence.
+    session.dispatch(Action::Cancel, &mut records).unwrap();
     assert!(
         session
             .dispatch(
@@ -255,15 +405,117 @@ fn retention_failure_keeps_reviewable_pending_and_source() {
     session
         .dispatch(paint(&session, 6, 4), &mut records)
         .unwrap();
+    let pending = pending_snapshot(&session);
     assert!(session.dispatch(Action::Accept, &mut records).is_err());
     assert_eq!(session.status().phase, SessionPhase::Pending);
     assert!(session.status().message.contains("retention failure"));
     assert!(session.history().pending().is_some());
+    assert_eq!(pending_snapshot(&session), pending);
+    assert!(!session.can_prepare());
     assert_eq!(
         WorldDocument::open(dir.path()).unwrap().revision(),
         revision
     );
     assert!(records.inverses.is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn semantic_selection_survives_accept_undo_and_redo_with_original_revision_fences() {
+    for key in [object_key(), cell_key()] {
+        let (_dir, mut session) = fixture();
+        let mut records = Records::default();
+        select(&mut session, key.clone(), &mut records);
+        let stale_draft = movement(&session, 5);
+        session
+            .dispatch(movement(&session, 4), &mut records)
+            .unwrap();
+        let stale_frame = session.generation();
+        session.dispatch(Action::Accept, &mut records).unwrap();
+        assert_eq!(session.selection(), Some(&key));
+        assert!(session.can_prepare());
+        assert!(
+            session
+                .dispatch(stale_draft, &mut records)
+                .unwrap_err()
+                .to_string()
+                .contains("stale source revision")
+        );
+        assert!(
+            session
+                .dispatch(
+                    Action::Select {
+                        generation: stale_frame,
+                        key: key.clone(),
+                    },
+                    &mut records
+                )
+                .is_err()
+        );
+        assert_eq!(session.selection(), Some(&key));
+        assert!(session.history().pending().is_none());
+        for action in [Action::Undo, Action::Redo] {
+            session.dispatch(action, &mut records).unwrap();
+            assert_eq!(session.selection(), Some(&key));
+            let pending = pending_snapshot(&session);
+            assert!(
+                session
+                    .dispatch(movement(&session, 5), &mut records)
+                    .is_err()
+            );
+            assert_eq!(pending_snapshot(&session), pending);
+            session.dispatch(Action::Accept, &mut records).unwrap();
+            assert_eq!(session.selection(), Some(&key));
+            assert!(session.can_prepare());
+        }
+        assert_eq!(records.inverses.len(), 3);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn accepting_history_that_removes_selected_uid_clears_invalid_identity() {
+    let (dir, _session) = fixture();
+    let document = WorldDocument::open(dir.path()).unwrap();
+    let mut history = History::new(document);
+    let mut records = Records::default();
+    // History can contain toolkit operations beyond the UI's current edit
+    // capabilities. Selection must follow the resulting authoritative World.
+    let transaction = serde_json::json!({
+        "format": "tilewright.transaction/1", "title": "insert selection fixture",
+        "actor": "editor:test", "operations": [{
+            "op": "object.insert", "plane": "main", "layer": 0, "at": [4, 2],
+            "object": {"uid": "inserted_marker", "proto": "marker", "fields": {"label": "added"}}
+        }]
+    });
+    history
+        .prepare(
+            history.document().revision(),
+            "selection fixture",
+            &transaction.to_string(),
+        )
+        .unwrap();
+    history
+        .commit(&mut records, &tilewright_edit::PublishOptions::default())
+        .unwrap();
+    let (catalog, resources) = loader::load(
+        history.document().source(),
+        history.document().world(),
+        PreviewLimits::default(),
+    )
+    .unwrap();
+    let mut session = Session::new(history, catalog, resources);
+    select(
+        &mut session,
+        SelectionKey::Object {
+            uid: "inserted_marker".into(),
+        },
+        &mut records,
+    );
+    session.dispatch(Action::Undo, &mut records).unwrap();
+    session.dispatch(Action::Accept, &mut records).unwrap();
+    assert!(session.selection().is_none());
+    assert!(session.world().object("inserted_marker").is_none());
 }
 
 #[cfg(target_os = "linux")]
@@ -319,6 +571,8 @@ fn publication_failure_exposes_outcome_and_blocks_until_explicit_inspection() {
         chunk: dir.path().join("planes/main/layers/0/0_0.jsonc"),
         inverse: None,
     };
+    select(&mut session, object_key(), &mut recovery);
+    session.set_recovery_descriptor("private recovery record".into());
     session
         .dispatch(movement(&session, 4), &mut recovery)
         .unwrap();
@@ -330,11 +584,44 @@ fn publication_failure_exposes_outcome_and_blocks_until_explicit_inspection() {
     assert!(session.status().durable.is_some());
     assert!(session.status().cleaned.is_some());
     assert!(session.status().to_string().contains("applied="));
-    assert!(session.dispatch(Action::Undo, &mut recovery).is_err());
-    assert!(session.dispatch(Action::Redo, &mut recovery).is_err());
-    assert!(session.dispatch(Action::Reopen, &mut recovery).is_err());
-    assert_eq!(session.status().phase, SessionPhase::Blocked);
-    assert!(session.history().pending().is_some());
+    assert!(!session.can_prepare());
+    let pending = pending_snapshot(&session);
+    let bytes = fs::read(&recovery.chunk).unwrap();
+    let outcome = (
+        session.status().applied,
+        session.status().durable,
+        session.status().cleaned,
+    );
+    for action in [
+        movement(&session, 5),
+        paint(&session, 6, 4),
+        Action::Accept,
+        Action::Cancel,
+        Action::Undo,
+        Action::Redo,
+        Action::ClearSelection,
+        Action::Reopen,
+    ] {
+        assert!(session.dispatch(action, &mut recovery).is_err());
+        assert_eq!(session.status().phase, SessionPhase::Blocked);
+        assert_eq!(pending_snapshot(&session), pending);
+        assert_eq!(session.history().depths(), (0, 0));
+        assert_eq!(session.selection(), Some(&object_key()));
+        assert_eq!(fs::read(&recovery.chunk).unwrap(), bytes);
+        assert_eq!(
+            session.status().recovery_descriptor.as_deref(),
+            Some("private recovery record")
+        );
+        assert_eq!(
+            (
+                session.status().applied,
+                session.status().durable,
+                session.status().cleaned
+            ),
+            outcome
+        );
+    }
+    assert_eq!(recovery.inverse.as_deref(), Some(pending.inverse.as_str()));
 }
 
 #[test]
