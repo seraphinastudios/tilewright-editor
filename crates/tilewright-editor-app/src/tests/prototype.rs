@@ -615,6 +615,7 @@ fn oversized_review_blocks_button_enter_and_scripted_accept_without_losing_pendi
             .unwrap_err()
             .contains("review limit")
     );
+    acknowledge_ui(&mut app);
     assert!(
         super::native_key(&mut app, sdl3::keyboard::Keycode::Return)
             .unwrap_err()
@@ -700,6 +701,15 @@ fn long_utf8_draft_shows_working_tail_and_caret_while_full_value_reaches_review(
     );
 }
 
+/// Mirror the acknowledgement made only after native successful presentation.
+fn acknowledge_ui(app: &mut Application) {
+    app.refresh_ui();
+    let presentation = super::workspace_presentation(app).unwrap();
+    app.displayed_text = presentation.editable;
+    app.presented_generation = Some(app.view.frame_revision);
+    app.presented_text_revision = app.tools.input_revision();
+}
+
 fn input_key(window_id: u32, key: sdl3::keyboard::Keycode, up: bool) -> sdl3::event::Event {
     if up {
         sdl3::event::Event::KeyUp {
@@ -747,7 +757,10 @@ fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
     let committed = app.tools.draft_text().unwrap().to_owned();
     let revision = app.session.history().document().revision();
     let mut input = crate::native_input::NativeInput::new(7);
-    input.begin_batch(true);
+    input.begin_batch(
+        true,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
     let preedit = Event::TextEditing {
         timestamp: 0,
         window_id: 7,
@@ -790,7 +803,11 @@ fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
     super::native_text_event(&mut app, &input_key(7, Keycode::Return, true), &mut input)
         .unwrap()
         .unwrap();
-    input.begin_batch(false);
+    acknowledge_ui(&mut app);
+    input.begin_batch(
+        false,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
     super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input)
         .unwrap()
         .unwrap();
@@ -805,6 +822,10 @@ fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     let prior = app.tools.draft_text().unwrap().to_owned();
+    input.begin_batch(
+        true,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
     super::native_text_event(&mut app, &preedit, &mut input)
         .unwrap()
         .unwrap();
@@ -852,5 +873,159 @@ fn stale_draft_geometry_cannot_move_caret_or_change_source() {
     app.tools.input("e\u{301}").unwrap();
     assert!(!app.displayed_input_ready());
     assert!(super::visual_move(&mut app, sdl3::keyboard::Keycode::Left, false).is_err());
+    assert!(app.session.history().pending().is_none());
+}
+
+#[test]
+fn deletion_and_clipboard_paste_return_wait_for_displayed_draft() {
+    use crate::workspace_ui::Control;
+    use sdl3::keyboard::{Keycode, Mod};
+    use tilewright_editor_ui::text_input::{TextCursor, TextSelection};
+    for key in [Keycode::Backspace, Keycode::Delete, Keycode::V] {
+        let (_temporary, mut app) = application();
+        app.select_visible_object(true).unwrap();
+        app.control(Control::Field("label".into())).unwrap();
+        app.tools.select_all().unwrap();
+        app.tools.input("abc").unwrap();
+        if key == Keycode::Delete {
+            let revision = app.tools.input_revision().unwrap();
+            app.tools
+                .set_selection(TextSelection::caret(TextCursor::new(0)), revision)
+                .unwrap();
+        }
+        acknowledge_ui(&mut app);
+        let source = app.session.history().document().revision();
+        let mut input = crate::native_input::NativeInput::new(7);
+        input.begin_batch(
+            false,
+            app.tools.input_revision().map(|revision| revision.draft),
+        );
+        let mut edit = input_key(7, key, false);
+        if key == Keycode::V {
+            if let sdl3::event::Event::KeyDown { keymod, .. } = &mut edit {
+                *keymod = Mod::LCTRLMOD;
+            }
+            super::native_clipboard_event(
+                &mut app,
+                &edit,
+                true,
+                || Ok("青".into()),
+                |_| panic!("paste must not write clipboard"),
+            )
+            .unwrap()
+            .unwrap();
+        } else {
+            super::native_text_event(&mut app, &edit, &mut input)
+                .unwrap()
+                .unwrap();
+        }
+        let error =
+            super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input)
+                .unwrap()
+                .unwrap_err();
+        assert!(error.contains("displayed"));
+        assert!(app.session.history().pending().is_none());
+        assert_eq!(app.session.history().document().revision(), source);
+        super::native_text_event(&mut app, &input_key(7, Keycode::Return, true), &mut input)
+            .unwrap()
+            .unwrap();
+        acknowledge_ui(&mut app);
+        input.begin_batch(
+            false,
+            app.tools.input_revision().map(|revision| revision.draft),
+        );
+        super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input)
+            .unwrap()
+            .unwrap();
+        assert!(app.session.history().pending().is_some());
+        assert_eq!(app.session.history().document().revision(), source);
+    }
+}
+
+#[test]
+fn switched_or_refocused_draft_rejects_previously_drained_ime_events() {
+    use crate::workspace_ui::{Control, WorkspaceUi};
+    use sdl3::{event::Event, mouse::MouseButton};
+    let (_temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.ui = WorkspaceUi::new((960, 640), (320, 240));
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(&mut app);
+    let mut input = crate::native_input::NativeInput::new(7);
+    input.begin_batch(
+        true,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
+    let old = app.tools.input_revision().unwrap().draft;
+    // Reopening the same field is a new draft identity, just as switching fields.
+    let field = app
+        .ui
+        .widgets
+        .iter()
+        .find(|widget| widget.control == Some(Control::Field("label".into())))
+        .unwrap()
+        .layout;
+    let pointer = Event::MouseButtonDown {
+        timestamp: 20,
+        window_id: 7,
+        which: 0,
+        mouse_btn: MouseButton::Left,
+        clicks: 1,
+        x: field.x as f32 + 2.0,
+        y: field.y as f32 + 2.0,
+    };
+    super::native_pointer_event(&mut app, &pointer, (960, 640), (320, 240), false).unwrap();
+    assert_ne!(old, app.tools.input_revision().unwrap().draft);
+    let original = app.tools.draft_text().unwrap().to_owned();
+    for event in [
+        Event::TextInput {
+            timestamp: 30,
+            window_id: 7,
+            text: "OLD".into(),
+        },
+        Event::TextEditing {
+            timestamp: 31,
+            window_id: 7,
+            text: "OLD".into(),
+            start: 0,
+            length: 1,
+        },
+    ] {
+        super::native_text_event(&mut app, &event, &mut input)
+            .unwrap()
+            .unwrap();
+    }
+    assert_eq!(app.tools.draft_text(), Some(original.as_str()));
+    assert!(!app.tools.is_composing());
+    input.begin_batch(
+        true,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
+    input.refocus(40);
+    let delayed = Event::TextInput {
+        timestamp: 50,
+        window_id: 7,
+        text: "OLD".into(),
+    };
+    super::native_text_event(&mut app, &delayed, &mut input)
+        .unwrap()
+        .unwrap();
+    assert_eq!(app.tools.draft_text(), Some(original.as_str()));
+    input.begin_batch(
+        true,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
+    let fresh = Event::TextInput {
+        timestamp: 60,
+        window_id: 7,
+        text: "NEW".into(),
+    };
+    super::native_text_event(&mut app, &fresh, &mut input)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        app.tools.draft_text(),
+        Some(format!("{original}NEW").as_str())
+    );
     assert!(app.session.history().pending().is_none());
 }

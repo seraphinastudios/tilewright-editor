@@ -1350,7 +1350,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
     'running: loop {
         let batch: Vec<Event> = events.poll_iter().collect();
         input.begin_batch(batch.iter().any(|event| matches!(event,
-            Event::TextInput { window_id, .. } | Event::TextEditing { window_id, .. } if *window_id == input.window_id)));
+            Event::TextInput { window_id, .. } | Event::TextEditing { window_id, .. } if *window_id == input.window_id)), app.tools.input_revision().map(|revision| revision.draft));
         for event in batch {
             if event
                 .get_window_id()
@@ -1379,31 +1379,50 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                 break 'running;
             }
             let composing = app.tools.is_composing();
-            let had_draft = app.tools.draft_text().is_some();
+            let draft_before = app.tools.input_revision().map(|revision| revision.draft);
             let refocus = if let Event::MouseButtonDown { x, y, .. } = event {
                 crate::viewport::physical_pixel([x, y], window.size(), window.size_in_pixels())
                     .is_some_and(|(x, y)| app.ui.hit(x, y) == Hit::Control(Control::EditDraft))
             } else {
                 false
             };
-            let result = native_clipboard_event(&mut app, &event, &video, input.focused)
-                .or_else(|| native_text_event(&mut app, &event, &mut input))
-                .unwrap_or_else(|| {
-                    native_event(
-                        &mut app,
-                        &mut renderer,
-                        &window,
-                        &event,
-                        &mut minimized,
-                        input.shift,
-                    )
-                });
+            let result = native_clipboard_event(
+                &mut app,
+                &event,
+                input.focused,
+                || {
+                    video
+                        .clipboard()
+                        .clipboard_text()
+                        .map_err(|error| error.to_string())
+                },
+                |text| {
+                    video
+                        .clipboard()
+                        .set_clipboard_text(text)
+                        .map_err(|error| error.to_string())
+                },
+            )
+            .or_else(|| native_text_event(&mut app, &event, &mut input))
+            .unwrap_or_else(|| {
+                native_event(
+                    &mut app,
+                    &mut renderer,
+                    &window,
+                    &event,
+                    &mut minimized,
+                    input.shift,
+                )
+            });
             if composing && !app.tools.is_composing() && !matches!(event, Event::TextInput { .. }) {
                 crate::native_input::clear_composition(&window)?;
             }
-            if refocus || (!had_draft && app.tools.draft_text().is_some()) {
-                input.focused = true;
-                input.text_after = event.get_timestamp();
+            let draft_after = app.tools.input_revision().map(|revision| revision.draft);
+            if draft_before != draft_after {
+                crate::native_input::clear_composition(&window)?;
+            }
+            if result.is_ok() && (refocus || (draft_before != draft_after && draft_after.is_some())) {
+                input.refocus(event.get_timestamp());
             }
             if matches!(
                 event,
@@ -1515,8 +1534,9 @@ fn update_ime_area(
 fn native_clipboard_event(
     app: &mut Application,
     event: &Event,
-    video: &sdl3::VideoSubsystem,
     focused: bool,
+    read: impl FnOnce() -> Result<String>,
+    write: impl FnOnce(&str) -> Result<()>,
 ) -> Option<Result<()>> {
     let Event::KeyDown {
         keycode: Some(key),
@@ -1544,10 +1564,7 @@ fn native_clipboard_event(
     }
     Some((|| {
         if *key == Keycode::V {
-            let text = video
-                .clipboard()
-                .clipboard_text()
-                .map_err(|error| error.to_string())?;
+            let text = read()?;
             app.tools.input(&text).map_err(|error| error.to_string())
         } else {
             let snapshot = app.tools.draft_snapshot().ok_or("no draft")?;
@@ -1555,10 +1572,7 @@ fn native_clipboard_event(
             if range.is_empty() {
                 return Ok(());
             }
-            video
-                .clipboard()
-                .set_clipboard_text(&snapshot.committed[range])
-                .map_err(|error| error.to_string())?;
+            write(&snapshot.committed[range])?;
             if *key == Keycode::X {
                 app.tools.input("").map_err(|error| error.to_string())?;
             }
@@ -1618,7 +1632,10 @@ fn native_text_event(
         Event::TextInput {
             text, timestamp, ..
         } => {
-            if *timestamp < input.text_after {
+            if !input.text_allowed(
+                app.tools.input_revision().map(|revision| revision.draft),
+                *timestamp,
+            ) {
                 return Some(Ok(()));
             }
             if app.tools.is_composing() {
@@ -1637,7 +1654,10 @@ fn native_text_event(
             timestamp,
             ..
         } => {
-            if *timestamp < input.text_after {
+            if !input.text_allowed(
+                app.tools.input_revision().map(|revision| revision.draft),
+                *timestamp,
+            ) {
                 return Some(Ok(()));
             }
             input.text_activity();
@@ -1789,12 +1809,10 @@ fn native_event(
         }
         Event::MouseButtonDown {
             mouse_btn: MouseButton::Left,
-            x,
-            y,
             ..
-        } if !*minimized => native_pointer_selection(
+        } if !*minimized => native_pointer_event(
             app,
-            [*x, *y],
+            event,
             window.size(),
             window.size_in_pixels(),
             extend_selection,
@@ -1844,6 +1862,25 @@ fn native_event(
         }
         _ => Ok(()),
     }
+}
+
+fn native_pointer_event(
+    app: &mut Application,
+    event: &Event,
+    logical: (u32, u32),
+    physical: (u32, u32),
+    extend: bool,
+) -> Result<()> {
+    let Event::MouseButtonDown {
+        mouse_btn: MouseButton::Left,
+        x,
+        y,
+        ..
+    } = event
+    else {
+        return Ok(());
+    };
+    native_pointer_selection(app, [*x, *y], logical, physical, extend)
 }
 
 #[cfg(test)]
@@ -1918,6 +1955,9 @@ fn native_pointer_selection(
 }
 
 fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
+    if matches!(key, Keycode::Return | Keycode::KpEnter) && !app.displayed_input_ready() {
+        return Err("review/accept waits for the current displayed input".into());
+    }
     // Text focus owns every key before global shortcuts. Unicode text arrives
     // exclusively through SDL TextInput, never by guessing keycode characters.
     if app.tools.draft_text().is_some() {

@@ -10,11 +10,13 @@ pub struct NativeInput {
     pub shift: bool,
     pub text_after: u64,
     submit: SubmitFence,
+    batch_draft: Option<u64>,
 }
 #[derive(Debug, Default)]
 struct SubmitFence {
     blocked: bool,
     batch_has_text: bool,
+    batch_text_blocked: bool,
 }
 impl NativeInput {
     pub fn new(window_id: u32) -> Self {
@@ -25,12 +27,27 @@ impl NativeInput {
             shift: false,
             text_after: 0,
             submit: SubmitFence::default(),
+            batch_draft: None,
         }
     }
     /// Inspect the complete SDL drain before dispatch: a Return preceding the
     /// commit event in this same drain must not review/accept that commit.
-    pub fn begin_batch(&mut self, has_text: bool) {
+    pub fn begin_batch(&mut self, has_text: bool, draft: Option<u64>) {
         self.submit.batch_has_text = has_text;
+        self.submit.batch_text_blocked = false;
+        self.batch_draft = draft;
+    }
+    pub fn text_allowed(&self, draft: Option<u64>, timestamp: u64) -> bool {
+        self.focused
+            && !self.submit.batch_text_blocked
+            && self.batch_draft == draft
+            && draft.is_some()
+            && timestamp >= self.text_after
+    }
+    pub fn refocus(&mut self, timestamp: u64) {
+        self.focused = true;
+        self.text_after = timestamp;
+        self.submit.batch_text_blocked = true;
     }
     pub fn text_activity(&mut self) {
         self.submit.blocked = true;
@@ -47,6 +64,7 @@ impl NativeInput {
         self.focused = false;
         self.shift = false;
         self.submit.blocked = true;
+        self.submit.batch_text_blocked = true;
     }
 }
 
@@ -70,13 +88,13 @@ mod tests {
     fn commit_in_drain_fences_return_in_either_event_order() {
         for composing in [false, true] {
             let mut input = NativeInput::new(1);
-            input.begin_batch(true);
+            input.begin_batch(true, None);
             assert!(!input.submit_allowed(composing));
             input.text_activity();
             assert!(!input.submit_allowed(false));
             input.return_released(false);
             assert!(!input.submit_allowed(false));
-            input.begin_batch(false);
+            input.begin_batch(false, None);
             assert!(input.submit_allowed(false));
         }
     }
@@ -84,7 +102,7 @@ mod tests {
     fn focus_loss_requires_explicit_refocus_and_fresh_return_release() {
         let mut input = NativeInput::new(1);
         input.lose_focus();
-        input.begin_batch(false);
+        input.begin_batch(false, None);
         input.return_released(false);
         assert!(!input.submit_allowed(false));
         input.focused = true;

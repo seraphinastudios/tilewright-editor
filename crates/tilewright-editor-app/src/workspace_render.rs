@@ -94,19 +94,8 @@ pub fn fit_text(system: &mut TextSystem, text: &str, width: u32, height: u32) ->
     if layout.size()[0] <= available {
         return text.into();
     }
-    for &end in layout.grapheme_boundaries().iter().rev() {
-        if !cluster_boundary(&layout, end) {
-            continue;
-        }
-        let candidate = format!("{}...", &text[..end]);
-        if system
-            .layout(&candidate, size, None)
-            .is_ok_and(|l| l.size()[0] <= available)
-        {
-            return candidate;
-        }
-    }
-    String::new()
+    fitted_end(system, &layout, size, available, "...")
+        .map_or_else(String::new, |end| format!("{}...", &text[..end]))
 }
 #[allow(clippy::cast_precision_loss)]
 pub fn wrap_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -> Vec<String> {
@@ -114,22 +103,16 @@ pub fn wrap_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -
     let mut remaining = text;
     let mut lines = Vec::new();
     while !remaining.is_empty() && lines.len() < 256 {
-        let Ok(layout) = system.layout(remaining, text_size(height), None) else {
+        let size = text_size(height);
+        let Ok(layout) = system.layout(remaining, size, None) else {
             break;
         };
-        let end = layout
-            .grapheme_boundaries()
-            .iter()
-            .copied()
-            .rev()
-            .find(|&end| {
-                end > 0
-                    && cluster_boundary(&layout, end)
-                    && system
-                        .layout(&remaining[..end], text_size(height), None)
-                        .is_ok_and(|l| l.size()[0] <= available)
-            });
-        let Some(end) = end else {
+        let end = if layout.size()[0] <= available {
+            Some(remaining.len())
+        } else {
+            fitted_end(system, &layout, size, available, "")
+        };
+        let Some(end) = end.filter(|end| *end > 0) else {
             break;
         };
         lines.push(remaining[..end].into());
@@ -137,12 +120,58 @@ pub fn wrap_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -
     }
     lines
 }
+/// At most logarithmically many shared shaping requests, independent of bidi
+/// glyph order. Contextual shaping need not make widths monotonic: every kept
+/// candidate is measured and fits; the search may conservatively elide extra.
+fn fitted_end(
+    system: &mut TextSystem,
+    layout: &UnicodeLayout,
+    size: f32,
+    available: f32,
+    suffix: &str,
+) -> Option<usize> {
+    let mut ranges: Vec<_> = layout
+        .clusters()
+        .iter()
+        .map(|cluster| cluster.bytes.clone())
+        .collect();
+    ranges.sort_by_key(|range| range.start);
+    let (mut next, mut occupied_end) = (0, 0);
+    let mut cuts = Vec::new();
+    for &byte in layout.grapheme_boundaries() {
+        while next < ranges.len() && ranges[next].start < byte {
+            occupied_end = occupied_end.max(ranges[next].end);
+            next += 1;
+        }
+        if occupied_end <= byte {
+            cuts.push(byte);
+        }
+    }
+    let (mut low, mut high, mut best) = (0, cuts.len(), None);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let end = cuts[middle];
+        let candidate = format!("{}{suffix}", &layout.text()[..end]);
+        if system
+            .layout(&candidate, size, None)
+            .is_ok_and(|candidate| candidate.size()[0] <= available)
+        {
+            best = Some(end);
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    best
+}
+#[cfg(test)]
 fn cluster_boundary(layout: &UnicodeLayout, byte: usize) -> bool {
     !layout
         .clusters()
         .iter()
         .any(|cluster| cluster.bytes.start < byte && byte < cluster.bytes.end)
 }
+
 pub fn renderer_cursor(cursor: tilewright_editor_ui::text_input::TextCursor) -> TextCursor {
     TextCursor {
         byte: cursor.byte,
@@ -463,5 +492,17 @@ mod tests {
                 assert!(cluster_boundary(&layout, prefix.len()));
             }
         }
+    }
+    #[test]
+    fn long_label_elision_uses_bounded_shared_layout_requests() {
+        let mut system = crate::font_pack::test_system();
+        let text = "a".repeat(4096);
+        let fitted = fit_text(&mut system, &text, 290, 26);
+        assert!(fitted.ends_with("..."));
+        assert!(
+            system.cached_layouts() <= 15,
+            "each retained trial is one shared shaping request"
+        );
+        assert!(system.layout(&fitted, 18.0, None).unwrap().size()[0] <= 282.0);
     }
 }
