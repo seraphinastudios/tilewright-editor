@@ -153,7 +153,7 @@ fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation(
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     let generation = app.session.generation();
-    let camera = app.view.camera.center;
+    let camera = app.view.camera.center.map(|value| value.to_bits());
     let draft = app.tools.draft_text().unwrap().to_owned();
     for key in [
         Keycode::Q,
@@ -1171,7 +1171,7 @@ fn real_shift_and_repeated_arrows_use_current_draft_without_intermediate_frames(
         acknowledge_ui(&mut app);
         let source = app.session.history().document().revision();
         let world = app.session.world().source_digest();
-        let camera = app.view.camera.center;
+        let camera = app.view.camera.center.map(|value| value.to_bits());
         let mut input = crate::native_input::NativeInput::new(7);
         input.begin_batch(
             false,
@@ -1219,7 +1219,7 @@ fn real_shift_and_repeated_arrows_use_current_draft_without_intermediate_frames(
         assert_eq!(selection.anchor.byte, if shift { 0 } else { expected });
         assert_eq!(app.session.history().document().revision(), source);
         assert_eq!(app.session.world().source_digest(), world);
-        assert_eq!(app.view.camera.center, camera);
+        assert_eq!(app.view.camera.center.map(|value| value.to_bits()), camera);
         assert!(app.session.history().pending().is_none());
     }
 }
