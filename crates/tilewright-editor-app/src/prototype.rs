@@ -72,7 +72,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         PreviewLimits::default(),
     )
     .map_err(|error| error.to_string())?;
-    let view = catalog.default_view(document.world(), 960, 640, 1);
+    let view = catalog.default_view(document.world(), 1280, 800, 1);
     let prepared = tilewright_editor_preview::prepare(
         document.world(),
         &catalog,
@@ -94,7 +94,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         view,
         prepared,
         tools: ToolState::default(),
-        ui: WorkspaceUi::new((960, 640), (960, 640)),
+        ui: WorkspaceUi::new((1280, 800), (1280, 800)),
         notice: None,
         sidebar_scroll: 0,
         review_scroll: 0,
@@ -360,40 +360,40 @@ impl Application {
         for (x, width, label, control, enabled, active) in [
             (
                 8,
-                72,
+                84,
                 "Select",
                 Control::Select,
                 true,
                 mode == ToolMode::Select,
             ),
-            (86, 72, "Move", Control::Move, true, mode == ToolMode::Move),
+            (98, 76, "Move", Control::Move, true, mode == ToolMode::Move),
             (
-                164,
-                76,
+                180,
+                96,
                 "Terrain",
                 Control::Terrain,
                 true,
                 mode == ToolMode::Terrain,
             ),
             (
-                250,
-                68,
+                282,
+                76,
                 "Clear",
                 Control::Clear,
                 self.session.selection().is_some(),
                 false,
             ),
             (
-                328,
-                62,
+                368,
+                72,
                 "Undo",
                 Control::Undo,
                 ready && self.session.history().depths().0 > 0,
                 false,
             ),
             (
-                396,
-                62,
+                446,
+                72,
                 "Redo",
                 Control::Redo,
                 ready && self.session.history().depths().1 > 0,
@@ -416,13 +416,13 @@ impl Application {
         if self.unsupported_runs > 0 {
             ui.widget(
                 Rect {
-                    x: 470,
+                    x: 530,
                     y: 8,
-                    width: ui.logical_size().0.saturating_sub(480),
+                    width: ui.logical_size().0.saturating_sub(540),
                     height: 32,
                 },
                 format!(
-                    "Text fallback: {} runs / unsupported fields read-only",
+                    "Unsupported text: {} marks / fields read-only",
                     self.unsupported_runs
                 ),
                 None,
@@ -443,7 +443,8 @@ impl Application {
             self.session.generation(),
             self.session.history().document().revision(),
         );
-        rows.push(("INSPECTOR  /  scroll for more".into(), None, true, false));
+        rows.push(("Inspector".into(), None, true, false));
+        rows.push(("Mouse wheel: more rows".into(), None, true, false));
         match inspected.selection {
             Some(SelectionSummary::Object {
                 uid,
@@ -494,12 +495,7 @@ impl Application {
             )),
         }
         if mode == ToolMode::Terrain {
-            rows.push((
-                "TERRAIN PALETTE  /  explicit values".into(),
-                None,
-                true,
-                false,
-            ));
+            rows.push(("Terrain palette".into(), None, true, false));
             for choice in tools::terrain_palette(self.session.catalog()) {
                 let active = self.tools.terrain_choice() == Some(&choice);
                 rows.push((
@@ -535,15 +531,21 @@ impl Application {
         };
         let ready = self.blocked.is_none() && self.session.can_prepare();
         let mode = self.tools.mode();
-        rows.push((format!("Object {uid}  [{prototype}]"), None, true, false));
+        rows.push((format!("Object: {uid}"), None, true, false));
+        rows.push((format!("Type: {prototype}"), None, true, false));
         rows.push((
-            format!("{plane} / layer {layer} / {at:?}"),
+            format!("Plane: {plane} / Layer: {layer}"),
             None,
             true,
             false,
         ));
+        let position = at.map_or_else(
+            || "Position: not placed".into(),
+            |[x, y]| format!("Position  X {x}  Y {y}"),
+        );
+        rows.push((position, None, true, false));
         rows.push((
-            "Edit coordinates: x,y".into(),
+            "Edit position (x,y)".into(),
             Some(Control::Coordinates),
             ready && movable,
             false,
@@ -568,6 +570,7 @@ impl Application {
                 || "<absent>".into(),
                 |value| match value {
                     tilewright_source::FieldValue::String(text) => inspector::display_text(text),
+                    tilewright_source::FieldValue::Json(_) => "Grouped values".into(),
                     _ => inspector::display_text(&inspector::scalar_text(value)),
                 },
             );
@@ -584,10 +587,9 @@ impl Application {
                 false,
             ));
             let detail = if supported {
-                row.reason
-                    .map_or_else(|| format!("{:?}", row.spec.field_type), str::to_owned)
+                field_description(row)
             } else {
-                "Read-only: unsupported text/shaping; source preserved".into()
+                "Read-only: unsupported text".into()
             };
             rows.push((detail, None, row.editable, false));
             let choices = tools::field_choices(inspected, row.name);
@@ -602,7 +604,7 @@ impl Application {
         }
         if inspected.truncated {
             rows.push((
-                "More schema rows omitted by input budget".into(),
+                "More fields are unavailable in this view".into(),
                 None,
                 false,
                 false,
@@ -626,9 +628,9 @@ impl Application {
                     height: 30,
                 },
                 if supported {
-                    format!("> {text}|  [Ctrl+A clears]")
+                    format!("> {text}|")
                 } else {
-                    format!("UNSUPPORTED: {text}|  / review blocked")
+                    format!("Unsupported: {text}|")
                 },
                 None,
                 true,
@@ -639,10 +641,27 @@ impl Application {
                 Rect {
                     x,
                     y,
+                    width,
+                    height: 22,
+                },
+                if supported {
+                    "Ctrl+A clears / Enter reviews"
+                } else {
+                    "Unsupported text; cannot review"
+                },
+                None,
+                supported,
+                false,
+            );
+            y += 26;
+            ui.widget(
+                Rect {
+                    x,
+                    y,
                     width: width / 2 - 3,
                     height: 28,
                 },
-                "Review edit",
+                "Review",
                 Some(Control::ApplyDraft),
                 ready && supported,
                 false,
@@ -654,7 +673,7 @@ impl Application {
                     width: width / 2 - 3,
                     height: 28,
                 },
-                "Discard input",
+                "Discard",
                 Some(Control::CancelDraft),
                 true,
                 false,
@@ -711,11 +730,7 @@ impl Application {
             pending && self.blocked.is_none(),
             false,
         );
-        let status = self
-            .blocked
-            .as_deref()
-            .or(self.notice.as_deref())
-            .map_or_else(|| self.session.status().to_string(), str::to_owned);
+        let status = self.status_label();
         ui.widget(
             Rect {
                 x: 10,
@@ -728,7 +743,7 @@ impl Application {
             true,
             false,
         );
-        let diff = self.diff_lines();
+        let diff = self.review_lines(logical.0.saturating_sub(320.min(logical.0 / 2) + 20));
         let lines = usize::try_from(logical.1.saturating_sub(y + 64) / 20).unwrap_or(0);
         self.review_scroll = self.review_scroll.min(diff.len().saturating_sub(lines));
         for (index, line) in diff
@@ -750,6 +765,61 @@ impl Application {
                 false,
             );
         }
+    }
+
+    fn status_label(&self) -> String {
+        if self.blocked.is_some() || self.session.status().phase == SessionPhase::Blocked {
+            return "Editing blocked. Recovery details below.".into();
+        }
+        if self.notice.is_some() {
+            return "Input not applied. Details below.".into();
+        }
+        match self.session.status().phase {
+            SessionPhase::Ready if self.session.status().applied == Some(true) => {
+                "Changes saved. Ready to edit."
+            }
+            SessionPhase::Ready => "Ready. Select an object or choose Terrain.",
+            SessionPhase::Pending => "Review changes, then Accept or Cancel.",
+            SessionPhase::Retaining => "Saving recovery information...",
+            SessionPhase::Publishing => "Saving reviewed changes...",
+            SessionPhase::Blocked => "Editing blocked. Recovery details below.",
+        }
+        .into()
+    }
+
+    fn review_lines(&self, width: u32) -> Vec<String> {
+        let mut details = Vec::new();
+        if let Some(reason) = &self.blocked {
+            details.push(format!("Rendering blocked: {reason}"));
+        }
+        if let Some(reason) = &self.notice {
+            details.push(reason.clone());
+        }
+        let status = self.session.status();
+        if status.phase == SessionPhase::Blocked {
+            details.push(format!("Reason: {}", status.message));
+            for (label, value) in [
+                ("Source changed", status.applied),
+                ("Durable on disk", status.durable),
+                ("Cleanup finished", status.cleaned),
+            ] {
+                details.push(format!(
+                    "{label}: {}",
+                    value.map_or("not reported", |value| if value { "yes" } else { "no" })
+                ));
+            }
+            if let Some(record) = &status.recovery_descriptor {
+                details.push(format!("Recovery record: {record}"));
+            }
+            details.push("Keep the recovery record. Inspect source before reopening.".into());
+        }
+        details.extend(self.diff_lines());
+        details
+            .into_iter()
+            .flat_map(|line| {
+                crate::workspace_render::wrap_text(&inspector::display_text(&line), width, 20)
+            })
+            .collect()
     }
 
     fn diff_lines(&self) -> Vec<String> {
@@ -787,7 +857,7 @@ impl Application {
                 );
             }
         } else {
-            diff.push("No pending source diff. Edits are reviewed before acceptance.".into());
+            diff.push("No pending changes. Edits are reviewed before saving.".into());
         }
         diff
     }
@@ -1047,6 +1117,35 @@ impl Application {
             }
         }
         Ok(())
+    }
+}
+
+fn field_description(row: &inspector::FieldRow<'_>) -> String {
+    use tilewright_source::FieldType;
+    if let Some(reason) = row.reason {
+        return match reason {
+            "Structured field is read-only" => "Read-only: grouped fields".into(),
+            "Required field is absent; source must be repaired" => "Required value missing".into(),
+            "Field has no editing capability" => "Read-only: editing not allowed".into(),
+            "Field choices exceed input budget" => "Read-only: too many choices".into(),
+            "Current value exceeds input budget" => "Read-only: value too long".into(),
+            "Optional field is absent; enter a value to add it" => {
+                "Optional: enter a value to add".into()
+            }
+            other => other.into(),
+        };
+    }
+    match &row.spec.field_type {
+        FieldType::Boolean => "Boolean: true or false".into(),
+        FieldType::Integer { minimum, maximum } => format!("Integer ({minimum} to {maximum})"),
+        FieldType::Number { minimum, maximum } => format!("Number ({minimum} to {maximum})"),
+        FieldType::String { maximum_length, .. } => {
+            format!("Text (max {maximum_length} characters)")
+        }
+        FieldType::Reference { target } => format!("Reference: {target}"),
+        FieldType::Json => "Read-only: JSON value".into(),
+        FieldType::List { .. } => "Read-only: list of values".into(),
+        FieldType::Object { .. } => "Read-only: grouped fields".into(),
     }
 }
 

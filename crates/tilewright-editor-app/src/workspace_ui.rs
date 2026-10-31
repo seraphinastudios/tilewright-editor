@@ -181,10 +181,14 @@ impl WorkspaceUi {
             self.widgets.push(Widget {
                 bounds,
                 layout,
-                text: tilewright_editor_ui::inspector::display_text(
-                    &tilewright_editor_document::terminal_field(
-                        &tilewright_editor_ui::inspector::display_text(&text.into()),
+                text: crate::workspace_render::fit_text(
+                    &tilewright_editor_ui::inspector::display_text(
+                        &tilewright_editor_document::terminal_field(
+                            &tilewright_editor_ui::inspector::display_text(&text.into()),
+                        ),
                     ),
+                    layout.width,
+                    layout.height,
                 ),
                 control,
                 enabled,

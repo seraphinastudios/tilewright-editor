@@ -84,6 +84,115 @@ pub fn supports_text(text: &str) -> bool {
     builtin::builtin_font(font_texture(1)).is_ok_and(|font| font.supports_text(text))
 }
 
+/// Consumers use renderer-produced text measurements to elide presentation only.
+/// These helpers never inspect glyph tables or alter the editable source string.
+pub fn text_size(height: u32) -> f32 {
+    if height <= 22 { 14.0 } else { 18.0 }
+}
+
+pub fn measure_text(text: &str, size: f32) -> Result<tilewright_render_ui::TextLayout> {
+    let font = builtin::builtin_font(font_texture(1)).map_err(CompositionError::Ui)?;
+    let font_array = [font];
+    let fonts = BitmapFontSet::new(&font_array).map_err(CompositionError::Ui)?;
+    let bounds = UiRect {
+        x: 0.0,
+        y: 0.0,
+        width: 8192.0,
+        height: 64.0,
+    };
+    let primitive = UiPrimitive::Text {
+        origin: [0.0, 0.0],
+        clip: bounds,
+        font: builtin::FONT_ID,
+        size,
+        text,
+        paint: UiPaint {
+            semantic_id: SemanticId(1),
+            painter_order: 0,
+            color: [1.0; 4],
+        },
+    };
+    let compiled = compile_ui(
+        UiViewport {
+            logical_size: [8192, 64],
+            physical_size: [8192, 64],
+        },
+        UiDisplayList {
+            primitives: &[primitive],
+        },
+        &fonts,
+        UiTexture {
+            id: ResourceId(2),
+            revision: 1,
+            digest: Digest256(builtin::SOLID_SHA256),
+        },
+        UiLimits::default(),
+    )
+    .map_err(CompositionError::Ui)?;
+    compiled
+        .text_layouts
+        .into_iter()
+        .next()
+        .ok_or(CompositionError::TargetMismatch)
+}
+
+#[allow(clippy::cast_precision_loss)]
+pub fn fit_text(text: &str, width: u32, height: u32) -> String {
+    let available = width.saturating_sub(8) as f32;
+    let size = text_size(height);
+    let Ok(layout) = measure_text(text, size) else {
+        return "Text unavailable".into();
+    };
+    if layout.size[0] <= available {
+        return text.into();
+    }
+    let Ok(suffix) = measure_text("...", size) else {
+        return String::new();
+    };
+    if suffix.size[0] > available {
+        return String::new();
+    }
+    let end = layout
+        .glyphs
+        .iter()
+        .take_while(|glyph| glyph.baseline[0] + glyph.advance <= available - suffix.size[0])
+        .last()
+        .map_or(0, |glyph| glyph.byte_end);
+    format!("{}...", &text[..end])
+}
+
+#[allow(clippy::cast_precision_loss)]
+pub fn wrap_text(text: &str, width: u32, height: u32) -> Vec<String> {
+    let available = width.saturating_sub(8) as f32;
+    let mut remaining = text;
+    let mut lines = Vec::new();
+    while !remaining.is_empty() && lines.len() < 32 {
+        let Ok(layout) = measure_text(remaining, text_size(height)) else {
+            break;
+        };
+        if layout.size[0] <= available {
+            lines.push(remaining.into());
+            break;
+        }
+        let end = layout
+            .glyphs
+            .iter()
+            .take_while(|glyph| glyph.baseline[0] + glyph.advance <= available)
+            .last()
+            .map_or(0, |glyph| glyph.byte_end);
+        if end == 0 {
+            break;
+        }
+        let end = remaining[..end]
+            .rfind(' ')
+            .filter(|index| *index > 0)
+            .unwrap_or(end);
+        lines.push(remaining[..end].into());
+        remaining = remaining[end..].trim_start();
+    }
+    lines
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn rect(rect: Rect) -> UiRect {
     // SDL dimensions are constrained by SceneLimits before scene construction.
@@ -159,11 +268,7 @@ fn display_list(ui: &WorkspaceUi, mut identity: u32) -> Result<Vec<UiPrimitive<'
             clip: bounds,
             paint: paint(&mut identity, order + 1, color)?,
             font: builtin::FONT_ID,
-            size: if widget.layout.height <= 22 {
-                14.0
-            } else {
-                18.0
-            },
+            size: text_size(widget.layout.height),
             text: &widget.text,
         });
     }

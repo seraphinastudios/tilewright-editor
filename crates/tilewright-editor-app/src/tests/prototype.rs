@@ -337,3 +337,105 @@ fn cpu_evidence_png_contains_shared_workspace_ui_and_preserves_world_revision_pr
         tilewright_editor_document::revision_hex(&app.session.history().document().revision())
     );
 }
+
+#[test]
+fn readable_controls_and_inspector_copy_fit_960_and_1280_windows() {
+    use crate::workspace_ui::{Control, WorkspaceUi};
+    let (_temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    for size in [(960, 640), (1280, 800)] {
+        app.ui = WorkspaceUi::new(size, size);
+        app.refresh_ui();
+        let terrain = app
+            .ui
+            .widgets
+            .iter()
+            .find(|widget| widget.control == Some(Control::Terrain))
+            .unwrap();
+        assert_eq!(terrain.text, "Terrain");
+        for widget in &app.ui.widgets {
+            let measured = crate::workspace_render::measure_text(
+                &widget.text,
+                crate::workspace_render::text_size(widget.layout.height),
+            )
+            .unwrap();
+            #[allow(clippy::cast_precision_loss)]
+            let available = widget.layout.width.saturating_sub(8) as f32;
+            assert!(
+                measured.size[0] <= available + 0.001,
+                "{} exceeds {}",
+                widget.text,
+                available
+            );
+            assert!(!widget.text.contains("Some("));
+            assert!(!widget.text.contains("maximum_length"));
+            assert!(!widget.text.contains("applied="));
+        }
+        assert!(
+            app.ui
+                .widgets
+                .iter()
+                .any(|widget| widget.text == "Inspector")
+        );
+        assert!(
+            app.ui
+                .widgets
+                .iter()
+                .any(|widget| widget.text == "Position  X 3  Y 2")
+        );
+        assert!(
+            app.ui
+                .widgets
+                .iter()
+                .any(|widget| widget.text == "Text (max 64 characters)")
+        );
+        assert!(app.status_label().starts_with("Ready."));
+    }
+}
+
+#[test]
+fn long_display_labels_elide_using_shared_measurements_and_keep_full_draft() {
+    use crate::workspace_ui::{Control, Rect, WorkspaceUi};
+    let mut ui = WorkspaceUi::new((960, 640), (960, 640));
+    let original = "Extended field label with a long readable value".repeat(4);
+    ui.widget(
+        Rect {
+            x: 650,
+            y: 60,
+            width: 290,
+            height: 26,
+        },
+        &original,
+        None,
+        true,
+        false,
+    );
+    assert!(ui.widgets[0].text.ends_with("..."));
+    assert_ne!(ui.widgets[0].text, original);
+    let (_temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    app.tools.input(" extended visible field draft").unwrap();
+    let draft = app.tools.draft_text().unwrap().to_owned();
+    app.refresh_ui();
+    assert_eq!(app.tools.draft_text(), Some(draft.as_str()));
+    assert!(app.session.history().pending().is_none());
+}
+
+#[test]
+fn blocked_render_reason_precedes_source_excerpt_and_ready_status_is_plain() {
+    let (_temporary, mut app) = application();
+    assert!(!app.status_label().contains("applied"));
+    app.blocked = Some("Font resources could not be verified".into());
+    assert_eq!(
+        app.status_label(),
+        "Editing blocked. Recovery details below."
+    );
+    let lines = app.review_lines(620);
+    assert!(lines[0].starts_with("Rendering blocked:"));
+    assert!(
+        lines
+            .join(" ")
+            .contains("Font resources could not be verified")
+    );
+}
