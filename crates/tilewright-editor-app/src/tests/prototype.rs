@@ -215,13 +215,24 @@ fn combining_text_reaches_review_without_normalization_or_source_write() {
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     app.tools.select_all().unwrap();
-    app.tools.input("Cafe\u{301} العربية עברית हिन्दी தமிழ் 青🙂").unwrap();
+    app.tools
+        .input("Cafe\u{301} العربية עברית हिन्दी தமிழ் 青🙂")
+        .unwrap();
     let draft = app.tools.draft_text().unwrap().to_owned();
     let revision = app.session.history().document().revision();
     app.control(Control::ApplyDraft).unwrap();
     assert_eq!(app.session.history().document().revision(), revision);
     assert!(app.session.history().pending().is_some());
-    assert!(app.session.world().object("marker_1").unwrap().fields.iter().any(|(name, value)| name == "label" && value == &tilewright_source::FieldValue::String(draft.clone())));
+    assert!(
+        app.session
+            .world()
+            .object("marker_1")
+            .unwrap()
+            .fields
+            .iter()
+            .any(|(name, value)| name == "label"
+                && value == &tilewright_source::FieldValue::String(draft.clone()))
+    );
 }
 
 #[test]
@@ -269,10 +280,14 @@ fn composed_ui_preserves_world_geometry_and_rejects_exhausted_identities() {
             SceneLimits::default(),
         )
         .unwrap();
-        let error =
-            crate::workspace_render::compose(&mut app.text, &app.ui, &world, app.prepared.resources.clone())
-                .err()
-                .unwrap();
+        let error = crate::workspace_render::compose(
+            &mut app.text,
+            &app.ui,
+            &world,
+            app.prepared.resources.clone(),
+        )
+        .err()
+        .unwrap();
         assert!(matches!(
             error,
             crate::workspace_render::CompositionError::ResourceIdentityExhausted
@@ -360,11 +375,14 @@ fn readable_controls_and_inspector_copy_fit_960_and_1280_windows() {
             .unwrap();
         assert_eq!(terrain.text, "Terrain");
         for widget in &app.ui.widgets {
-            let measured = app.text.layout(
-                &widget.text,
-                crate::workspace_render::text_size(widget.layout.height), None,
-            )
-            .unwrap();
+            let measured = app
+                .text
+                .layout(
+                    &widget.text,
+                    crate::workspace_render::text_size(widget.layout.height),
+                    None,
+                )
+                .unwrap();
             #[allow(clippy::cast_precision_loss)]
             let available = widget.layout.width.saturating_sub(8) as f32;
             assert!(
@@ -681,55 +699,137 @@ fn long_utf8_draft_shows_working_tail_and_caret_while_full_value_reaches_review(
 }
 
 fn input_key(window_id: u32, key: sdl3::keyboard::Keycode, up: bool) -> sdl3::event::Event {
-    if up { sdl3::event::Event::KeyUp { timestamp: 0, window_id, keycode: Some(key), scancode: None, keymod: sdl3::keyboard::Mod::NOMOD, repeat: false, which: 0, raw: 0 } }
-    else { sdl3::event::Event::KeyDown { timestamp: 0, window_id, keycode: Some(key), scancode: None, keymod: sdl3::keyboard::Mod::NOMOD, repeat: false, which: 0, raw: 0 } }
+    if up {
+        sdl3::event::Event::KeyUp {
+            timestamp: 0,
+            window_id,
+            keycode: Some(key),
+            scancode: None,
+            keymod: sdl3::keyboard::Mod::NOMOD,
+            repeat: false,
+            which: 0,
+            raw: 0,
+        }
+    } else {
+        sdl3::event::Event::KeyDown {
+            timestamp: 0,
+            window_id,
+            keycode: Some(key),
+            scancode: None,
+            keymod: sdl3::keyboard::Mod::NOMOD,
+            repeat: false,
+            which: 0,
+            raw: 0,
+        }
+    }
 }
 
 #[test]
 fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
-    use sdl3::{event::{Event, WindowEvent}, keyboard::Keycode};
     use crate::workspace_ui::Control;
+    use sdl3::{
+        event::{Event, WindowEvent},
+        keyboard::Keycode,
+    };
     let (temporary, mut app) = application();
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     app.tools.select_all().unwrap();
-    let original = fs::read(temporary.path().join("world/planes/main/layers/0/0_0.jsonc")).unwrap();
+    let original = fs::read(
+        temporary
+            .path()
+            .join("world/planes/main/layers/0/0_0.jsonc"),
+    )
+    .unwrap();
     let committed = app.tools.draft_text().unwrap().to_owned();
     let revision = app.session.history().document().revision();
     let mut input = crate::native_input::NativeInput::new(7);
     input.begin_batch(true);
-    let preedit = Event::TextEditing { timestamp: 0, window_id: 7, text: "é🙂青".into(), start: 1, length: 1 };
-    super::native_text_event(&mut app, &preedit, &mut input).unwrap().unwrap();
+    let preedit = Event::TextEditing {
+        timestamp: 0,
+        window_id: 7,
+        text: "é🙂青".into(),
+        start: 1,
+        length: 1,
+    };
+    super::native_text_event(&mut app, &preedit, &mut input)
+        .unwrap()
+        .unwrap();
     let snapshot = app.tools.draft_snapshot().unwrap();
     assert_eq!(snapshot.composition.unwrap().selection, Some(2..6));
     assert_eq!(app.tools.draft_text(), Some(committed.as_str()));
-    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).unwrap().unwrap();
-    let commit = Event::TextInput { timestamp: 0, window_id: 7, text: "é🙂青".into() };
-    super::native_text_event(&mut app, &commit, &mut input).unwrap().unwrap();
-    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).unwrap().unwrap();
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input)
+        .unwrap()
+        .unwrap();
+    let commit = Event::TextInput {
+        timestamp: 0,
+        window_id: 7,
+        text: "é🙂青".into(),
+    };
+    super::native_text_event(&mut app, &commit, &mut input)
+        .unwrap()
+        .unwrap();
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input)
+        .unwrap()
+        .unwrap();
     assert_eq!(app.tools.draft_text(), Some("é🙂青"));
     assert!(app.session.history().pending().is_none());
     assert_eq!(app.session.history().document().revision(), revision);
-    assert_eq!(fs::read(temporary.path().join("world/planes/main/layers/0/0_0.jsonc")).unwrap(), original);
-    super::native_text_event(&mut app, &input_key(7, Keycode::Return, true), &mut input).unwrap().unwrap();
+    assert_eq!(
+        fs::read(
+            temporary
+                .path()
+                .join("world/planes/main/layers/0/0_0.jsonc")
+        )
+        .unwrap(),
+        original
+    );
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, true), &mut input)
+        .unwrap()
+        .unwrap();
     input.begin_batch(false);
-    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).unwrap().unwrap();
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input)
+        .unwrap()
+        .unwrap();
     assert!(app.session.history().pending().is_some());
     // A second Return in the same drain cannot accept the undisplayed diff.
-    assert!(super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).is_none());
+    assert!(
+        super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input)
+            .is_none()
+    );
     assert!(!app.displayed_input_ready());
     app.action(Action::Cancel).unwrap();
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     let prior = app.tools.draft_text().unwrap().to_owned();
-    super::native_text_event(&mut app, &preedit, &mut input).unwrap().unwrap();
-    super::native_text_event(&mut app, &Event::Window { timestamp: 0, window_id: 7, win_event: WindowEvent::FocusLost }, &mut input).unwrap().unwrap();
+    super::native_text_event(&mut app, &preedit, &mut input)
+        .unwrap()
+        .unwrap();
+    super::native_text_event(
+        &mut app,
+        &Event::Window {
+            timestamp: 0,
+            window_id: 7,
+            win_event: WindowEvent::FocusLost,
+        },
+        &mut input,
+    )
+    .unwrap()
+    .unwrap();
     assert!(!app.tools.is_composing());
-    super::native_text_event(&mut app, &commit, &mut input).unwrap().unwrap();
+    super::native_text_event(&mut app, &commit, &mut input)
+        .unwrap()
+        .unwrap();
     assert_eq!(app.tools.draft_text(), Some(prior.as_str()));
     input.focused = true;
-    let foreign = Event::TextInput { timestamp: 0, window_id: 8, text: "FOREIGN".into() };
-    super::native_text_event(&mut app, &foreign, &mut input).unwrap().unwrap();
+    let foreign = Event::TextInput {
+        timestamp: 0,
+        window_id: 8,
+        text: "FOREIGN".into(),
+    };
+    super::native_text_event(&mut app, &foreign, &mut input)
+        .unwrap()
+        .unwrap();
     assert_eq!(app.tools.draft_text(), Some(prior.as_str()));
 }
 

@@ -1513,7 +1513,13 @@ fn native_text_event(
             ..
         } => {
             input.lose_focus();
-            let result = if app.tools.draft_text().is_some() { app.tools.cancel_preedit().map_err(|error| error.to_string()) } else { Ok(()) };
+            let result = if app.tools.draft_text().is_some() {
+                app.tools
+                    .cancel_preedit()
+                    .map_err(|error| error.to_string())
+            } else {
+                Ok(())
+            };
             if matches!(
                 event,
                 Event::Window {
@@ -1533,7 +1539,9 @@ fn native_text_event(
             Some(Ok(()))
         }
         Event::TextInput { text, .. } => {
-            if app.tools.is_composing() { input.text_activity(); }
+            if app.tools.is_composing() {
+                input.text_activity();
+            }
             Some(if input.focused && app.tools.draft_text().is_some() {
                 app.tools.input(text).map_err(|error| error.to_string())
             } else {

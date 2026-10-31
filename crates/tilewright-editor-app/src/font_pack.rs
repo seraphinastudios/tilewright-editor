@@ -3,8 +3,8 @@
 
 //! Explicit read-only, digest-pinned application fonts. Toolkit confinement
 //! rejects symlink/traversal/special-file inputs; renderer validates all bytes.
-use std::{path::Path, sync::Arc};
 use sha2::{Digest, Sha256};
+use std::{path::Path, sync::Arc};
 use tilewright_render_ui::{
     unicode::{FontBlob, FontPack, TextLimits, TextSystem},
     unicode_fonts::FONTS,
@@ -22,9 +22,14 @@ pub fn load(path: &Path, world: &Path) -> Result<TextSystem, String> {
         return Err("font pack and project source roots must be separate".into());
     }
     let root = SourceRoot::new(&canonical);
-    let manifest = root.read("manifest.json", 1024 * 1024).map_err(|error| error.to_string())?.ok_or("font pack manifest missing")?;
+    let manifest = root
+        .read("manifest.json", 1024 * 1024)
+        .map_err(|error| error.to_string())?
+        .ok_or("font pack manifest missing")?;
     let digest: [u8; 32] = Sha256::digest(&manifest).into();
-    if digest != tilewright_render_ui::unicode_fonts::FONT_PACK_MANIFEST_SHA256 { return Err("font pack manifest digest mismatch".into()); }
+    if digest != tilewright_render_ui::unicode_fonts::FONT_PACK_MANIFEST_SHA256 {
+        return Err("font pack manifest digest mismatch".into());
+    }
     let mut fonts = Vec::with_capacity(FONTS.len());
     for font in FONTS {
         let bytes = root
