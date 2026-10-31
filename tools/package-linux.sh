@@ -5,6 +5,7 @@ repository=$(git rev-parse --show-toplevel)
 cd "${repository}"
 output=${1:-dist}
 version=${2:-0.1.0-dev}
+font_pack=${3:?usage: package-linux.sh OUTPUT VERSION PREPARED_FONT_PACK}
 if [[ ! ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$ ]]; then
   echo "invalid release version: ${version}" >&2
   exit 2
@@ -26,6 +27,9 @@ cp LICENSE PROVENANCE.md THIRD_PARTY_NOTICES.md \
   "${stage}/tilewright-editor-${version}/"
 python3 tools/check-prototype-assets.py
 python3 tools/package-assets.py --root . --stage "${stage}/tilewright-editor-${version}"
+python3 tools/package-font-notice.py --root . --stage "${stage}/tilewright-editor-${version}" >/dev/null
+python3 tools/prepare-font-pack.py stage --root . --font-pack "${font_pack}" \
+  --stage "${stage}/tilewright-editor-${version}" >/dev/null
 "${stage}/tilewright-editor-${version}/bin/tilewright-editor" version >/dev/null
 SYFT_CHECK_FOR_APP_UPDATE=false syft \
   "${stage}/tilewright-editor-${version}/bin/tilewright-editor" \
@@ -43,6 +47,8 @@ jq --arg version "${version}" --arg serial "${serial}" '
 ' "${sbom}" >"${normalized}"
 mv "${normalized}" "${sbom}"
 jq -e '(.components // []) | length >= 10' "${sbom}" >/dev/null
+python3 tools/prepare-font-pack.py sbom --root . --stage "${stage}/tilewright-editor-${version}" \
+  --sbom "${sbom}" >/dev/null
 python3 tools/package-provenance.py --root . --version "${version}" \
   --output "${stage}/tilewright-editor-${version}/provenance.json"
 
