@@ -1,6 +1,6 @@
 # Offline editing prototype
 
-The prototype targets World 0.1.0 and renderer 0.6.0. Release builds require
+The prototype targets World 0.1.0 and renderer 0.6.2. Release builds require
 the exact published registry dependencies; local source candidates do not
 establish released-consumer acceptance. The generic
 editor opens ordinary World data and its strict `preview.jsonc` catalog. A

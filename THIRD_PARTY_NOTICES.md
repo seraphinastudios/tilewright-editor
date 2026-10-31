@@ -6,7 +6,8 @@ SBOM.
 
 - `tilewright-source`, `tilewright-edit` and `tilewright-jsonc` 0.1.0
   (tilewright-world): MIT.
-- `tilewright-scene` and `tilewright-render-*` 0.5.1 (tilewright-renderer): MIT.
+- `tilewright-scene` and `tilewright-render-*` 0.6.2 (tilewright-renderer): MIT
+  implementation; `tilewright-render-ui` also bundles OFL-1.1 font data.
 - `sdl3` Rust bindings: MIT.
 - SDL native library: Zlib License.
 - `libloading` (native graphics loading): ISC License; its notice remains in
@@ -15,6 +16,10 @@ SBOM.
   License v3; its Unicode data notice remains in the dependency source.
 - `wgpu` and graphics/shader support: MIT or Apache-2.0, with exact versions
   and selected alternatives recorded by the dependency license check/SBOM.
+- `cosmic-text` 0.19.0, `swash` 0.2.10, `skrifa` 0.40.0/0.44.0,
+  `ttf-parser` 0.25.1 and Unicode shaping support: MIT or Apache-2.0;
+  `harfrust` 0.5.2 and `fontdb` 0.23.0: MIT; `unicode-linebreak` 0.1.5:
+  Apache-2.0. Exact dependency licenses are checked against the locked graph.
 - `png`, compression support, SHA-256 and JSON encoding: MIT-compatible
   alternatives recorded by the exact locked dependency graph.
 
@@ -83,13 +88,13 @@ not be used in advertising or otherwise to promote the sale, use or other
 dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 
-## Shared renderer UI font candidate — OFL 1.1
+## Shared renderer UI font — OFL 1.1
 
-`tilewright-render-ui` 0.6.0 combines MIT implementation with bundled Roboto Mono
+`tilewright-render-ui` 0.6.2 combines MIT implementation with bundled Roboto Mono
 font source and derived atlas, metrics and glyph data under **SIL Open Font
-License 1.1 (`OFL-1.1`)**. This policy prepares a candidate; it does not claim
-that this coordinate is published or that the owner accepted its limited text
-coverage.
+License 1.1 (`OFL-1.1`)**. The exact released registry archive is pinned in
+`Cargo.lock`; its checksum and source/notice hashes are recorded in
+`PROVENANCE.md`. Font attribution does not establish text-coverage acceptance.
 
 Copyright 2015 The Roboto Mono Project Authors
 (https://github.com/googlefonts/robotomono).

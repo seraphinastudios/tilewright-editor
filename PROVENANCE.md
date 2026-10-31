@@ -31,12 +31,16 @@ and `unicode-ident` 1.0.27 `LICENSE-UNICODE` (Unicode-3.0; archive SHA-256
 Transformation: verbatim license notice inclusion for binary/source package
 attribution; no dependency implementation is copied into editor source.
 
-## Shared renderer UI font candidate
+## Shared renderer UI font
 
-The package policy prepares attribution for `tilewright-render-ui` **0.6.0**
-only. This is a reviewable common-Latin font candidate; this record does not
-claim owner acceptance, publication, or a released consumer migration. Production
-Cargo pins remain the immutable released graph until that separate transition.
+The package policy and production Cargo graph pin `tilewright-render-ui`
+**0.6.2** from crates.io, archive SHA-256
+`f7b4aa08c2ef95ab0718873c8c32a4c9f070a717745a59d08d5c7588c084ac54`.
+All eight renderer 0.6.2 registry archives match the immutable renderer
+[v1.21.0 release](https://github.com/seraphinastudios/tilewright-renderer/releases/tag/v1.21.0),
+source revision `55f13ac311a5574b242e2520942377e51fd6b7cb`, release manifest
+SHA-256 `a5f5157fed68245b7eb74766f82a66b85f58920e31382512c3462d61dc14d43f`.
+This attribution and dependency migration do not claim text-coverage acceptance.
 
 The shared renderer implementation is MIT. Its bundled Roboto Mono source,
 bitmap atlas, metrics and generated glyph data retain **OFL-1.1**; the crate
@@ -72,7 +76,7 @@ producer assets and attribution. The original neutral-sample asset allowlist
 is independent of these dependency assets and remains exact.
 
 The cargo-deny OFL exception uses the exact package specification
-`tilewright-render-ui@0.6.0`, following the pinned
+`tilewright-render-ui@0.6.2`, following the pinned
 [cargo-deny 0.20.2 license exception](https://github.com/EmbarkStudios/cargo-deny/blob/0.20.2/docs/src/checks/licenses/cfg.md#the-exceptions-field-optional)
 and [exact PackageSpecs syntax](https://github.com/EmbarkStudios/cargo-deny/blob/0.20.2/docs/src/checks/cfg.md#exact).
 No global OFL allowance is added.
@@ -83,7 +87,7 @@ The editor packages the unchanged source fonts and original per-family OFL
 notices in `font-pack/`, separately from the shared renderer's public crate.
 The crate supplies only the exact `assets/unicode-font-pack.json` metadata.
 Production preparation/staging obtains this metadata from the immutable
-checksum-verified `tilewright-render-ui` 0.6.0 registry archive; local candidate
+checksum-verified `tilewright-render-ui` 0.6.2 registry archive; local candidate
 metadata is an explicit separate mode and never establishes registry proof.
 
 The 17 faces are Noto Sans, Arabic, Hebrew, Devanagari, Bengali, Gujarati,
