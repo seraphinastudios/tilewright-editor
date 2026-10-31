@@ -9,7 +9,11 @@ pub struct NativeInput {
     pub started: bool,
     pub shift: bool,
     pub text_after: u64,
-    submit_blocked: bool,
+    submit: SubmitFence,
+}
+#[derive(Debug, Default)]
+struct SubmitFence {
+    blocked: bool,
     batch_has_text: bool,
 }
 impl NativeInput {
@@ -20,30 +24,29 @@ impl NativeInput {
             started: false,
             shift: false,
             text_after: 0,
-            submit_blocked: false,
-            batch_has_text: false,
+            submit: SubmitFence::default(),
         }
     }
     /// Inspect the complete SDL drain before dispatch: a Return preceding the
     /// commit event in this same drain must not review/accept that commit.
     pub fn begin_batch(&mut self, has_text: bool) {
-        self.batch_has_text = has_text;
+        self.submit.batch_has_text = has_text;
     }
     pub fn text_activity(&mut self) {
-        self.submit_blocked = true;
+        self.submit.blocked = true;
     }
     pub fn return_released(&mut self, composing: bool) {
         if !composing {
-            self.submit_blocked = false;
+            self.submit.blocked = false;
         }
     }
     pub fn submit_allowed(&self, composing: bool) -> bool {
-        self.focused && !composing && !self.submit_blocked && !self.batch_has_text
+        self.focused && !composing && !self.submit.blocked && !self.submit.batch_has_text
     }
     pub fn lose_focus(&mut self) {
         self.focused = false;
         self.shift = false;
-        self.submit_blocked = true;
+        self.submit.blocked = true;
     }
 }
 

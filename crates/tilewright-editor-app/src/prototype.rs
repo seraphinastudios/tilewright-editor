@@ -1314,6 +1314,7 @@ impl Evidence {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn native(mut app: Application, demo: bool) -> Result<()> {
     let sdl = sdl3::init().map_err(|error| error.to_string())?;
     let video = sdl.video().map_err(|error| error.to_string())?;
@@ -1454,29 +1455,10 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             {
                 println!("native-phase={name}");
             }
-            if input.started {
-                if let Some(geometry) = &app.displayed_text {
-                    if let Some(caret) =
-                        geometry
-                            .layout
-                            .caret(crate::workspace_render::renderer_cursor(
-                                geometry.snapshot.display_selection.focus,
-                            ))
-                    {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let area = sdl3::rect::Rect::new(
-                            geometry.clip.x as i32,
-                            geometry.clip.y as i32,
-                            geometry.clip.width as u32,
-                            geometry.clip.height as u32,
-                        );
-                        #[allow(clippy::cast_possible_truncation)]
-                        let cursor = (geometry.origin[0] + caret.x - geometry.clip.x)
-                            .clamp(0.0, geometry.clip.width)
-                            as i32;
-                        video.text_input().set_rect(&window, area, cursor);
-                    }
-                }
+            if input.started
+                && let Some(geometry) = &app.displayed_text
+            {
+                update_ime_area(&video, &window, geometry);
             }
             dirty = false;
         }
@@ -1502,6 +1484,31 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
         ]
         .get(step)
         .copied()
+    }
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn update_ime_area(
+    video: &sdl3::VideoSubsystem,
+    window: &sdl3::video::Window,
+    geometry: &crate::workspace_render::EditableGeometry,
+) {
+    if let Some(caret) = geometry
+        .layout
+        .caret(crate::workspace_render::renderer_cursor(
+            geometry.snapshot.display_selection.focus,
+        ))
+    {
+        // Shared layout and clip are logical window coordinates, never DPI pixels.
+        let area = sdl3::rect::Rect::new(
+            geometry.clip.x as i32,
+            geometry.clip.y as i32,
+            geometry.clip.width as u32,
+            geometry.clip.height as u32,
+        );
+        let cursor =
+            (geometry.origin[0] + caret.x - geometry.clip.x).clamp(0.0, geometry.clip.width) as i32;
+        video.text_input().set_rect(window, area, cursor);
     }
 }
 
@@ -1561,6 +1568,7 @@ fn native_clipboard_event(
 }
 
 /// Testable routing uses real SDL event values without initializing SDL/GPU.
+#[allow(clippy::too_many_lines)]
 fn native_text_event(
     app: &mut Application,
     event: &Event,
@@ -1652,9 +1660,7 @@ fn native_text_event(
             {
                 return Some(Ok(()));
             }
-            if app.tools.draft_text().is_none() {
-                return None;
-            }
+            app.tools.draft_text()?;
             if !input.focused {
                 return Some(Ok(()));
             }
@@ -1719,7 +1725,8 @@ fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> 
             .layout
             .caret(current)
             .ok_or("invalid focus geometry")?;
-        let anchor_first = a.y < f.y || (a.y == f.y && a.x <= f.x);
+        let anchor_first =
+            a.y.total_cmp(&f.y).then(a.x.total_cmp(&f.x)) != std::cmp::Ordering::Greater;
         if anchor_first == (motion == VisualMotion::Left) {
             anchor
         } else {

@@ -727,6 +727,7 @@ fn input_key(window_id: u32, key: sdl3::keyboard::Keycode, up: bool) -> sdl3::ev
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
     use crate::workspace_ui::Control;
     use sdl3::{
