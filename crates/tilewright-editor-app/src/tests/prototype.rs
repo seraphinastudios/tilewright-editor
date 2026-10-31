@@ -601,7 +601,7 @@ fn oversized_review_blocks_button_enter_and_scripted_accept_without_losing_pendi
     .unwrap();
     let pending = app.session.world().source_digest();
     assert!(!app.source_review().complete);
-    app.ui = WorkspaceUi::new((1280, 800), (1280, 800));
+    app.ui = WorkspaceUi::new((1280, 800), (320, 240));
     app.refresh_ui();
     assert!(
         app.ui
@@ -971,8 +971,8 @@ fn switched_or_refocused_draft_rejects_previously_drained_ime_events() {
         which: 0,
         mouse_btn: MouseButton::Left,
         clicks: 1,
-        x: field.x as f32 + 2.0,
-        y: field.y as f32 + 2.0,
+        x: f32::from(u16::try_from(field.x).unwrap()) + 2.0,
+        y: f32::from(u16::try_from(field.y).unwrap()) + 2.0,
     };
     super::native_pointer_event(&mut app, &pointer, (960, 640), (320, 240), false).unwrap();
     assert_ne!(old, app.tools.input_revision().unwrap().draft);
