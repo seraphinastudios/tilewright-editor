@@ -24,6 +24,8 @@ install "${target}/release/tilewright-editor" "${stage}/tilewright-editor-${vers
 strip "${stage}/tilewright-editor-${version}/bin/tilewright-editor"
 cp LICENSE PROVENANCE.md THIRD_PARTY_NOTICES.md \
   "${stage}/tilewright-editor-${version}/"
+python3 tools/check-prototype-assets.py
+python3 tools/package-assets.py --root . --stage "${stage}/tilewright-editor-${version}"
 "${stage}/tilewright-editor-${version}/bin/tilewright-editor" version >/dev/null
 SYFT_CHECK_FOR_APP_UPDATE=false syft \
   "${stage}/tilewright-editor-${version}/bin/tilewright-editor" \

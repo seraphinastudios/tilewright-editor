@@ -8,6 +8,11 @@
       "repository_id": 1423814231
     },
     {
+      "name": "tilewright-jsonc",
+      "repository": "seraphinastudios/tilewright-world",
+      "repository_id": 1423814231
+    },
+    {
       "name": "tilewright-render-api",
       "repository": "seraphinastudios/tilewright-renderer",
       "repository_id": 1327106998
@@ -18,7 +23,22 @@
       "repository_id": 1327106998
     },
     {
+      "name": "tilewright-render-sdl3",
+      "repository": "seraphinastudios/tilewright-renderer",
+      "repository_id": 1327106998
+    },
+    {
       "name": "tilewright-render-testkit",
+      "repository": "seraphinastudios/tilewright-renderer",
+      "repository_id": 1327106998
+    },
+    {
+      "name": "tilewright-render-wgpu",
+      "repository": "seraphinastudios/tilewright-renderer",
+      "repository_id": 1327106998
+    },
+    {
+      "name": "tilewright-render-world",
       "repository": "seraphinastudios/tilewright-renderer",
       "repository_id": 1327106998
     },

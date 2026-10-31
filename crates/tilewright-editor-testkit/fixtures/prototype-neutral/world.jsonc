@@ -1,0 +1,7 @@
+{
+  "format": "tilewright.world/1",
+  "profile": "profile/profile.jsonc",
+  "planes": [
+    "main"
+  ]
+}

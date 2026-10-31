@@ -21,6 +21,19 @@ pub const TOOLKIT_COMPATIBILITY: &str = "tilewright.world/1 tilewright-source/0.
 /// keeps the last place for a `source.budget` diagnostic about the rest.
 pub const MAXIMUM_DIAGNOSTICS: usize = 256;
 
+/// Explicit bounds for the offline prototype; the general document API retains
+/// its existing World defaults. Every reload and transaction retains these.
+pub fn prototype_load_options() -> LoadOptions {
+    let mut options = load_options();
+    options.maximum_files = 256;
+    options.maximum_entries = 1_024;
+    options.maximum_total_bytes = 8 << 20;
+    options.limits.max_input_bytes = 1 << 20;
+    options.limits.max_values = 65_536;
+    options.limits.max_array_items = 65_536;
+    options
+}
+
 /// How the editor loads worlds: the toolkit keeps one diagnostic fewer than
 /// [`MAXIMUM_DIAGNOSTICS`] and adds its budget note after them.
 pub fn load_options() -> LoadOptions {
@@ -36,6 +49,7 @@ pub struct WorldDocument {
     root: PathBuf,
     source: Arc<SourceRoot>,
     world: Arc<World>,
+    options: LoadOptions,
 }
 
 impl WorldDocument {
@@ -46,26 +60,43 @@ impl WorldDocument {
     /// Returns the toolkit's diagnostics, at most [`MAXIMUM_DIAGNOSTICS`],
     /// when the tree does not load.
     pub fn open(root: &Path) -> Result<Self, Error> {
+        Self::open_with_options(root, load_options())
+    }
+
+    /// Opens with the bounded offline-prototype source budget.
+    pub fn open_prototype(root: &Path) -> Result<Self, Error> {
+        Self::open_with_options(root, prototype_load_options())
+    }
+
+    /// Opens with explicit toolkit limits, retained by every reload and edit.
+    pub fn open_with_options(root: &Path, options: LoadOptions) -> Result<Self, Error> {
         let source = Arc::new(SourceRoot::new(root));
-        let world = tilewright_source::load_edited_in(&source, &load_options(), &Overlay::new())
+        let world = tilewright_source::load_edited_in(&source, &options, &Overlay::new())
             .map_err(Error::Invalid)?;
         Ok(Self {
             root: root.to_path_buf(),
             source,
             world: Arc::new(world),
+            options,
         })
     }
 
     /// Reload the originally opened toolkit root, never re-resolving its display path.
     pub fn reload(&self) -> Result<Self, Error> {
-        let world =
-            tilewright_source::load_edited_in(&self.source, &load_options(), &Overlay::new())
-                .map_err(Error::Invalid)?;
+        let world = tilewright_source::load_edited_in(&self.source, &self.options, &Overlay::new())
+            .map_err(Error::Invalid)?;
         Ok(Self {
             root: self.root.clone(),
             source: self.source.clone(),
             world: Arc::new(world),
+            options: self.options,
         })
+    }
+
+    /// Exact toolkit source limits retained when opening this document.
+    #[must_use]
+    pub const fn load_options(&self) -> LoadOptions {
+        self.options
     }
 
     /// Filesystem authority retained from opening the document.
@@ -294,6 +325,22 @@ mod tests {
     };
     use tilewright_editor_testkit::fixture_world;
     use tilewright_source::Projection;
+
+    #[test]
+    fn explicit_source_budget_is_enforced_and_retained_on_reload() {
+        let root = fixture_world("prototype-neutral");
+        let mut bounded = super::prototype_load_options();
+        bounded.maximum_total_bytes = 1;
+        assert!(matches!(
+            WorldDocument::open_with_options(&root, bounded),
+            Err(Error::Invalid(_))
+        ));
+        let document = WorldDocument::open_prototype(&root).unwrap();
+        assert_eq!(document.load_options(), super::prototype_load_options());
+        let reopened = document.reload().unwrap();
+        assert_eq!(reopened.load_options(), document.load_options());
+        assert_eq!(reopened.revision(), document.revision());
+    }
 
     #[test]
     fn opens_a_world_and_describes_it() {

@@ -1,0 +1,24 @@
+{
+  "format": "tilewright.schema/1",
+  "fields": {
+    "label": {
+      "type": "string",
+      "max_length": 64
+    },
+    "settings": {
+      "type": "object",
+      "fields": {
+        "active": {
+          "type": "boolean",
+          "required": true
+        },
+        "visits": {
+          "type": "integer",
+          "min": 0,
+          "max": 99,
+          "required": true
+        }
+      }
+    }
+  }
+}

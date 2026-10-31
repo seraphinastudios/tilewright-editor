@@ -1,0 +1,312 @@
+{
+  "format": "tilewright.editor-preview/1",
+  "profile": {
+    "id": "sample.meadow",
+    "version": "1"
+  },
+  "view": {
+    "plane": "main",
+    "layer": 0,
+    "bounds": [
+      0,
+      0,
+      8,
+      6
+    ]
+  },
+  "presentation": "authored",
+  "resources": [
+    {
+      "id": "grass",
+      "path": "preview-assets/grass.atx1",
+      "sha256": "86c9e7cb0b18c4960e0fb05e02ddc3fbfa5cf4fd45529750dff1d72847a9aa5f",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "sand",
+      "path": "preview-assets/sand.atx1",
+      "sha256": "be216767af3218cfc949304f45d1961aee24172baabf376bc6f2c336bdeaf871",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "marker",
+      "path": "preview-assets/marker.atx1",
+      "sha256": "8145e0ff160b58906d5f920d107b87e3142942de4b1168b308de42fa4605f4ed",
+      "width": 24,
+      "height": 40,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_1",
+      "path": "preview-assets/grass_edge_1.atx1",
+      "sha256": "da3b826e8e361847715a4e105ecdccfef564e716b825f107eb5bc30a59d96930",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_2",
+      "path": "preview-assets/grass_edge_2.atx1",
+      "sha256": "4074d2daa157d354631d3b4de9e2b2865387a3930d8bb82c2b186e129a0d6d80",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_3",
+      "path": "preview-assets/grass_edge_3.atx1",
+      "sha256": "2c26106d7ae4480ca52121700ca0db18e7d7a0e2aae1ce394b620a38e968e6b2",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_4",
+      "path": "preview-assets/grass_edge_4.atx1",
+      "sha256": "40d26846b774b63c5996397121ed4e8ba8ccd5dc158c52fbf5cc6b19a5c89493",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_5",
+      "path": "preview-assets/grass_edge_5.atx1",
+      "sha256": "310d1df3fbe63a39cf7b8ce785696b15998fc264d15e08f7ce5e7239a3bb9db6",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_6",
+      "path": "preview-assets/grass_edge_6.atx1",
+      "sha256": "5807eab7af37acaef0e2009cbe17eaec35c45c3d561d9986453404761bb451c1",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_7",
+      "path": "preview-assets/grass_edge_7.atx1",
+      "sha256": "98814ee7a21ceb4a3a7dfedc7e3a302901cf5add40d4b057aa63961e9558d524",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_8",
+      "path": "preview-assets/grass_edge_8.atx1",
+      "sha256": "f87c2cc724cf8c86de94ae017012089a111b793e92ecd7f847acbe4dedb59589",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_9",
+      "path": "preview-assets/grass_edge_9.atx1",
+      "sha256": "4da93f7a176422bd8e7761dc7ed3509d33ec8cdac3e77f9bbfdfb46543492cb1",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_10",
+      "path": "preview-assets/grass_edge_10.atx1",
+      "sha256": "2eab40c09c839670eaa4f6ec2d59dfa6e75fd9e5ee75cc8d041699f63d0f833b",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_11",
+      "path": "preview-assets/grass_edge_11.atx1",
+      "sha256": "1e7ab18916c81294d03757c3a33101bca8c9e702943b26c97f0d90fa4de12d17",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_12",
+      "path": "preview-assets/grass_edge_12.atx1",
+      "sha256": "9ca113cb6b5d1aa31d1b895634c4e2327e65a5e2c5aff16a95b4044e6c817596",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_13",
+      "path": "preview-assets/grass_edge_13.atx1",
+      "sha256": "fb6956827dc98251fd73cecf131607d4290c094caf2072bcd9f5e4b932867aa1",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_14",
+      "path": "preview-assets/grass_edge_14.atx1",
+      "sha256": "01c4e65ba49d002f65f993b2264500acf41c553c4bc648d60c73c41ea7e21bf1",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    },
+    {
+      "id": "grass_edge_15",
+      "path": "preview-assets/grass_edge_15.atx1",
+      "sha256": "fb205198b35740a67eb41feada3d0118a1cd463661695185e7f4a95a96dc9012",
+      "width": 32,
+      "height": 32,
+      "license": "MIT",
+      "author": "Seraphina Studios",
+      "notice": "Copyright 2026 Seraphina Studios; original geometric fixture, MIT."
+    }
+  ],
+  "prototypes": [
+    {
+      "proto": "grass",
+      "resource": "grass",
+      "anchor": "ground"
+    },
+    {
+      "proto": "sand",
+      "resource": "sand",
+      "anchor": "ground"
+    },
+    {
+      "proto": "marker",
+      "resource": "marker",
+      "anchor": "standing"
+    },
+    {
+      "proto": "grass_edge_1",
+      "resource": "grass_edge_1",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_2",
+      "resource": "grass_edge_2",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_3",
+      "resource": "grass_edge_3",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_4",
+      "resource": "grass_edge_4",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_5",
+      "resource": "grass_edge_5",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_6",
+      "resource": "grass_edge_6",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_7",
+      "resource": "grass_edge_7",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_8",
+      "resource": "grass_edge_8",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_9",
+      "resource": "grass_edge_9",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_10",
+      "resource": "grass_edge_10",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_11",
+      "resource": "grass_edge_11",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_12",
+      "resource": "grass_edge_12",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_13",
+      "resource": "grass_edge_13",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_14",
+      "resource": "grass_edge_14",
+      "anchor": "ground"
+    },
+    {
+      "proto": "grass_edge_15",
+      "resource": "grass_edge_15",
+      "anchor": "ground"
+    }
+  ],
+  "editing": {
+    "movable_uids": [
+      "marker_1"
+    ],
+    "terrain": [
+      {
+        "grid": "floor",
+        "values": [
+          "grass",
+          "sand"
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "uid": "marker_1",
+        "field": "label"
+      }
+    ]
+  }
+}

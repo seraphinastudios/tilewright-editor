@@ -11,9 +11,9 @@ use std::{
 use tilewright_editor_project::{Error, FileKind, FileStamp, PathProbe, RelativePath};
 
 /// The root of a committed fixture world under this crate's `fixtures`
-/// directory, such as `meadow`: a small top-down world whose source holds
-/// only painted terrain, with transitions that derive shores, grass edges
-/// and grass details.
+/// directory. `meadow` exercises painted terrain transitions;
+/// `prototype-neutral` adds authored MIT visual resources, a typed editable
+/// marker, an empty paintable cell and negative/cross-chunk ground.
 #[must_use]
 pub fn fixture_world(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
