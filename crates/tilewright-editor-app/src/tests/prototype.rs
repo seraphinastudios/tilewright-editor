@@ -167,7 +167,10 @@ fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation(
     app.refresh_ui();
     assert_eq!(app.tools.draft_text(), Some(draft.as_str()));
     assert_eq!(app.session.generation(), generation);
-    assert_eq!(app.view.camera.center, camera);
+    assert_eq!(
+        app.view.camera.center.map(f64::to_bits),
+        camera.map(f64::to_bits)
+    );
     assert!(app.session.history().pending().is_none());
     app.tools.input(" qzywasd").unwrap();
     app.refresh_ui();

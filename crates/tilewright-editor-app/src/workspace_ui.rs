@@ -72,12 +72,12 @@ pub enum Hit {
 }
 
 impl WorkspaceUi {
-    pub fn new(logical: (u32, u32), size: (u32, u32)) -> Self {
+    pub fn new(logical: (u32, u32), physical_size: (u32, u32)) -> Self {
         let top = 48.min(logical.1);
-        let side = 320.min(logical.0 / 2);
+        let sidebar_width = 320.min(logical.0 / 2);
         let review = 180.min(logical.1.saturating_sub(top) / 2);
         let mut ui = Self {
-            size,
+            size: physical_size,
             viewport: Rect {
                 x: 0,
                 y: 0,
@@ -120,19 +120,19 @@ impl WorkspaceUi {
         ui.logical_viewport = Rect {
             x: 0,
             y: top,
-            width: logical.0 - side,
+            width: logical.0 - sidebar_width,
             height: logical.1 - top - review,
         };
         ui.logical_sidebar = Rect {
-            x: logical.0 - side,
+            x: logical.0 - sidebar_width,
             y: top,
-            width: side,
+            width: sidebar_width,
             height: logical.1 - top,
         };
         ui.logical_review = Rect {
             x: 0,
             y: logical.1 - review,
-            width: logical.0 - side,
+            width: logical.0 - sidebar_width,
             height: review,
         };
         ui.viewport = ui.scale(ui.logical_viewport);

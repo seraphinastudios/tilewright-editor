@@ -470,7 +470,7 @@ impl Application {
                 self.object_rows(
                     &mut rows,
                     &inspected,
-                    SelectionSummary::Object {
+                    &SelectionSummary::Object {
                         uid,
                         prototype,
                         plane,
@@ -529,7 +529,7 @@ impl Application {
         &self,
         rows: &mut UiRows,
         inspected: &inspector::Inspector<'_>,
-        summary: SelectionSummary<'_>,
+        summary: &SelectionSummary<'_>,
     ) {
         let SelectionSummary::Object {
             uid,
@@ -560,7 +560,7 @@ impl Application {
         rows.push((
             "Edit position (x,y)".into(),
             Some(Control::Coordinates),
-            ready && movable,
+            ready && *movable,
             false,
         ));
         if mode == ToolMode::Move {
@@ -573,7 +573,7 @@ impl Application {
                 rows.push((
                     label.into(),
                     Some(Control::Nudge(delta)),
-                    ready && movable,
+                    ready && *movable,
                     false,
                 ));
             }
@@ -1103,11 +1103,10 @@ impl Application {
                 self.select_empty_cell()?;
                 let choice = tools::terrain_palette(self.session.catalog())
                     .into_iter()
-                    .filter(|choice| match self.session.selection() {
+                    .rfind(|choice| match self.session.selection() {
                         Some(SelectionKey::Cell { grid, .. }) => *grid == choice.grid,
                         _ => false,
                     })
-                    .next_back()
                     .ok_or("empty demo terrain palette")?;
                 self.tools
                     .choose_terrain(self.session.catalog(), &choice.grid, &choice.prototype)
@@ -1378,17 +1377,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             if app.demo_step(demo_step)? {
                 break 'running;
             }
-            phase = if (demo_step == 5 && app.session.catalog().editing().fields.is_empty())
-                || (demo_step == 6 && app.session.catalog().editing().terrain.is_empty())
-            {
-                None
-            } else {
-                [
-                    "before", "pending", "after", "undo", "redo", "field", "terrain",
-                ]
-                .get(demo_step)
-                .copied()
-            };
+            phase = demo_phase_label(&app, demo_step);
             demo_step += 1;
             next_demo = Instant::now() + Duration::from_millis(2500);
             dirty = true;
@@ -1406,6 +1395,21 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
     pollster::block_on(renderer.finish()).map_err(|error| error.to_string())?;
     println!("native window closed cleanly");
     Ok(())
+}
+
+/// Labels are logged after successful presentation; this does not own native handles.
+fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
+    if (step == 5 && app.session.catalog().editing().fields.is_empty())
+        || (step == 6 && app.session.catalog().editing().terrain.is_empty())
+    {
+        None
+    } else {
+        [
+            "before", "pending", "after", "undo", "redo", "field", "terrain",
+        ]
+        .get(step)
+        .copied()
+    }
 }
 
 fn native_event(
