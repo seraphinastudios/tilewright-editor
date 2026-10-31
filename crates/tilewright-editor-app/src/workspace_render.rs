@@ -28,8 +28,8 @@ pub enum CompositionError {
 impl fmt::Display for CompositionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Ui(error) => error.fmt(formatter),
-            Self::Scene(error) => error.fmt(formatter),
+            Self::Ui(error) => fmt::Display::fmt(error, formatter),
+            Self::Scene(error) => fmt::Display::fmt(error, formatter),
             other => write!(formatter, "UI composition refused: {other:?}"),
         }
     }

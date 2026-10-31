@@ -932,12 +932,11 @@ impl Application {
         self.evidence.retain(&format!("{name}.png"), &bytes)?;
         self.evidence.retain(&format!("{name}.json"), serde_json::to_string_pretty(&serde_json::json!({
             "format":"tilewright.prototype-frame/1", "path":"cpu-reference", "frame_generation":self.view.frame_revision,
-            "composition":"workspace-ui", "world_pick_source":"separate-world-reference-scene",
             "source_revision":tilewright_editor_document::revision_hex(&self.session.world().source_digest()),
             "committed_revision":tilewright_editor_document::revision_hex(&self.session.history().document().revision()),
             "catalog_revision":tilewright_editor_document::revision_hex(&self.prepared.catalog_revision),
             "width":frame.width,"height":frame.height,"status":self.session.status().to_string(),
-            "toolkit":"0.1.0","renderer":"0.5.1","pending":self.session.history().pending().is_some()
+            "toolkit":"0.1.0","renderer":"0.6.0","pending":self.session.history().pending().is_some()
         })).map_err(|error| error.to_string())?.as_bytes())
     }
 

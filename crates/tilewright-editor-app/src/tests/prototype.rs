@@ -303,7 +303,30 @@ fn cpu_evidence_png_contains_shared_workspace_ui_and_preserves_world_revision_pr
     .unwrap();
     assert_eq!(proof["format"], "tilewright.prototype-frame/1");
     assert_eq!(proof["path"], "cpu-reference");
-    assert_eq!(proof["composition"], "workspace-ui");
+    assert_eq!(proof["renderer"], "0.6.0");
+    let actual_keys: std::collections::BTreeSet<_> = proof
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let expected_keys = [
+        "format",
+        "path",
+        "frame_generation",
+        "source_revision",
+        "committed_revision",
+        "catalog_revision",
+        "width",
+        "height",
+        "status",
+        "toolkit",
+        "renderer",
+        "pending",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(actual_keys, expected_keys);
     assert_eq!(proof["frame_generation"], generation);
     assert_eq!(
         proof["source_revision"],
