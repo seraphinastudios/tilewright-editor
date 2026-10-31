@@ -29,12 +29,17 @@ fn copy_private(source: &Path, destination: &Path) {
 }
 
 fn application() -> (tempfile::TempDir, Application) {
+    application_with_source(|_| {})
+}
+
+fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
     let temporary = std::env::var_os("TILEWRIGHT_CHECKED_TEST_ROOT").map_or_else(
         || tempfile::tempdir().unwrap(),
         |root| tempfile::tempdir_in(root).unwrap(),
     );
     let world = temporary.path().join("world");
     copy_private(&fixture_world("prototype-neutral"), &world);
+    prepare(&world);
     for name in ["recovery", "evidence"] {
         let path = temporary.path().join(name);
         fs::create_dir(&path).unwrap();
@@ -438,4 +443,169 @@ fn blocked_render_reason_precedes_source_excerpt_and_ready_status_is_plain() {
             .join(" ")
             .contains("Font resources could not be verified")
     );
+}
+
+#[test]
+fn compact_chunk_review_shows_changed_label_before_accept_and_undo_restores_exact_bytes() {
+    use crate::workspace_ui::{Control, WorkspaceUi};
+    let chunk_path = "planes/main/layers/0/0_0.jsonc";
+    let (temporary, mut app) = application_with_source(|world| {
+        let path = world.join(chunk_path);
+        let source: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        // Author a compact fixture retaining terrain before objects so label text
+        // occurs well beyond the old 512-byte prefix. World still loads/edits it.
+        let compact = format!(
+            "{{\"format\":{},\"plane\":{},\"layer\":{},\"chunk\":{},\"terrain\":{},\"objects\":{}}}",
+            source["format"],
+            source["plane"],
+            source["layer"],
+            source["chunk"],
+            source["terrain"],
+            source["objects"]
+        );
+        assert!(compact.find("Trail marker").unwrap() > 1024);
+        fs::write(path, compact).unwrap();
+    });
+    let path = temporary.path().join("world").join(chunk_path);
+    let original = fs::read(&path).unwrap();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    while app.tools.draft_text().is_some_and(|text| !text.is_empty()) {
+        app.tools.backspace();
+    }
+    app.tools.input("Review-visible changed label").unwrap();
+    app.control(Control::ApplyDraft).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert!(app.source_review().complete);
+    let rows = app.review_lines(940);
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with("- ") && row.contains("Trail marker")),
+        "{rows:?}"
+    );
+    let changed_row = rows
+        .iter()
+        .position(|row| row.contains("Review-visible changed label"))
+        .unwrap();
+    app.ui = WorkspaceUi::new((1280, 800), (1280, 800));
+    app.review_scroll = changed_row;
+    app.refresh_ui();
+    assert!(
+        app.ui
+            .widgets
+            .iter()
+            .any(|widget| widget.text.contains("Review-visible changed label"))
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    app.action(Action::Accept).unwrap();
+    assert_ne!(fs::read(&path).unwrap(), original);
+    app.action(Action::Undo).unwrap();
+    app.action(Action::Accept).unwrap();
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
+fn changed_source_context_handles_utf8_insertions_deletions_and_shared_review_budget() {
+    for (before, after) in [
+        ("café old fin", "café new fin"),
+        ("préfixe", "préfixe末"),
+        ("préfixe末", "préfixe"),
+        ("", "é"),
+        ("é", ""),
+    ] {
+        let mut rows = Vec::new();
+        let mut remaining = super::MAXIMUM_REVIEW_BYTES;
+        assert!(super::append_change_review(
+            &mut rows,
+            before,
+            after,
+            &mut remaining
+        ));
+        assert!(rows.iter().any(|row| row.starts_with("- ")));
+        assert!(rows.iter().any(|row| row.starts_with("+ ")));
+        assert!(rows.iter().all(|row| row.len() < 512));
+    }
+    let mut rows = Vec::new();
+    let mut remaining = super::MAXIMUM_REVIEW_BYTES;
+    assert!(super::append_change_review(
+        &mut rows,
+        "old file one",
+        "new file one",
+        &mut remaining
+    ));
+    let after_first = remaining;
+    assert!(super::append_change_review(
+        &mut rows,
+        "old file two",
+        "new file two",
+        &mut remaining
+    ));
+    assert!(remaining < after_first);
+    let large = "x".repeat(super::MAXIMUM_REVIEW_BYTES);
+    assert!(!super::append_change_review(
+        &mut rows,
+        "",
+        &large,
+        &mut remaining
+    ));
+}
+
+#[test]
+fn oversized_review_blocks_button_enter_and_scripted_accept_without_losing_pending_source() {
+    use crate::workspace_ui::{Control, WorkspaceUi};
+    let (temporary, mut app) = application_with_source(|world| {
+        let schema_path = world.join("profile/schema/object.jsonc");
+        let mut schema: serde_json::Value =
+            serde_json::from_slice(&fs::read(&schema_path).unwrap()).unwrap();
+        schema["fields"]["label"]["max_length"] = serde_json::Value::from(50_000);
+        fs::write(schema_path, serde_json::to_vec_pretty(&schema).unwrap()).unwrap();
+        let path = world.join("planes/main/layers/0/0_0.jsonc");
+        let mut source: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        source["objects"][0]["fields"]["label"] = serde_json::Value::String("a".repeat(40_000));
+        fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
+    });
+    let path = temporary
+        .path()
+        .join("world/planes/main/layers/0/0_0.jsonc");
+    let original = fs::read(&path).unwrap();
+    app.action(Action::SetField {
+        uid: "marker_1".into(),
+        field: "label".into(),
+        value: serde_json::Value::String("b".repeat(40_000)),
+        expected: app.session.history().document().revision(),
+    })
+    .unwrap();
+    let pending = app.session.world().source_digest();
+    assert!(!app.source_review().complete);
+    app.ui = WorkspaceUi::new((1280, 800), (1280, 800));
+    app.refresh_ui();
+    assert!(
+        app.ui
+            .widgets
+            .iter()
+            .any(|widget| widget.control == Some(Control::Accept) && !widget.enabled)
+    );
+    assert!(app.review_lines(940)[0].starts_with("Change exceeds"));
+    assert!(
+        app.control(Control::Accept)
+            .unwrap_err()
+            .contains("review limit")
+    );
+    assert!(
+        super::native_key(&mut app, sdl3::keyboard::Keycode::Return)
+            .unwrap_err()
+            .contains("review limit")
+    );
+    assert!(
+        app.action(Action::Accept)
+            .unwrap_err()
+            .contains("review limit")
+    );
+    assert!(app.session.history().pending().is_some());
+    assert_eq!(app.session.world().source_digest(), pending);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    app.action(Action::Cancel).unwrap();
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(fs::read(path).unwrap(), original);
 }

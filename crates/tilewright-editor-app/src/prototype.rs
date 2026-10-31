@@ -31,6 +31,15 @@ const HELP: &str = "Select / Move / Terrain | Enter accept | Esc cancel | Z undo
 
 type Result<T> = std::result::Result<T, String>;
 type UiRows = Vec<(String, Option<Control>, bool, bool)>;
+const MAXIMUM_REVIEW_BYTES: usize = 64 << 10;
+const REVIEW_CONTEXT_BYTES: usize = 24;
+const REVIEW_ROW_BYTES: usize = 256;
+const REVIEW_LIMIT_MESSAGE: &str = "Change exceeds the visible review limit. Cancel this edit.";
+
+struct SourceReview {
+    lines: Vec<String>,
+    complete: bool,
+}
 
 struct Application {
     session: Session,
@@ -174,6 +183,10 @@ impl Application {
     fn action(&mut self, action: Action) -> Result<()> {
         if let Some(reason) = &self.blocked {
             return Err(format!("rendering blocked editing: {reason}"));
+        }
+        if matches!(action, Action::Accept) && !self.source_review().complete {
+            self.notice = Some(REVIEW_LIMIT_MESSAGE.into());
+            return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let result = self
             .session
@@ -715,7 +728,7 @@ impl Application {
             },
             "Accept",
             Some(Control::Accept),
-            pending && self.blocked.is_none(),
+            pending && self.blocked.is_none() && self.source_review().complete,
             false,
         );
         ui.widget(
@@ -774,6 +787,9 @@ impl Application {
         if self.notice.is_some() {
             return "Input not applied. Details below.".into();
         }
+        if self.session.status().phase == SessionPhase::Pending && !self.source_review().complete {
+            return REVIEW_LIMIT_MESSAGE.into();
+        }
         match self.session.status().phase {
             SessionPhase::Ready if self.session.status().applied == Some(true) => {
                 "Changes saved. Ready to edit."
@@ -823,43 +839,43 @@ impl Application {
     }
 
     fn diff_lines(&self) -> Vec<String> {
-        let mut diff = Vec::new();
-        if let Some(plan) = self.session.history().pending() {
-            for file in plan.changed().take(32) {
-                let before = file.before.as_deref().unwrap_or("<absent>");
-                let after = file.after.as_deref().unwrap_or("<absent>");
-                let first_change = before
-                    .lines()
-                    .zip(after.lines())
-                    .position(|(a, b)| a != b)
-                    .unwrap_or_else(|| before.lines().count().min(after.lines().count()));
-                diff.push(format!(
-                    "{} / first changed line {}",
-                    file.path,
-                    first_change + 1
-                ));
-                diff.push(format!(
-                    "- {}",
-                    inspector::display_text(before.lines().nth(first_change).unwrap_or("<absent>"))
-                ));
-                diff.push(format!(
-                    "+ {}",
-                    inspector::display_text(after.lines().nth(first_change).unwrap_or("<absent>"))
-                ));
-                let start = first_change.saturating_sub(2);
-                diff.push("After excerpt (exact plan retained; bounded terminal diff):".into());
-                diff.extend(
-                    after
-                        .lines()
-                        .skip(start)
-                        .take(8)
-                        .map(|line| inspector::display_text(line)),
-                );
+        self.source_review().lines
+    }
+
+    fn source_review(&self) -> SourceReview {
+        let Some(plan) = self.session.history().pending() else {
+            return SourceReview {
+                lines: vec!["No pending changes. Edits are reviewed before saving.".into()],
+                complete: true,
+            };
+        };
+        let mut review = SourceReview {
+            lines: Vec::new(),
+            complete: true,
+        };
+        let mut remaining = MAXIMUM_REVIEW_BYTES;
+        for (index, file) in plan.changed().enumerate() {
+            if index >= 32 {
+                review.complete = false;
+                break;
             }
-        } else {
-            diff.push("No pending changes. Edits are reviewed before saving.".into());
+            review
+                .lines
+                .push(format!("{} / source excerpt; scroll for more", file.path));
+            if !append_change_review(
+                &mut review.lines,
+                file.before.as_deref().unwrap_or("<absent>"),
+                file.after.as_deref().unwrap_or("<absent>"),
+                &mut remaining,
+            ) {
+                review.complete = false;
+                break;
+            }
         }
-        diff
+        if !review.complete {
+            review.lines.insert(0, REVIEW_LIMIT_MESSAGE.into());
+        }
+        review
     }
 
     fn control(&mut self, control: Control) -> Result<()> {
@@ -1118,6 +1134,105 @@ impl Application {
         }
         Ok(())
     }
+}
+
+/// Read-only display ranges from exact prepared images; no source parsing or writing.
+fn changed_context(before: &str, after: &str) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+    let mut prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !before.is_char_boundary(prefix) || !after.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+    let mut suffix = before[prefix..]
+        .bytes()
+        .rev()
+        .zip(after[prefix..].bytes().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !before.is_char_boundary(before.len() - suffix)
+        || !after.is_char_boundary(after.len() - suffix)
+    {
+        suffix -= 1;
+    }
+    let context = |text: &str| {
+        let mut start = prefix.saturating_sub(REVIEW_CONTEXT_BYTES);
+        while !text.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut end = (text.len() - suffix)
+            .saturating_add(REVIEW_CONTEXT_BYTES)
+            .min(text.len());
+        while !text.is_char_boundary(end) {
+            end += 1;
+        }
+        start..end
+    };
+    (context(before), context(after))
+}
+
+fn review_chunks(text: &str, range: std::ops::Range<usize>) -> Vec<String> {
+    let escaped = terminal_field(&text[range.clone()]);
+    let mut rows = Vec::new();
+    let mut start = 0;
+    while start < escaped.len() {
+        let mut end = (start + REVIEW_ROW_BYTES).min(escaped.len());
+        while !escaped.is_char_boundary(end) {
+            end -= 1;
+        }
+        let prefix = if start == 0 && range.start > 0 {
+            "[...] "
+        } else {
+            ""
+        };
+        let suffix = if end == escaped.len() && range.end < text.len() {
+            " [...]"
+        } else {
+            ""
+        };
+        rows.push(format!("{prefix}{}{suffix}", &escaped[start..end]));
+        start = end;
+    }
+    if rows.is_empty() {
+        rows.push("<empty>".into());
+    }
+    rows
+}
+
+fn append_change_review(
+    lines: &mut Vec<String>,
+    before: &str,
+    after: &str,
+    remaining: &mut usize,
+) -> bool {
+    let (old, new) = changed_context(before, after);
+    let bytes = old.len().saturating_add(new.len());
+    if bytes > *remaining {
+        return false;
+    }
+    let old_rows = review_chunks(before, old);
+    let new_rows = review_chunks(after, new);
+    let displayed = old_rows
+        .iter()
+        .chain(&new_rows)
+        .map(String::len)
+        .sum::<usize>();
+    if displayed > *remaining {
+        return false;
+    }
+    *remaining -= displayed;
+    lines.push("[...] marks unchanged source omitted from this excerpt.".into());
+    for index in 0..old_rows.len().max(new_rows.len()) {
+        if let Some(row) = old_rows.get(index) {
+            lines.push(format!("- {row}"));
+        }
+        if let Some(row) = new_rows.get(index) {
+            lines.push(format!("+ {row}"));
+        }
+    }
+    true
 }
 
 fn field_description(row: &inspector::FieldRow<'_>) -> String {
