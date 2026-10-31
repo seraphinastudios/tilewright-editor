@@ -147,10 +147,7 @@ mod tests {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                concat!(
-                    module_path!(),
-                    "::composition_capability_is_set_in_fresh_process"
-                ),
+                "native_input::tests::composition_capability_is_set_in_fresh_process",
                 "--nocapture",
             ])
             .env(CHILD, "1")
