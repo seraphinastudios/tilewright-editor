@@ -609,3 +609,71 @@ fn oversized_review_blocks_button_enter_and_scripted_accept_without_losing_pendi
     assert!(app.session.history().pending().is_none());
     assert_eq!(fs::read(path).unwrap(), original);
 }
+
+#[test]
+fn long_utf8_draft_shows_working_tail_and_caret_while_full_value_reaches_review() {
+    use crate::workspace_ui::{Control, WorkspaceUi};
+    let (temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.ui = WorkspaceUi::new((960, 640), (960, 640));
+    app.control(Control::Field("label".into())).unwrap();
+    while app.tools.draft_text().is_some_and(|text| !text.is_empty()) {
+        app.tools.backspace();
+    }
+    let original = fs::read(
+        temporary
+            .path()
+            .join("world/planes/main/layers/0/0_0.jsonc"),
+    )
+    .unwrap();
+    let prefix = "existing text ".repeat(3);
+    let full = format!("{prefix}NEW-éà");
+    app.tools.input(&full).unwrap();
+    app.refresh_ui();
+    let display = app
+        .ui
+        .widgets
+        .iter()
+        .find(|widget| widget.active && widget.control.is_none())
+        .unwrap();
+    assert!(display.text.starts_with("... "), "{}", display.text);
+    assert!(display.text.ends_with("NEW-éà|"), "{}", display.text);
+    assert_eq!(app.tools.draft_text(), Some(full.as_str()));
+    super::native_key(&mut app, sdl3::keyboard::Keycode::Backspace).unwrap();
+    app.refresh_ui();
+    let display = app
+        .ui
+        .widgets
+        .iter()
+        .find(|widget| widget.active && widget.control.is_none())
+        .unwrap();
+    assert!(display.text.ends_with("NEW-é|"), "{}", display.text);
+    app.tools.input("à").unwrap();
+    app.refresh_ui();
+    assert_eq!(app.tools.draft_text(), Some(full.as_str()));
+    app.control(Control::ApplyDraft).unwrap();
+    let value = app
+        .session
+        .world()
+        .object("marker_1")
+        .unwrap()
+        .fields
+        .iter()
+        .find(|(name, _)| name == "label")
+        .unwrap();
+    assert_eq!(value.1, tilewright_source::FieldValue::String(full));
+    assert!(
+        app.review_lines(620)
+            .iter()
+            .any(|line| line.contains("NEW-éà"))
+    );
+    assert_eq!(
+        fs::read(
+            temporary
+                .path()
+                .join("world/planes/main/layers/0/0_0.jsonc")
+        )
+        .unwrap(),
+        original
+    );
+}

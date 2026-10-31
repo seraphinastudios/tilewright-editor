@@ -161,6 +161,36 @@ pub fn fit_text(text: &str, width: u32, height: u32) -> String {
     format!("{}...", &text[..end])
 }
 
+/// The current controller appends/backspaces at the end. Keep that working end
+/// visible using shared renderer UTF-8 positions, independently of passive labels.
+#[allow(clippy::cast_precision_loss)]
+pub fn tail_text(text: &str, width: u32, height: u32) -> String {
+    let caption = format!("> {}|", tilewright_editor_document::terminal_field(text));
+    let size = text_size(height);
+    let available = width.saturating_sub(8) as f32;
+    let Ok(layout) = measure_text(&caption, size) else {
+        return "Text unavailable".into();
+    };
+    if layout.size[0] <= available {
+        return caption;
+    }
+    let Ok(leading) = measure_text("... ", size) else {
+        return "|".into();
+    };
+    let threshold = layout.size[0] - (available - leading.size[0]);
+    for glyph in layout
+        .glyphs
+        .iter()
+        .filter(|glyph| glyph.baseline[0] >= threshold)
+    {
+        let candidate = format!("... {}", &caption[glyph.byte_start..]);
+        if measure_text(&candidate, size).is_ok_and(|measured| measured.size[0] <= available) {
+            return candidate;
+        }
+    }
+    "|".into()
+}
+
 #[allow(clippy::cast_precision_loss)]
 pub fn wrap_text(text: &str, width: u32, height: u32) -> Vec<String> {
     let available = width.saturating_sub(8) as f32;

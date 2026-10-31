@@ -640,11 +640,7 @@ impl Application {
                     width,
                     height: 30,
                 },
-                if supported {
-                    format!("> {text}|")
-                } else {
-                    format!("Unsupported: {text}|")
-                },
+                crate::workspace_render::tail_text(text, width, 30),
                 None,
                 true,
                 true,
