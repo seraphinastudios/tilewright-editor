@@ -72,7 +72,7 @@ pub struct TextInputSnapshot {
     /// Raw, complete UTF-8 for shared shaping; do not terminal-escape or elide.
     pub display_text: String,
     pub selection: TextSelection,
-    /// Grapheme-safe cursors in display_text, including the preedit splice.
+    /// Grapheme-safe cursors in `display_text`, including the preedit splice.
     pub display_selection: TextSelection,
     pub composition: Option<CompositionSnapshot>,
     pub revision: TextRevision,
