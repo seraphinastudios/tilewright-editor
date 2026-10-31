@@ -45,7 +45,11 @@ pub fn load(path: &Path, world: &Path) -> Result<TextSystem, String> {
             sha256: font.sha256,
         });
     }
-    let limits = TextLimits::default();
+    let limits = TextLimits {
+        maximum_raster_pixels: (tilewright_render_resources::DEFAULT_MAXIMUM_RESOURCE_BYTES - 12)
+            / 4,
+        ..TextLimits::default()
+    };
     TextSystem::new(
         FontPack::new(fonts, limits).map_err(|error| error.to_string())?,
         limits,

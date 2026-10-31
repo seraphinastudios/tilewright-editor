@@ -175,6 +175,33 @@ fn paint(next: &mut u32, order: u32, color: [f32; 4]) -> Result<UiPaint> {
     })
 }
 
+/// The raw IME splice may join adjacent graphemes (e.g. a combining mark).
+/// Underline the complete displayed graphemes touched by that exact splice.
+fn composition_rects(layout: &UnicodeLayout, range: std::ops::Range<usize>) -> Vec<UiRect> {
+    let boundaries = layout.grapheme_boundaries();
+    let start = boundaries
+        .iter()
+        .copied()
+        .take_while(|byte| *byte <= range.start)
+        .last()
+        .unwrap_or(0);
+    let end = boundaries
+        .iter()
+        .copied()
+        .find(|byte| *byte >= range.end)
+        .unwrap_or(layout.text().len());
+    layout.selection_rects(
+        TextCursor {
+            byte: start,
+            affinity: TextAffinity::After,
+        },
+        TextCursor {
+            byte: end,
+            affinity: TextAffinity::Before,
+        },
+    )
+}
+
 fn display_list<'a>(
     ui: &'a WorkspaceUi,
     mut identity: u32,
@@ -239,16 +266,7 @@ fn display_list<'a>(
             let mut selection =
                 layout.selection_rects(renderer_cursor(snapshot.display_selection.anchor), cursor);
             if let Some(composition) = &snapshot.composition {
-                for mut underline in layout.selection_rects(
-                    TextCursor {
-                        byte: composition.display_range.start,
-                        affinity: TextAffinity::After,
-                    },
-                    TextCursor {
-                        byte: composition.display_range.end,
-                        affinity: TextAffinity::Before,
-                    },
-                ) {
+                for mut underline in composition_rects(&layout, composition.display_range.clone()) {
                     underline.y += underline.height - 2.0;
                     underline.height = 1.0;
                     selection.push(underline);
@@ -368,10 +386,12 @@ mod tests {
     }
     #[test]
     fn immutable_unicode_resources_validate_complete_identity_and_budget() {
+        use sha2::{Digest, Sha256};
+        let digest: [u8; 32] = Sha256::digest([1_u8, 2, 3]).into();
         let identity = UiTexture {
             id: ResourceId(100),
             revision: 4,
-            digest: Digest256([7; 32]),
+            digest: Digest256(digest),
         };
         let resources = Resources {
             world: Arc::new(Missing),
@@ -413,5 +433,12 @@ mod tests {
             }),
             Err(ResourceError::NotFound)
         );
+    }
+    #[test]
+    fn combining_preedit_underline_uses_display_grapheme_bounds() {
+        let mut system = crate::font_pack::test_system();
+        let layout = system.layout("e\u{301}", 18.0, None).unwrap();
+        assert_eq!(layout.grapheme_boundaries(), &[0, 3]);
+        assert!(!composition_rects(&layout, 1..3).is_empty());
     }
 }

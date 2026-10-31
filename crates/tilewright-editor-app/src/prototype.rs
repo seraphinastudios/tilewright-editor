@@ -618,9 +618,9 @@ impl Application {
             let value = row.current.map_or_else(
                 || "<absent>".into(),
                 |value| match value {
-                    tilewright_source::FieldValue::String(text) => inspector::display_text(text),
+                    tilewright_source::FieldValue::String(text) => text.clone(),
                     tilewright_source::FieldValue::Json(_) => "Grouped values".into(),
-                    _ => inspector::display_text(&inspector::scalar_text(value)),
+                    _ => inspector::scalar_text(value),
                 },
             );
             let supported = true;
@@ -859,14 +859,7 @@ impl Application {
         details.extend(self.diff_lines());
         details
             .into_iter()
-            .flat_map(|line| {
-                crate::workspace_render::wrap_text(
-                    &mut self.text,
-                    &inspector::display_text(&line),
-                    width,
-                    20,
-                )
-            })
+            .flat_map(|line| crate::workspace_render::wrap_text(&mut self.text, &line, width, 20))
             .collect()
     }
 
@@ -1409,6 +1402,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             }
             if refocus || (!had_draft && app.tools.draft_text().is_some()) {
                 input.focused = true;
+                input.text_after = event.get_timestamp();
             }
             if matches!(
                 event,
@@ -1613,7 +1607,12 @@ fn native_text_event(
             input.return_released(app.tools.is_composing());
             Some(Ok(()))
         }
-        Event::TextInput { text, .. } => {
+        Event::TextInput {
+            text, timestamp, ..
+        } => {
+            if *timestamp < input.text_after {
+                return Some(Ok(()));
+            }
             if app.tools.is_composing() {
                 input.text_activity();
             }
@@ -1627,8 +1626,12 @@ fn native_text_event(
             text,
             start,
             length,
+            timestamp,
             ..
         } => {
+            if *timestamp < input.text_after {
+                return Some(Ok(()));
+            }
             input.text_activity();
             Some(if input.focused && app.tools.draft_text().is_some() {
                 app.tools
@@ -1700,10 +1703,32 @@ fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> 
         Keycode::Home => VisualMotion::Home,
         _ => VisualMotion::End,
     };
-    let focus = crate::workspace_render::model_cursor(geometry.layout.move_visual(
-        crate::workspace_render::renderer_cursor(geometry.snapshot.display_selection.focus),
-        motion,
-    ));
+    let anchor =
+        crate::workspace_render::renderer_cursor(geometry.snapshot.display_selection.anchor);
+    let current =
+        crate::workspace_render::renderer_cursor(geometry.snapshot.display_selection.focus);
+    let focus = if !extend
+        && anchor.byte != current.byte
+        && matches!(motion, VisualMotion::Left | VisualMotion::Right)
+    {
+        let a = geometry
+            .layout
+            .caret(anchor)
+            .ok_or("invalid anchor geometry")?;
+        let f = geometry
+            .layout
+            .caret(current)
+            .ok_or("invalid focus geometry")?;
+        let anchor_first = a.y < f.y || (a.y == f.y && a.x <= f.x);
+        if anchor_first == (motion == VisualMotion::Left) {
+            anchor
+        } else {
+            current
+        }
+    } else {
+        geometry.layout.move_visual(current, motion)
+    };
+    let focus = crate::workspace_render::model_cursor(focus);
     let focus = geometry
         .snapshot
         .committed_cursor(focus)
@@ -1814,6 +1839,7 @@ fn native_event(
     }
 }
 
+#[cfg(test)]
 fn native_pointer(
     app: &mut Application,
     position: [f32; 2],

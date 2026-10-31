@@ -434,8 +434,10 @@ fn long_display_labels_elide_using_shared_measurements_and_keep_full_draft() {
         true,
         false,
     );
-    assert!(ui.widgets[0].text.ends_with("..."));
-    assert_ne!(ui.widgets[0].text, original);
+    let mut system = crate::font_pack::test_system();
+    let fitted = crate::workspace_render::fit_text(&mut system, &ui.widgets[0].text, 290, 26);
+    assert!(fitted.ends_with("..."));
+    assert_ne!(fitted, original);
     let (_temporary, mut app) = application();
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();

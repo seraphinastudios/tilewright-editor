@@ -8,6 +8,7 @@ pub struct NativeInput {
     pub focused: bool,
     pub started: bool,
     pub shift: bool,
+    pub text_after: u64,
     submit_blocked: bool,
     batch_has_text: bool,
 }
@@ -18,6 +19,7 @@ impl NativeInput {
             focused: true,
             started: false,
             shift: false,
+            text_after: 0,
             submit_blocked: false,
             batch_has_text: false,
         }
