@@ -75,6 +75,22 @@ impl NativeInput {
     }
 }
 
+/// Advertise the composition UI that the app actually renders. SDL requires
+/// this capability hint before initialization; candidates remain OS-owned.
+pub fn configure_ime_ui() -> Result<(), String> {
+    let name = sdl3::hint::names::IME_IMPLEMENTED_UI;
+    if !sdl3::hint::set_with_priority(name, "composition", &sdl3::hint::Hint::Override) {
+        return Err(format!(
+            "SDL refused application IME composition capability: {}",
+            sdl3::get_error()
+        ));
+    }
+    if sdl3::hint::get(name).as_deref() != Some("composition") {
+        return Err("SDL application IME composition capability was not retained".into());
+    }
+    Ok(())
+}
+
 /// SDL has no safe Rust wrapper for this operation in sdl3 0.20. Keep the
 /// required FFI confined here; the borrowed live Window owns its raw pointer.
 #[allow(unsafe_code)]
@@ -114,5 +130,38 @@ mod tests {
         assert!(!input.submit_allowed(false));
         input.focused = true;
         assert!(input.submit_allowed(false));
+    }
+    #[test]
+    fn composition_capability_is_set_in_fresh_process() {
+        const CHILD: &str = "TILEWRIGHT_TEST_IME_HINT_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            configure_ime_ui().unwrap();
+            assert_eq!(
+                sdl3::hint::get(sdl3::hint::names::IME_IMPLEMENTED_UI).as_deref(),
+                Some("composition")
+            );
+            return;
+        }
+        // Hints are SDL process-global. Test in a fresh subprocess, without
+        // initializing SDL or changing another test's environment or UI state.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                concat!(
+                    module_path!(),
+                    "::composition_capability_is_set_in_fresh_process"
+                ),
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("SDL_IME_IMPLEMENTED_UI", "candidates")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }

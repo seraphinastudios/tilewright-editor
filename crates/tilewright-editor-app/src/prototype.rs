@@ -1316,6 +1316,7 @@ impl Evidence {
 
 #[allow(clippy::too_many_lines)]
 fn native(mut app: Application, demo: bool) -> Result<()> {
+    crate::native_input::configure_ime_ui()?;
     let sdl = sdl3::init().map_err(|error| error.to_string())?;
     let video = sdl.video().map_err(|error| error.to_string())?;
     let mut window = video
