@@ -153,7 +153,7 @@ fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation(
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     let generation = app.session.generation();
-    let camera = app.view.camera.center.map(|value| value.to_bits());
+    let camera = app.view.camera.center;
     let draft = app.tools.draft_text().unwrap().to_owned();
     for key in [
         Keycode::Q,
