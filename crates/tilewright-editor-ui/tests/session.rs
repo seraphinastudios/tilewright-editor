@@ -371,6 +371,125 @@ fn typed_strings_escape_and_invalid_types_never_publish() {
     );
     assert!(session.history().pending().is_none());
 }
+
+#[cfg(target_os = "linux")]
+fn fixture_without_field_values(
+    nested: bool,
+    empty_container: bool,
+) -> (tempfile::TempDir, Session) {
+    fixture_with(|root| {
+        let path = root.join("planes/main/layers/0/0_0.jsonc");
+        let mut chunk: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let object = if nested {
+            chunk["objects"][0]["inventory"] = serde_json::json!([
+                {"uid": "nested_marker", "proto": "marker"}
+            ]);
+            let catalog_path = root.join("preview.jsonc");
+            let mut catalog: serde_json::Value =
+                serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
+            catalog["editing"]["fields"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"uid": "nested_marker", "field": "label"}));
+            fs::write(catalog_path, serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
+            &mut chunk["objects"][0]["inventory"][0]
+        } else {
+            &mut chunk["objects"][0]
+        };
+        object.as_object_mut().unwrap().remove("fields");
+        if empty_container {
+            object["fields"] = serde_json::json!({});
+        }
+        let source = serde_json::to_string_pretty(&chunk).unwrap().replace(
+            "\"fields\": {}",
+            "\"fields\": {/* retained empty fields comment */}",
+        );
+        fs::write(path, format!("// retained chunk comment\n{source}\n")).unwrap();
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn optional_field_addition_handles_absent_or_commented_empty_parents_and_nested_uids() {
+    for (nested, empty_container) in [(false, false), (false, true), (true, false), (true, true)] {
+        let (dir, mut session) = fixture_without_field_values(nested, empty_container);
+        let path = dir.path().join("planes/main/layers/0/0_0.jsonc");
+        let original = fs::read(&path).unwrap();
+        let uid = if nested { "nested_marker" } else { "marker_1" };
+        let revision = session.history().document().revision();
+        let mut records = Records::default();
+        let action = |value| Action::SetField {
+            uid: uid.into(),
+            field: "label".into(),
+            value,
+            expected: revision,
+        };
+        // An omitted parent is no excuse to bypass the authoritative schema.
+        assert!(
+            session
+                .dispatch(action(serde_json::json!(42)), &mut records)
+                .is_err()
+        );
+        assert!(session.history().pending().is_none());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(records.inverses.is_empty());
+        session
+            .dispatch(action(serde_json::json!("new label")), &mut records)
+            .unwrap();
+        let transaction: serde_json::Value =
+            serde_json::from_str(session.history().pending().unwrap().sealed()).unwrap();
+        if empty_container {
+            assert_eq!(transaction["operations"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                transaction["operations"][0]["pointer"],
+                serde_json::json!(["fields", "label"])
+            );
+        } else {
+            assert_eq!(transaction["operations"][0]["op"], "test");
+            assert_eq!(transaction["operations"][0]["absent"], true);
+            assert_eq!(
+                transaction["operations"][0]["pointer"],
+                serde_json::json!(["fields"])
+            );
+            assert_eq!(
+                transaction["operations"][1]["value"],
+                serde_json::json!({"label": "new label"})
+            );
+        }
+        assert_eq!(
+            session.world().object(uid).unwrap().fields,
+            vec![(
+                "label".into(),
+                tilewright_source::FieldValue::String("new label".into())
+            )]
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        session.dispatch(Action::Accept, &mut records).unwrap();
+        let added = fs::read(&path).unwrap();
+        let added_text = std::str::from_utf8(&added).unwrap();
+        assert!(added_text.starts_with("// retained chunk comment\n"));
+        if empty_container {
+            assert!(added_text.contains("/* retained empty fields comment */"));
+        }
+        assert!(
+            session
+                .dispatch(action(serde_json::json!("stale draft")), &mut records)
+                .unwrap_err()
+                .to_string()
+                .contains("stale source revision")
+        );
+        assert!(session.history().pending().is_none());
+        session.dispatch(Action::Undo, &mut records).unwrap();
+        session.dispatch(Action::Accept, &mut records).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), original);
+        session.dispatch(Action::Redo, &mut records).unwrap();
+        session.dispatch(Action::Accept, &mut records).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), added);
+        assert_eq!(records.inverses.len(), 3);
+    }
+}
+
 #[test]
 fn changed_catalog_and_source_refuse_before_retention() {
     for catalog in [true, false] {

@@ -226,6 +226,45 @@ impl Session {
             self.selection = None;
         }
     }
+    /// Semantic World fields do not distinguish an omitted container from an
+    /// empty one. Inspect only that presence through the toolkit's bounded AST;
+    /// History still verifies the complete source revision before planning.
+    fn fields_container_absent(&self, uid: &str) -> Result<bool, SessionError> {
+        let document = self.history.document();
+        let world = document.world();
+        let location = world
+            .object_location(uid)
+            .ok_or_else(|| refuse("unknown UID location"))?;
+        let chunk = world
+            .planes()
+            .get(&location.plane)
+            .and_then(|plane| plane.chunks.get(&location.chunk))
+            .ok_or_else(|| refuse("missing authoritative object chunk"))?;
+        let limits = document.load_options().limits;
+        let limit = u64::try_from(limits.max_input_bytes)
+            .map_err(|_| refuse("source byte budget overflow"))?;
+        let bytes = document
+            .source()
+            .read(&chunk.path, limit)
+            .map_err(|error| SessionError(error.to_string()))?
+            .ok_or_else(|| refuse("object source chunk is missing"))?;
+        let text =
+            String::from_utf8(bytes).map_err(|_| refuse("object source chunk is not UTF-8"))?;
+        let syntax = tilewright_jsonc::Document::parse(text, &limits)
+            .map_err(|error| SessionError(error.to_string()))?;
+        let mut object = syntax.root();
+        for (depth, index) in location.path.iter().enumerate() {
+            object = object
+                .get(if depth == 0 { "objects" } else { "inventory" })
+                .and_then(tilewright_jsonc::Value::as_array)
+                .and_then(|objects| objects.get(*index))
+                .ok_or_else(|| refuse("object source location changed"))?;
+        }
+        if object.get("uid").and_then(tilewright_jsonc::Value::as_str) != Some(uid) {
+            return Err(refuse("object source UID changed"));
+        }
+        Ok(object.get("fields").is_none())
+    }
     fn prepare(&mut self, expected: [u8; 32], op: &Value) -> Result<(), SessionError> {
         self.prepare_operations(expected, std::slice::from_ref(op))
     }
@@ -387,6 +426,17 @@ impl Session {
                     return Err(refuse("field absent from authoritative schema"));
                 }
                 let object = world.object(&uid).ok_or_else(|| refuse("unknown UID"))?;
+                if object.fields.is_empty() {
+                    self.verify_revision(expected)?;
+                    if self.fields_container_absent(&uid)? {
+                        // Create only a proven-absent parent. Never replace an
+                        // existing empty container, which can contain comments.
+                        return self.prepare_operations(expected, &[
+                            json!({"op":"test","object":{"uid":uid},"pointer":["fields"],"absent":true}),
+                            json!({"op":"set","object":{"uid":uid},"pointer":["fields"],"value":{(field):value}}),
+                        ]);
+                    }
+                }
                 let mut op = json!({"op":"set","object":{"uid":uid},"pointer":["fields",field],"value":value});
                 if let Some((_, before)) = object.fields.iter().find(|(name, _)| name == &field) {
                     op["expect"] = field_json(before)?;

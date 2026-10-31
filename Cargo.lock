@@ -1232,6 +1232,7 @@ dependencies = [
  "tilewright-editor-preview",
  "tilewright-editor-project",
  "tilewright-editor-testkit",
+ "tilewright-jsonc",
  "tilewright-source",
 ]
 
