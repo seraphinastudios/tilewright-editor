@@ -52,6 +52,15 @@ fn fixture() -> (tempfile::TempDir, WorldDocument, PreviewCatalog) {
         .map(|field| serde_json::json!({"uid":"marker_1","field":field}))
     );
     fs::write(path, serde_json::to_vec(&catalog).unwrap()).unwrap();
+    // The profile requirement applies to every fixture object, including
+    // the off-view marker in the negative chunk.
+    let chunk_path = dir.path().join("planes/main/layers/0/-1_0.jsonc");
+    let mut chunk: serde_json::Value =
+        serde_json::from_slice(&fs::read(&chunk_path).unwrap()).unwrap();
+    for object in chunk["objects"].as_array_mut().unwrap() {
+        object["fields"]["settings"] = serde_json::json!({"active":true,"visits":0});
+    }
+    fs::write(chunk_path, serde_json::to_vec(&chunk).unwrap()).unwrap();
     let document = WorldDocument::open(dir.path()).unwrap();
     let (catalog, _) = loader::load(
         document.source(),
