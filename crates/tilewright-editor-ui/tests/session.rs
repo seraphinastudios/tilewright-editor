@@ -882,7 +882,12 @@ fn same_chunk_move_preserves_interleaved_object_order_and_only_coordinate_bytes(
         transaction["operations"][1]["pointer"],
         serde_json::json!(["objects", 1, "uid"])
     );
-    assert_eq!(transaction["operations"][2]["op"], "set");
+    assert_eq!(transaction["operations"][2]["op"], "test");
+    assert_eq!(transaction["operations"][3]["op"], "set");
+    assert_eq!(
+        transaction["operations"][3]["pointer"],
+        serde_json::json!(["objects", 1, "at", 0])
+    );
     assert!(
         transaction["base"]
             .as_array()
@@ -906,7 +911,7 @@ fn same_chunk_move_preserves_interleaved_object_order_and_only_coordinate_bytes(
     let mut expected = before.clone();
     expected.replace_range(
         at_start..at_start + "[\n        3,\n        2\n      ]".len(),
-        "[4,2]",
+        "[\n        4,\n        2\n      ]",
     );
     assert_eq!(after, &expected);
     assert_eq!(fs::read(&path).unwrap(), original);
@@ -933,7 +938,9 @@ fn same_chunk_move_tests_uid_prototype_and_old_coordinates() {
     for (index, field, wrong) in [
         (0, "value", serde_json::json!("grass")),
         (1, "value", serde_json::json!("missing_uid")),
-        (2, "expect", serde_json::json!([0, 0])),
+        // Even the unchanged y axis is guarded by the whole old-at test.
+        (2, "value", serde_json::json!([3, 1])),
+        (3, "expect", serde_json::json!(0)),
     ] {
         let mut transaction: serde_json::Value = serde_json::from_str(sealed).unwrap();
         transaction["operations"][index][field] = wrong;
@@ -952,6 +959,109 @@ fn same_chunk_move_tests_uid_prototype_and_old_coordinates() {
         );
     }
 }
+
+#[cfg(target_os = "linux")]
+fn commented_coordinates(x: &str, y: &str) -> String {
+    format!(
+        "[\n        /* x */ {x} /* keep x comment */,\n        // y stays on its own line\n        {y} /* keep y comment */\n      ]"
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn move_changes_only_scalar_tokens_preserving_coordinate_comments_and_spelling() {
+    for (negative, change_x, change_y) in [
+        (false, true, false),
+        (false, false, true),
+        (false, true, true),
+        (false, false, false),
+        (true, true, false),
+        (true, false, true),
+        (true, true, true),
+        (true, false, false),
+    ] {
+        let old_x = if negative { "31" } else { "3" };
+        let new_x = if change_x {
+            if negative { "30" } else { "4" }
+        } else {
+            old_x
+        };
+        let old_at = commented_coordinates(old_x, "-0");
+        let new_at = commented_coordinates(new_x, if change_y { "3" } else { "-0" });
+        let relative = if negative {
+            "planes/main/layers/0/-1_0.jsonc"
+        } else {
+            "planes/main/layers/0/0_0.jsonc"
+        };
+        let (dir, mut session) = fixture_with(|root| {
+            if negative {
+                widen_view(root);
+            }
+            let path = root.join(relative);
+            let source = fs::read_to_string(&path).unwrap();
+            let old_y = if negative { 1 } else { 2 };
+            let original_at = format!("[\n        {old_x},\n        {old_y}\n      ]");
+            assert_eq!(source.matches(&original_at).count(), 1);
+            fs::write(path, source.replace(&original_at, &old_at)).unwrap();
+        });
+        let path = dir.path().join(relative);
+        let original = fs::read_to_string(&path).unwrap();
+        let expected = original.replace(&old_at, &new_at);
+        let mut records = Records::default();
+        session
+            .dispatch(
+                Action::Move {
+                    uid: if negative {
+                        "marker_negative"
+                    } else {
+                        "marker_1"
+                    }
+                    .into(),
+                    x: new_x.parse::<i64>().unwrap() - if negative { 32 } else { 0 },
+                    y: if change_y { 3 } else { 0 },
+                    expected: session.history().document().revision(),
+                },
+                &mut records,
+            )
+            .unwrap();
+        let pending = session.history().pending().unwrap();
+        let transaction: serde_json::Value = serde_json::from_str(pending.sealed()).unwrap();
+        let operations = transaction["operations"].as_array().unwrap();
+        assert_eq!(
+            operations.len(),
+            3 + usize::from(change_x) + usize::from(change_y)
+        );
+        for operation in &operations[3..] {
+            assert_eq!(operation["op"], "set");
+            let axis = operation["pointer"][3].as_u64().unwrap();
+            assert!((axis == 0 && change_x) || (axis == 1 && change_y));
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        if change_x || change_y {
+            assert_eq!(
+                pending.changed().next().unwrap().after.as_deref(),
+                Some(expected.as_str())
+            );
+        } else {
+            assert_eq!(pending.changed().count(), 0);
+        }
+        session.dispatch(Action::Accept, &mut records).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+        if change_x || change_y {
+            session.dispatch(Action::Undo, &mut records).unwrap();
+            session.dispatch(Action::Accept, &mut records).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+            session.dispatch(Action::Redo, &mut records).unwrap();
+            session.dispatch(Action::Accept, &mut records).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+            assert_eq!(records.inverses.len(), 3);
+        } else {
+            assert!(records.inverses.is_empty());
+            assert_eq!(session.history().depths(), (0, 0));
+        }
+    }
+}
+
 #[test]
 fn negative_coordinates_use_floor_chunks_and_cross_chunk_moves_use_relocation() {
     let (_dir, mut session) = fixture_with(widen_view);
@@ -983,8 +1093,13 @@ fn negative_coordinates_use_floor_chunks_and_cross_chunk_moves_use_relocation() 
         serde_json::from_str(session.history().pending().unwrap().sealed()).unwrap();
     assert_eq!(
         transaction["operations"][2]["value"],
-        serde_json::json!([30, 1])
+        serde_json::json!([31, 1])
     );
+    assert_eq!(
+        transaction["operations"][3]["pointer"],
+        serde_json::json!(["objects", 0, "at", 0])
+    );
+    assert_eq!(transaction["operations"][3]["value"], serde_json::json!(30));
     session.dispatch(Action::Cancel, &mut recovery).unwrap();
     session
         .dispatch(movement(&session, -1), &mut recovery)
