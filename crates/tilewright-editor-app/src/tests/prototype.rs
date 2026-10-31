@@ -858,7 +858,7 @@ fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
 }
 
 #[test]
-fn stale_draft_geometry_cannot_move_caret_or_change_source() {
+fn stale_displayed_geometry_blocks_pointer_but_keyboard_uses_current_draft() {
     use crate::workspace_ui::{Control, WorkspaceUi};
     let (_temporary, mut app) = application();
     app.select_visible_object(true).unwrap();
@@ -872,7 +872,13 @@ fn stale_draft_geometry_cannot_move_caret_or_change_source() {
     assert!(app.displayed_input_ready());
     app.tools.input("e\u{301}").unwrap();
     assert!(!app.displayed_input_ready());
-    assert!(super::visual_move(&mut app, sdl3::keyboard::Keycode::Left, false).is_err());
+    let expected = app.tools.draft_text().unwrap().len() - "e\u{301}".len();
+    super::visual_move(&mut app, sdl3::keyboard::Keycode::Left, false).unwrap();
+    assert_eq!(
+        app.tools.draft_snapshot().unwrap().selection.focus.byte,
+        expected
+    );
+    assert!(super::native_pointer(&mut app, [650.0, 60.0], (960, 640), (320, 240)).is_err());
     assert!(app.session.history().pending().is_none());
 }
 
@@ -1122,4 +1128,134 @@ fn escape_composition_cancel_fences_queued_text_and_allows_fresh_input() {
     assert_eq!(app.tools.draft_text(), Some("NEW"));
     assert!(app.session.history().pending().is_none());
     assert_eq!(fs::read(path).unwrap(), source);
+}
+
+fn dispatch_draft_event(
+    app: &mut Application,
+    input: &mut crate::native_input::NativeInput,
+    event: &sdl3::event::Event,
+) -> Result<bool, String> {
+    let scroll = (app.sidebar_scroll, app.review_scroll);
+    super::native_text_event(app, event, input).unwrap_or(Ok(()))?;
+    Ok(super::update_input_presentation(app, scroll))
+}
+fn modified_input_key(
+    key: sdl3::keyboard::Keycode,
+    up: bool,
+    modifiers: sdl3::keyboard::Mod,
+) -> sdl3::event::Event {
+    let mut event = input_key(7, key, up);
+    if let sdl3::event::Event::KeyDown { keymod, .. } | sdl3::event::Event::KeyUp { keymod, .. } =
+        &mut event
+    {
+        *keymod = modifiers;
+    }
+    event
+}
+
+#[test]
+fn real_shift_and_repeated_arrows_use_current_draft_without_intermediate_frames() {
+    use crate::workspace_ui::Control;
+    use sdl3::keyboard::{Keycode, Mod};
+    use tilewright_editor_ui::text_input::{TextCursor, TextSelection};
+    for (shift, arrows) in [(true, 1), (true, 2), (false, 2)] {
+        let (_temporary, mut app) = application();
+        app.select_visible_object(true).unwrap();
+        app.control(Control::Field("label".into())).unwrap();
+        app.tools.select_all().unwrap();
+        app.tools.input("e\u{301}a🙂b").unwrap();
+        let revision = app.tools.input_revision().unwrap();
+        app.tools
+            .set_selection(TextSelection::caret(TextCursor::new(0)), revision)
+            .unwrap();
+        acknowledge_ui(&mut app);
+        let source = app.session.history().document().revision();
+        let world = app.session.world().source_digest();
+        let camera = app.view.camera.center;
+        let mut input = crate::native_input::NativeInput::new(7);
+        input.begin_batch(
+            false,
+            app.tools.input_revision().map(|revision| revision.draft),
+        );
+        let modifiers = if shift { Mod::LSHIFTMOD } else { Mod::NOMOD };
+        if shift {
+            let revision = app.tools.input_revision();
+            assert!(
+                !dispatch_draft_event(
+                    &mut app,
+                    &mut input,
+                    &modified_input_key(Keycode::LShift, false, modifiers)
+                )
+                .unwrap()
+            );
+            assert_eq!(app.tools.input_revision(), revision);
+            assert!(app.displayed_input_ready());
+        }
+        for _ in 0..arrows {
+            dispatch_draft_event(
+                &mut app,
+                &mut input,
+                &modified_input_key(Keycode::Right, false, modifiers),
+            )
+            .unwrap();
+            dispatch_draft_event(
+                &mut app,
+                &mut input,
+                &modified_input_key(Keycode::Right, true, modifiers),
+            )
+            .unwrap();
+        }
+        if shift {
+            dispatch_draft_event(
+                &mut app,
+                &mut input,
+                &modified_input_key(Keycode::LShift, true, Mod::NOMOD),
+            )
+            .unwrap();
+        }
+        let selection = app.tools.draft_snapshot().unwrap().selection;
+        let expected = if arrows == 1 { 3 } else { 4 };
+        assert_eq!(selection.focus.byte, expected);
+        assert_eq!(selection.anchor.byte, if shift { 0 } else { expected });
+        assert_eq!(app.session.history().document().revision(), source);
+        assert_eq!(app.session.world().source_digest(), world);
+        assert_eq!(app.view.camera.center, camera);
+        assert!(app.session.history().pending().is_none());
+    }
+}
+
+#[test]
+fn backspace_then_left_uses_current_shaped_text_and_return_stays_fenced() {
+    use crate::workspace_ui::Control;
+    use sdl3::keyboard::Keycode;
+    let (_temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    app.tools.select_all().unwrap();
+    app.tools.input("e\u{301}a🙂b").unwrap();
+    acknowledge_ui(&mut app);
+    let source = app.session.history().document().revision();
+    let mut input = crate::native_input::NativeInput::new(7);
+    input.begin_batch(
+        false,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
+    dispatch_draft_event(
+        &mut app,
+        &mut input,
+        &input_key(7, Keycode::Backspace, false),
+    )
+    .unwrap();
+    dispatch_draft_event(&mut app, &mut input, &input_key(7, Keycode::Left, false)).unwrap();
+    let snapshot = app.tools.draft_snapshot().unwrap();
+    assert_eq!(snapshot.committed, "e\u{301}a🙂");
+    assert_eq!(snapshot.selection.focus.byte, 4);
+    assert!(!app.displayed_input_ready());
+    assert!(
+        dispatch_draft_event(&mut app, &mut input, &input_key(7, Keycode::Return, false))
+            .unwrap_err()
+            .contains("displayed")
+    );
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.session.history().document().revision(), source);
 }

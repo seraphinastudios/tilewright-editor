@@ -1379,6 +1379,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             {
                 break 'running;
             }
+            let scroll_before = (app.sidebar_scroll, app.review_scroll);
             let composing = app.tools.is_composing();
             let draft_before = app.tools.input_revision().map(|revision| revision.draft);
             let refocus = if let Event::MouseButtonDown { x, y, .. } = event {
@@ -1430,16 +1431,6 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             {
                 input.refocus(event.get_timestamp());
             }
-            if matches!(
-                event,
-                Event::MouseButtonDown { .. }
-                    | Event::MouseWheel { .. }
-                    | Event::TextInput { .. }
-                    | Event::TextEditing { .. }
-                    | Event::KeyDown { .. }
-            ) {
-                app.presented_generation = None;
-            }
             let should_start = input.focused && !minimized && app.tools.draft_text().is_some();
             if should_start != input.started {
                 if should_start {
@@ -1459,7 +1450,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                 }
                 input.started = should_start;
             }
-            dirty = true;
+            dirty |= update_input_presentation(&mut app, scroll_before) || result.is_err();
             if let Err(error) = result {
                 eprintln!("{}", terminal_field(&error));
                 app.notice = Some(error);
@@ -1718,41 +1709,41 @@ fn native_text_event(
         _ => None,
     }
 }
+/// Local text revisions already fence presented input. Only actual panel
+/// scrolling additionally changes pointer geometry without a model revision.
+fn update_input_presentation(app: &mut Application, scroll_before: (usize, usize)) -> bool {
+    if scroll_before != (app.sidebar_scroll, app.review_scroll) {
+        app.presented_generation = None;
+    }
+    !app.displayed_input_ready()
+}
+
 fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> {
     use tilewright_editor_ui::text_input::TextSelection;
     use tilewright_render_ui::VisualMotion;
-    if !app.displayed_input_ready() {
-        return Err("caret movement waits for displayed current draft".into());
-    }
-    let geometry = app
-        .displayed_text
-        .as_ref()
-        .ok_or("no displayed text layout")?;
-    if Some(geometry.revision) != app.tools.input_revision() {
-        return Err("stale text layout".into());
-    }
+    let snapshot = app.tools.draft_snapshot().ok_or("no current text draft")?;
+    let layout = app
+        .text
+        .layout(
+            &snapshot.display_text,
+            crate::workspace_render::text_size(30),
+            None,
+        )
+        .map_err(|error| error.to_string())?;
     let motion = match key {
         Keycode::Left => VisualMotion::Left,
         Keycode::Right => VisualMotion::Right,
         Keycode::Home => VisualMotion::Home,
         _ => VisualMotion::End,
     };
-    let anchor =
-        crate::workspace_render::renderer_cursor(geometry.snapshot.display_selection.anchor);
-    let current =
-        crate::workspace_render::renderer_cursor(geometry.snapshot.display_selection.focus);
+    let anchor = crate::workspace_render::renderer_cursor(snapshot.display_selection.anchor);
+    let current = crate::workspace_render::renderer_cursor(snapshot.display_selection.focus);
     let focus = if !extend
         && anchor.byte != current.byte
         && matches!(motion, VisualMotion::Left | VisualMotion::Right)
     {
-        let a = geometry
-            .layout
-            .caret(anchor)
-            .ok_or("invalid anchor geometry")?;
-        let f = geometry
-            .layout
-            .caret(current)
-            .ok_or("invalid focus geometry")?;
+        let a = layout.caret(anchor).ok_or("invalid anchor geometry")?;
+        let f = layout.caret(current).ok_or("invalid focus geometry")?;
         let anchor_first =
             a.y.total_cmp(&f.y).then(a.x.total_cmp(&f.x)) != std::cmp::Ordering::Greater;
         if anchor_first == (motion == VisualMotion::Left) {
@@ -1761,23 +1752,22 @@ fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> 
             current
         }
     } else {
-        geometry.layout.move_visual(current, motion)
+        layout.move_visual(current, motion)
     };
     let focus = crate::workspace_render::model_cursor(focus);
-    let focus = geometry
-        .snapshot
+    let focus = snapshot
         .committed_cursor(focus)
         .map_err(|error| error.to_string())?;
     let selection = if extend {
         TextSelection {
-            anchor: geometry.snapshot.selection.anchor,
+            anchor: snapshot.selection.anchor,
             focus,
         }
     } else {
         TextSelection::caret(focus)
     };
     app.tools
-        .set_selection(selection, geometry.revision)
+        .set_selection(selection, snapshot.revision)
         .map_err(|error| error.to_string())
 }
 
