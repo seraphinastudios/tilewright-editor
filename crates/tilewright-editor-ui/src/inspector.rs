@@ -3,7 +3,7 @@
 
 //! Bounded, read-only views of the authoritative World schema and selection.
 use tilewright_editor_preview::{PreviewCatalog, SelectionKey};
-use tilewright_source::{FieldSpec, FieldType, FieldValue, World};
+use tilewright_source::{FieldSpec, FieldType, FieldValue, Object, World};
 
 pub const MAX_INSPECTOR_ROWS: usize = 128;
 pub const MAX_DISPLAY_BYTES: usize = 512;
@@ -118,46 +118,7 @@ pub fn inspect<'a>(
             });
             let fields = world.profile().object_fields.fields();
             result.truncated = fields.len() > MAX_INSPECTOR_ROWS;
-            for (name, spec) in fields.iter().take(MAX_INSPECTOR_ROWS) {
-                let current = object
-                    .fields
-                    .iter()
-                    .find(|(n, _)| n == name)
-                    .map(|(_, v)| v);
-                let reason = if matches!(
-                    spec.field_type,
-                    FieldType::Json | FieldType::List { .. } | FieldType::Object { .. }
-                ) {
-                    Some("Structured field is read-only")
-                } else if current.is_none() && spec.required {
-                    Some("Required field is absent; source must be repaired")
-                } else if !catalog
-                    .editing()
-                    .fields
-                    .contains(&(uid.clone(), name.clone()))
-                {
-                    Some("Field has no editing capability")
-                } else if !choices_bounded(world, &spec.field_type) {
-                    Some("Field choices exceed input budget")
-                } else if current.is_some_and(
-                    |v| matches!(v, FieldValue::String(text) if text.len() > MAX_INPUT_BYTES),
-                ) {
-                    Some("Current value exceeds input budget")
-                } else if current.is_none() {
-                    Some("Optional field is absent; enter a value to add it")
-                } else {
-                    None
-                };
-                let editable = reason.is_none()
-                    || reason == Some("Optional field is absent; enter a value to add it");
-                result.rows.push(FieldRow {
-                    name,
-                    spec,
-                    current,
-                    editable,
-                    reason,
-                });
-            }
+            result.rows = inspect_fields(world, catalog, uid, object);
         }
         SelectionKey::Cell {
             plane,
@@ -207,6 +168,62 @@ pub fn inspect<'a>(
         revision: observed_revision,
     });
     result
+}
+
+fn inspect_fields<'a>(
+    world: &'a World,
+    catalog: &PreviewCatalog,
+    uid: &str,
+    object: &'a Object,
+) -> Vec<FieldRow<'a>> {
+    let mut rows = Vec::new();
+    for (name, spec) in world
+        .profile()
+        .object_fields
+        .fields()
+        .iter()
+        .take(MAX_INSPECTOR_ROWS)
+    {
+        let current = object
+            .fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v);
+        let reason = if matches!(
+            spec.field_type,
+            FieldType::Json | FieldType::List { .. } | FieldType::Object { .. }
+        ) {
+            Some("Structured field is read-only")
+        } else if current.is_none() && spec.required {
+            Some("Required field is absent; source must be repaired")
+        } else if !catalog
+            .editing()
+            .fields
+            .contains(&(uid.to_owned(), name.clone()))
+        {
+            Some("Field has no editing capability")
+        } else if !choices_bounded(world, &spec.field_type) {
+            Some("Field choices exceed input budget")
+        } else if current
+            .is_some_and(|v| matches!(v, FieldValue::String(text) if text.len() > MAX_INPUT_BYTES))
+        {
+            Some("Current value exceeds input budget")
+        } else if current.is_none() {
+            Some("Optional field is absent; enter a value to add it")
+        } else {
+            None
+        };
+        let editable =
+            reason.is_none() || reason == Some("Optional field is absent; enter a value to add it");
+        rows.push(FieldRow {
+            name,
+            spec,
+            current,
+            editable,
+            reason,
+        });
+    }
+    rows
 }
 
 pub(crate) fn choices_bounded(world: &World, kind: &FieldType) -> bool {

@@ -34,7 +34,7 @@ fn fixture() -> (tempfile::TempDir, WorldDocument, PreviewCatalog) {
       "choice":{"type":"string","max_length":8,"values":["red","青"]},
       "reference":{"type":"reference","target":"proto"},
       "label":{"type":"string","max_length":4096},
-      "settings":{"type":"object","fields":{"active":{"type":"boolean","required":true},"visits":{"type":"integer","min":0,"max":99,"required":true}}}
+      "settings":{"type":"object","required":true,"fields":{"active":{"type":"boolean","required":true},"visits":{"type":"integer","min":0,"max":99,"required":true}}}
     }}"#).unwrap();
     let path = dir.path().join("preview.jsonc");
     let mut catalog: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -99,6 +99,7 @@ fn authoritative_rows_missing_fields_and_structured_read_only() {
     assert!(view.rows[0].editable);
     assert!(view.rows[0].reason.unwrap().contains("absent"));
     assert!(!view.rows[6].editable);
+    assert!(view.rows[6].spec.required);
     let mut tools = ToolState::default();
     assert!(tools.begin_field(&view, "settings", false).is_err());
     assert!(tools.begin_field(&view, "unknown", false).is_err());
@@ -279,4 +280,36 @@ fn utf8_input_boundaries_are_atomic_and_backspace_removes_a_character() {
     let display = display_text(&"☃".repeat(300));
     assert!(display.len() <= MAX_DISPLAY_BYTES);
     assert!(display.ends_with('…'));
+}
+
+#[test]
+fn large_authoritative_schemas_are_bounded_and_report_truncation() {
+    let (dir, document, _catalog) = fixture();
+    drop(document);
+    let path = dir.path().join("profile/schema/object.jsonc");
+    let mut schema: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for index in 0..150 {
+        schema["fields"][format!("extra_{index}")] = serde_json::json!({"type":"boolean"});
+    }
+    fs::write(path, serde_json::to_vec(&schema).unwrap()).unwrap();
+    let document = WorldDocument::open(dir.path()).unwrap();
+    let (catalog, _) = loader::load(
+        document.source(),
+        document.world(),
+        PreviewLimits::default(),
+    )
+    .unwrap();
+    let key = key();
+    let view = inspect(
+        document.world(),
+        &catalog,
+        Some(&key),
+        1,
+        document.revision(),
+    );
+    assert!(view.truncated);
+    assert_eq!(
+        view.rows.len(),
+        tilewright_editor_ui::inspector::MAX_INSPECTOR_ROWS
+    );
 }
