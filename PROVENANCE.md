@@ -76,3 +76,48 @@ The cargo-deny OFL exception uses the exact package specification
 [cargo-deny 0.20.2 license exception](https://github.com/EmbarkStudios/cargo-deny/blob/0.20.2/docs/src/checks/licenses/cfg.md#the-exceptions-field-optional)
 and [exact PackageSpecs syntax](https://github.com/EmbarkStudios/cargo-deny/blob/0.20.2/docs/src/checks/cfg.md#exact).
 No global OFL allowance is added.
+
+## Separate Unicode font-pack delivery
+
+The editor packages the unchanged source fonts and original per-family OFL
+notices in `font-pack/`, separately from the shared renderer's public crate.
+The crate supplies only the exact `assets/unicode-font-pack.json` metadata.
+Production preparation/staging obtains this metadata from the immutable
+checksum-verified `tilewright-render-ui` 0.6.0 registry archive; local candidate
+metadata is an explicit separate mode and never establishes registry proof.
+
+The 17 faces are Noto Sans, Arabic, Hebrew, Devanagari, Bengali, Gujarati,
+Gurmukhi, Tamil, Telugu, Kannada, Malayalam, Oriya, Sinhala, Thai, SC CJK,
+KR and monochrome Emoji. They derive from the OFL directories of `google/fonts`
+revision `6c1dbe27dcf7d817d4b62cec033ba77fa8e2a5ec` without modification,
+subsetting, renaming or relicensing. Font bytes total 39,611,796 and original
+notices total 74,478. The exact manifest SHA-256 is
+`94b81a712fb41a66eb744c88ae2ed312cc5d0ec1a491e9821fcc278d99410f13`
+(423,554 bytes). The manifest records every upstream and destination path,
+author, copyright, license, byte count, digest, original notice and Reserved
+Font Name. Noto Sans SC and KR retain Adobe's Reserved Font Name `Source`; all other
+notices declare none. Font data and the inventory manifest remain OFL-1.1.
+
+`tools/prepare-font-pack.py` performs acquisition only in explicit
+`prepare --acquire` mode: fixed-revision public HTTPS paths, no redirects,
+ambient proxies, cookies or authentication, exact sizes/hashes and a fresh
+output. Production packaging verifies the exact file/directory set and hashes
+again; it retains all 17 notices, binds provenance to the registry UI archive
+and checks every font, notice and manifest component/hash/license in the binary
+CycloneDX SBOM. Runtime receives only an explicit verified local root and does
+not download or discover OS fonts. Shared renderer code owns font parsing,
+shaping, bidi and rasterization; editor code does not duplicate those facilities.
+
+The 49,070 mapped scalars cover the selected common Latin/Greek/Cyrillic,
+Arabic/Hebrew, Indic/Sinhala, Thai, SC CJK, Korean Hangul and monochrome emoji
+repertoire. Neither scalar coverage nor these packaging checks imply every
+Unicode scalar or shaping/variation sequence is supported.
+
+The delivery helper `tools/font_pack.py` and synthetic adversarial tests
+`tools/test_font_pack.py` are copied verbatim from the independently authored
+MIT files in `seraphinastudios/tilewright-renderer`, local reviewed candidate
+commit `9072863707c64e0de29051cc565a6590232f6355`. Transformation: none; no font
+parser, upstream implementation or rasterizer source is copied. Exact helper
+SHA-256: `cbffc180a44fc473ecad0e7fcd9b6b50e32b4a06b7b3f404a0999a7be6ea6469`; test SHA-256: `7a92e12aebbb2ab57a41884cd0af9270df129023b721d070a451b0d1086a19e0`. Preserve their MIT headers and
+this provenance when updating the shared delivery seam. This local source
+record does not claim that the commit or UI crate has been published.
