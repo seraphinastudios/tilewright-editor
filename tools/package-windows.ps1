@@ -20,6 +20,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "sample asset verification failed" }
     python tools/package-assets.py --root . --stage $Stage
     if ($LASTEXITCODE -ne 0) { throw "sample package allowlist failed" }
+    python tools/package-font-notice.py --root . --stage $Stage | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "font package notice verification failed" }
     & "$Stage/bin/tilewright-editor.exe" version | Out-Null
     syft "$Stage/bin/tilewright-editor.exe" --source-name tilewright-editor --source-version $Version --output "cyclonedx-json=$Stage/sbom.cdx.json"
     $Sbom = Get-Content "$Stage/sbom.cdx.json" -Raw | ConvertFrom-Json

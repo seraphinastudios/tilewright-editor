@@ -82,3 +82,30 @@ Except as contained in this notice, the name of a copyright holder shall
 not be used in advertising or otherwise to promote the sale, use or other
 dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
+
+## Shared renderer UI font candidate — OFL 1.1
+
+`tilewright-render-ui` 0.6.0 combines MIT implementation with bundled Roboto Mono
+font source and derived atlas, metrics and glyph data under **SIL Open Font
+License 1.1 (`OFL-1.1`)**. This policy prepares a candidate; it does not claim
+that this coordinate is published or that the owner accepted its limited text
+coverage.
+
+Copyright 2015 The Roboto Mono Project Authors
+(https://github.com/googlefonts/robotomono).
+
+Source: `googlefonts/RobotoMono`, revision
+`895ec691990d041dd727c7b5afa3ce56525d98e6`,
+[`fonts/ttf/RobotoMono-Regular.ttf`](https://github.com/googlefonts/RobotoMono/blob/895ec691990d041dd727c7b5afa3ce56525d98e6/fonts/ttf/RobotoMono-Regular.ttf).
+The shared renderer converts selected common-Latin/symbol glyphs to 20 px
+bitmap/metric data; the editor embeds the immutable resources without further
+font transformation. The synthetic solid texture and renderer/editor code
+remain MIT.
+
+The complete, unmodified upstream copyright and OFL 1.1 license are retained as
+`assets/OFL.txt` in the UI crate and copied to
+`licenses/OFL-RobotoMono.txt` in binary archives containing it. No Reserved Font
+Names are declared in that notice. Preserve this notice with the font data.
+`PROVENANCE.md` and `policy/font-notice.json` record the exact immutable source,
+notice and manifest hashes; package provenance records the verified registry
+crate and generated assets.
