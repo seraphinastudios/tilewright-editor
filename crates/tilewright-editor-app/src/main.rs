@@ -5,6 +5,7 @@
 
 mod prototype;
 mod viewport;
+mod workspace_ui;
 
 fn main() {
     let command = std::env::args()

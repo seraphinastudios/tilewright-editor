@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! Application composition for the bounded provisioned Linux prototype.
+use crate::workspace_ui::{Control, Hit, Rect, WorkspaceUi};
 use sdl3::{
     event::{Event, WindowEvent},
     keyboard::Keycode,
@@ -15,6 +16,8 @@ use tilewright_editor_commands::History;
 use tilewright_editor_document::{WorldDocument, terminal_field, terminal_safe};
 use tilewright_editor_preview::{PreparedPreview, PreviewLimits, SelectionKey, ViewSpec, loader};
 use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
+use tilewright_editor_ui::inspector::{self, SelectionSummary};
+use tilewright_editor_ui::tools::{self, ToolMode, ToolState};
 use tilewright_editor_ui::{Action, Session};
 use tilewright_render_api::{
     BackendPreference, FrameOutput, RenderRequest, Renderer, TargetDescriptor, TargetKind,
@@ -24,7 +27,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Click select | arrows move | Enter accept | Esc cancel | Z undo | Y redo | T terrain | F field | WASD pan | +/- zoom | R inspect reopen | Q quit";
+const HELP: &str = "Select / Move / Terrain | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -34,7 +37,11 @@ struct Application {
     evidence: Evidence,
     view: ViewSpec,
     prepared: PreparedPreview,
-    terrain: bool,
+    tools: ToolState,
+    ui: WorkspaceUi,
+    notice: Option<String>,
+    sidebar_scroll: usize,
+    review_scroll: usize,
     blocked: Option<String>,
 }
 
@@ -83,7 +90,11 @@ pub fn run(arguments: &[String]) -> Result<()> {
         evidence: Evidence::new(SourceRoot::new(&evidence))?,
         view,
         prepared,
-        terrain: false,
+        tools: ToolState::default(),
+        ui: WorkspaceUi::new((960, 640), (960, 640)),
+        notice: None,
+        sidebar_scroll: 0,
+        review_scroll: 0,
         blocked: None,
     };
     println!(
@@ -131,6 +142,7 @@ impl Application {
     }
 
     fn rebuild_inner(&mut self) -> Result<()> {
+        self.tools.cancel();
         self.session
             .invalidate_frame()
             .map_err(|error| error.to_string())?;
@@ -224,7 +236,12 @@ impl Application {
         .map_err(|error| error.to_string())?;
         let key = self
             .prepared
-            .pick(self.view.frame_revision, x, y, self.terrain)
+            .pick(
+                self.view.frame_revision,
+                x,
+                y,
+                self.tools.mode() == ToolMode::Terrain,
+            )
             .map_err(|error| error.to_string())?
             .ok_or("no selectable semantic hit at this pixel")?;
         self.action(Action::Select {
@@ -234,6 +251,9 @@ impl Application {
     }
 
     fn nudge(&mut self, delta: [i64; 2]) -> Result<()> {
+        if !self.session.can_prepare() {
+            return Err("accept or cancel the pending edit first".into());
+        }
         let Some(SelectionKey::Object { uid }) = self.session.selection().cloned() else {
             return Err("select an editable object first".into());
         };
@@ -292,37 +312,429 @@ impl Application {
     }
 
     fn paint(&mut self) -> Result<()> {
-        let Some(SelectionKey::Cell {
-            plane,
-            layer,
-            grid,
-            x,
-            y,
-        }) = self.session.selection().cloned()
-        else {
-            return Err("select a cell in terrain mode first".into());
-        };
-        let values = self
+        let key = self
             .session
-            .catalog()
-            .editing()
-            .terrain
-            .get(&grid)
-            .ok_or("grid has no paint capability")?;
-        let proto = values
-            .iter()
-            .next_back()
-            .cloned()
-            .ok_or("empty paint palette")?;
-        self.action(Action::Paint {
-            plane,
-            layer,
-            grid,
-            x,
-            y,
-            proto,
-            expected: self.session.history().document().revision(),
-        })
+            .selection()
+            .ok_or("select a cell in terrain mode first")?;
+        let inspected = inspector::inspect(
+            self.session.world(),
+            self.session.catalog(),
+            self.session.selection(),
+            self.session.generation(),
+            self.session.history().document().revision(),
+        );
+        let action = self
+            .tools
+            .paint_action(
+                &inspected,
+                key,
+                self.blocked.is_some() || !self.session.can_prepare(),
+            )
+            .map_err(|error| error.to_string())?;
+        self.action(action)
+    }
+
+    fn refresh_ui(&mut self) {
+        let logical = self.ui.logical_size();
+        let mut ui = WorkspaceUi::new(logical, self.ui.size);
+        let ready = self.blocked.is_none() && self.session.can_prepare();
+        let pending = self.session.history().pending().is_some();
+        let mode = self.tools.mode();
+        for (x, width, label, control, enabled, active) in [
+            (
+                8,
+                72,
+                "Select",
+                Control::Select,
+                true,
+                mode == ToolMode::Select,
+            ),
+            (86, 72, "Move", Control::Move, true, mode == ToolMode::Move),
+            (
+                164,
+                76,
+                "Terrain",
+                Control::Terrain,
+                true,
+                mode == ToolMode::Terrain,
+            ),
+            (
+                250,
+                68,
+                "Clear",
+                Control::Clear,
+                self.session.selection().is_some(),
+                false,
+            ),
+            (
+                328,
+                62,
+                "Undo",
+                Control::Undo,
+                ready && self.session.history().depths().0 > 0,
+                false,
+            ),
+            (
+                396,
+                62,
+                "Redo",
+                Control::Redo,
+                ready && self.session.history().depths().1 > 0,
+                false,
+            ),
+        ] {
+            ui.widget(
+                Rect {
+                    x,
+                    y: 8,
+                    width,
+                    height: 32,
+                },
+                label,
+                Some(control),
+                enabled,
+                active,
+            );
+        }
+        let x = ui.sidebar_x();
+        let width = ui.sidebar_width();
+        let mut rows: Vec<(String, Option<Control>, bool, bool)> = Vec::new();
+        let inspected = inspector::inspect(
+            self.session.world(),
+            self.session.catalog(),
+            self.session.selection(),
+            self.session.generation(),
+            self.session.history().document().revision(),
+        );
+        rows.push(("INSPECTOR  /  scroll for more".into(), None, true, false));
+        match inspected.selection {
+            Some(SelectionSummary::Object {
+                uid,
+                prototype,
+                plane,
+                layer,
+                at,
+                movable,
+            }) => {
+                rows.push((format!("Object {uid}  [{prototype}]"), None, true, false));
+                rows.push((
+                    format!("{plane} / layer {layer} / {at:?}"),
+                    None,
+                    true,
+                    false,
+                ));
+                rows.push((
+                    "Edit coordinates: x,y".into(),
+                    Some(Control::Coordinates),
+                    ready && movable,
+                    false,
+                ));
+                if mode == ToolMode::Move {
+                    for (label, delta) in [
+                        ("Move left", [-1, 0]),
+                        ("Move right", [1, 0]),
+                        ("Move up", [0, -1]),
+                        ("Move down", [0, 1]),
+                    ] {
+                        rows.push((
+                            label.into(),
+                            Some(Control::Nudge(delta)),
+                            ready && movable,
+                            false,
+                        ));
+                    }
+                }
+                for row in &inspected.rows {
+                    let value = row
+                        .current
+                        .map_or_else(|| "<absent>".into(), inspector::scalar_text);
+                    rows.push((
+                        format!("{} = {}", row.name, value),
+                        Some(Control::Field(row.name.into())),
+                        ready && row.editable,
+                        false,
+                    ));
+                    let detail = row
+                        .reason
+                        .map_or_else(|| format!("{:?}", row.spec.field_type), str::to_owned);
+                    rows.push((detail, None, row.editable, false));
+                    let choices = tools::field_choices(&inspected, row.name);
+                    if !choices.is_empty() {
+                        rows.push((
+                            format!("Choices: {}", choices.join(", ")),
+                            None,
+                            true,
+                            false,
+                        ));
+                    }
+                }
+                if inspected.truncated {
+                    rows.push((
+                        "More schema rows omitted by input budget".into(),
+                        None,
+                        false,
+                        false,
+                    ));
+                }
+            }
+            Some(SelectionSummary::Cell {
+                plane,
+                layer,
+                grid,
+                x,
+                y,
+                prototype,
+            }) => {
+                rows.push((format!("Cell {x},{y} / {grid}"), None, true, false));
+                rows.push((format!("{plane} / layer {layer}"), None, true, false));
+                rows.push((
+                    format!("Value: {}", prototype.unwrap_or("<empty>")),
+                    None,
+                    true,
+                    false,
+                ));
+            }
+            None => rows.push((
+                inspected
+                    .reason
+                    .unwrap_or("Select an object or terrain cell")
+                    .into(),
+                None,
+                true,
+                false,
+            )),
+        }
+        if mode == ToolMode::Terrain {
+            rows.push((
+                "TERRAIN PALETTE  /  explicit values".into(),
+                None,
+                true,
+                false,
+            ));
+            for choice in tools::terrain_palette(self.session.catalog()) {
+                let active = self.tools.terrain_choice() == Some(&choice);
+                rows.push((
+                    format!("{} / {}", choice.grid, choice.prototype),
+                    Some(Control::Palette {
+                        grid: choice.grid,
+                        prototype: choice.prototype,
+                    }),
+                    ready,
+                    active,
+                ));
+            }
+        }
+        let mut y = 56;
+        if let Some(text) = self.tools.draft_text() {
+            ui.widget(
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height: 30,
+                },
+                format!("> {text}|  [Ctrl+A clears]"),
+                None,
+                true,
+                true,
+            );
+            y += 34;
+            ui.widget(
+                Rect {
+                    x,
+                    y,
+                    width: width / 2 - 3,
+                    height: 28,
+                },
+                "Review edit",
+                Some(Control::ApplyDraft),
+                ready,
+                false,
+            );
+            ui.widget(
+                Rect {
+                    x: x + width / 2 + 3,
+                    y,
+                    width: width / 2 - 3,
+                    height: 28,
+                },
+                "Discard input",
+                Some(Control::CancelDraft),
+                true,
+                false,
+            );
+            y += 36;
+        }
+        let visible = usize::try_from(ui.logical_height().saturating_sub(y) / 28).unwrap_or(0);
+        self.sidebar_scroll = self.sidebar_scroll.min(rows.len().saturating_sub(visible));
+        for (text, control, enabled, active) in
+            rows.into_iter().skip(self.sidebar_scroll).take(visible)
+        {
+            ui.widget(
+                Rect {
+                    x,
+                    y,
+                    width,
+                    height: 26,
+                },
+                text,
+                control,
+                enabled,
+                active,
+            );
+            y += 28;
+        }
+        let y = ui.review_y();
+        ui.widget(
+            Rect {
+                x: 10,
+                y: y + 6,
+                width: 100,
+                height: 28,
+            },
+            "Accept",
+            Some(Control::Accept),
+            pending && self.blocked.is_none(),
+            false,
+        );
+        ui.widget(
+            Rect {
+                x: 118,
+                y: y + 6,
+                width: 100,
+                height: 28,
+            },
+            "Cancel",
+            Some(Control::Cancel),
+            pending && self.blocked.is_none(),
+            false,
+        );
+        let status = self
+            .blocked
+            .as_deref()
+            .or(self.notice.as_deref())
+            .map_or_else(|| self.session.status().to_string(), str::to_owned);
+        ui.widget(
+            Rect {
+                x: 10,
+                y: y + 38,
+                width: logical.0.saturating_sub(320.min(logical.0 / 2) + 20),
+                height: 22,
+            },
+            status,
+            None,
+            true,
+            false,
+        );
+        let mut diff = Vec::new();
+        if let Some(plan) = self.session.history().pending() {
+            for file in plan.changed().take(32) {
+                diff.push(format!("--- {}", file.path));
+                diff.extend(
+                    file.before
+                        .as_deref()
+                        .unwrap_or("<absent>")
+                        .lines()
+                        .take(2048)
+                        .map(|line| format!("- {}", inspector::display_text(line))),
+                );
+                diff.push(format!("+++ {}", file.path));
+                diff.extend(
+                    file.after
+                        .as_deref()
+                        .unwrap_or("<absent>")
+                        .lines()
+                        .take(2048)
+                        .map(|line| format!("+ {}", inspector::display_text(line))),
+                );
+            }
+        } else {
+            diff.push("No pending source diff. Edits are reviewed before acceptance.".into());
+        }
+        let lines = usize::try_from(logical.1.saturating_sub(y + 64) / 20).unwrap_or(0);
+        self.review_scroll = self.review_scroll.min(diff.len().saturating_sub(lines));
+        for (index, line) in diff
+            .into_iter()
+            .skip(self.review_scroll)
+            .take(lines)
+            .enumerate()
+        {
+            ui.widget(
+                Rect {
+                    x: 10,
+                    y: y + 64 + u32::try_from(index).unwrap_or(0) * 20,
+                    width: logical.0.saturating_sub(320.min(logical.0 / 2) + 20),
+                    height: 20,
+                },
+                line,
+                None,
+                true,
+                false,
+            );
+        }
+        self.ui = ui;
+    }
+
+    fn control(&mut self, control: Control) -> Result<()> {
+        self.notice = None;
+        match control {
+            Control::Select | Control::Move | Control::Terrain => {
+                self.tools.set_mode(match control {
+                    Control::Move => ToolMode::Move,
+                    Control::Terrain => ToolMode::Terrain,
+                    _ => ToolMode::Select,
+                });
+                self.sidebar_scroll = 0;
+                Ok(())
+            }
+            Control::Clear => self.action(Action::ClearSelection),
+            Control::Accept => self.action(Action::Accept),
+            Control::Cancel => self.action(Action::Cancel),
+            Control::Undo => self.action(Action::Undo),
+            Control::Redo => self.action(Action::Redo),
+            Control::Nudge(delta) => self.nudge(delta),
+            Control::Palette { grid, prototype } => {
+                self.tools
+                    .choose_terrain(self.session.catalog(), &grid, &prototype)
+                    .map_err(|error| error.to_string())?;
+                if self.view.grid.as_deref() != Some(grid.as_str()) {
+                    self.view.grid = Some(grid);
+                    self.action(Action::ClearSelection)?;
+                }
+                Ok(())
+            }
+            Control::CancelDraft => {
+                self.tools.cancel();
+                Ok(())
+            }
+            Control::Coordinates | Control::Field(_) | Control::ApplyDraft => {
+                let inspected = inspector::inspect(
+                    self.session.world(),
+                    self.session.catalog(),
+                    self.session.selection(),
+                    self.session.generation(),
+                    self.session.history().document().revision(),
+                );
+                let unavailable = self.blocked.is_some() || !self.session.can_prepare();
+                match control {
+                    Control::Coordinates => self
+                        .tools
+                        .begin_move(&inspected, unavailable)
+                        .map_err(|error| error.to_string()),
+                    Control::Field(field) => self
+                        .tools
+                        .begin_field(&inspected, &field, unavailable)
+                        .map_err(|error| error.to_string()),
+                    _ => {
+                        let action = self
+                            .tools
+                            .build_action(&inspected, unavailable)
+                            .map_err(|error| error.to_string())?;
+                        self.action(action)
+                    }
+                }
+            }
+        }
     }
 
     fn frame(&self, cells: bool) -> Result<FrameOutput> {
@@ -389,7 +801,7 @@ impl Application {
                 pixel_for(&frame, *id)
             })
             .ok_or("no visible object with the requested edit capability in reference mask")?;
-        self.terrain = false;
+        self.tools.set_mode(ToolMode::Select);
         self.click(hit.0, hit.1)
     }
 
@@ -406,7 +818,7 @@ impl Application {
                 _ => None,
             })
             .ok_or("neutral empty cell is not selectable")?;
-        self.terrain = true;
+        self.tools.set_mode(ToolMode::Terrain);
         self.click(hit.0, hit.1)
     }
 
@@ -445,6 +857,17 @@ impl Application {
             }
             6 if !self.session.catalog().editing().terrain.is_empty() => {
                 self.select_empty_cell()?;
+                let choice = tools::terrain_palette(self.session.catalog())
+                    .into_iter()
+                    .filter(|choice| match self.session.selection() {
+                        Some(SelectionKey::Cell { grid, .. }) => *grid == choice.grid,
+                        _ => false,
+                    })
+                    .next_back()
+                    .ok_or("empty demo terrain palette")?;
+                self.tools
+                    .choose_terrain(self.session.catalog(), &choice.grid, &choice.prototype)
+                    .map_err(|error| error.to_string())?;
                 self.paint()?;
                 self.action(Action::Accept)?;
                 self.capture("terrain")?;
@@ -514,9 +937,13 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
         .resizable()
         .build()
         .map_err(|error| error.to_string())?;
+    window
+        .set_minimum_size(720, 480)
+        .map_err(|error| error.to_string())?;
     let (width, height) = window.size_in_pixels();
-    app.view.camera.width = width;
-    app.view.camera.height = height;
+    app.ui = WorkspaceUi::new(window.size(), (width, height));
+    app.view.camera.width = app.ui.viewport.width;
+    app.view.camera.height = app.ui.viewport.height;
     app.rebuild()?;
     let mut renderer = WgpuRenderer::new(TargetDescriptor {
         kind: TargetKind::Window,
@@ -541,17 +968,29 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                         win_event: WindowEvent::CloseRequested,
                         ..
                     }
-                    | Event::KeyDown {
-                        keycode: Some(Keycode::Q),
-                        ..
-                    }
             ) {
                 break 'running;
             }
+            if matches!(
+                event,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Q),
+                    ..
+                }
+            ) && app.tools.draft_text().is_none()
+            {
+                break 'running;
+            }
             let result = native_event(&mut app, &mut renderer, &window, &event, &mut minimized);
+            if app.tools.draft_text().is_some() {
+                video.text_input().start(&window);
+            } else {
+                video.text_input().stop(&window);
+            }
             dirty = true;
             if let Err(error) = result {
                 eprintln!("{}", terminal_field(&error));
+                app.notice = Some(error);
             }
         }
         if demo && !minimized && Instant::now() >= next_demo {
@@ -616,8 +1055,9 @@ fn native_event(
             renderer
                 .resize(size.0, size.1)
                 .map_err(|error| error.to_string())?;
-            app.view.camera.width = size.0;
-            app.view.camera.height = size.1;
+            app.ui = WorkspaceUi::new(window.size(), size);
+            app.view.camera.width = app.ui.viewport.width;
+            app.view.camera.height = app.ui.viewport.height;
             app.rebuild()
         }
         Event::MouseButtonDown {
@@ -629,8 +1069,66 @@ fn native_event(
             let (px, py) =
                 crate::viewport::physical_pixel([*x, *y], window.size(), window.size_in_pixels())
                     .ok_or("pointer outside physical viewport")?;
-            app.click(px, py)?;
-            if app.terrain { app.paint() } else { Ok(()) }
+            app.refresh_ui();
+            match app.ui.hit(px, py) {
+                Hit::Control(control) => app.control(control),
+                Hit::World(x, y) => {
+                    app.tools.cancel();
+                    app.click(x, y)?;
+                    if app.tools.mode() == ToolMode::Terrain {
+                        app.paint()
+                    } else {
+                        Ok(())
+                    }
+                }
+                Hit::Panel | Hit::Outside => Ok(()),
+            }
+        }
+        Event::MouseWheel {
+            integer_y,
+            mouse_x,
+            mouse_y,
+            ..
+        } if !*minimized => {
+            let Some((x, y)) = crate::viewport::physical_pixel(
+                [*mouse_x, *mouse_y],
+                window.size(),
+                window.size_in_pixels(),
+            ) else {
+                return Ok(());
+            };
+            let amount = usize::try_from(integer_y.unsigned_abs())
+                .unwrap_or(0)
+                .min(32);
+            let scroll = if app.ui.sidebar.contains(x, y) {
+                &mut app.sidebar_scroll
+            } else if app.ui.review.contains(x, y) {
+                &mut app.review_scroll
+            } else {
+                return Ok(());
+            };
+            *scroll = if *integer_y > 0 {
+                scroll.saturating_sub(amount)
+            } else {
+                scroll.saturating_add(amount)
+            };
+            Ok(())
+        }
+        Event::TextInput { text, .. } if app.tools.draft_text().is_some() => {
+            app.tools.input(text).map_err(|error| error.to_string())
+        }
+        Event::KeyDown {
+            keycode: Some(Keycode::A),
+            keymod,
+            repeat: false,
+            ..
+        } if app.tools.draft_text().is_some()
+            && keymod.intersects(sdl3::keyboard::Mod::LCTRLMOD | sdl3::keyboard::Mod::RCTRLMOD) =>
+        {
+            while app.tools.draft_text().is_some_and(|text| !text.is_empty()) {
+                app.tools.backspace();
+            }
+            Ok(())
         }
         Event::KeyDown {
             keycode: Some(key),
@@ -642,22 +1140,30 @@ fn native_event(
 }
 
 fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
+    // Text focus owns every key before global shortcuts. Unicode text arrives
+    // exclusively through SDL TextInput, never by guessing keycode characters.
+    if app.tools.draft_text().is_some() {
+        return match key {
+            Keycode::Return | Keycode::KpEnter => app.control(Control::ApplyDraft),
+            Keycode::Escape => app.control(Control::CancelDraft),
+            Keycode::Backspace => {
+                app.tools.backspace();
+                Ok(())
+            }
+            _ => Ok(()),
+        };
+    }
     match key {
         Keycode::Return | Keycode::KpEnter => app.action(Action::Accept),
         Keycode::Escape => app.action(Action::Cancel),
         Keycode::Z => app.action(Action::Undo),
         Keycode::Y => app.action(Action::Redo),
         Keycode::R => app.action(Action::Reopen),
-        Keycode::F => app.field(),
-        Keycode::Left => app.nudge([-1, 0]),
-        Keycode::Right => app.nudge([1, 0]),
-        Keycode::Up => app.nudge([0, -1]),
-        Keycode::Down => app.nudge([0, 1]),
-        Keycode::T => {
-            app.terrain = !app.terrain;
-            println!("terrain mode={}", app.terrain);
-            Ok(())
-        }
+        Keycode::Left if app.tools.mode() == ToolMode::Move => app.nudge([-1, 0]),
+        Keycode::Right if app.tools.mode() == ToolMode::Move => app.nudge([1, 0]),
+        Keycode::Up if app.tools.mode() == ToolMode::Move => app.nudge([0, -1]),
+        Keycode::Down if app.tools.mode() == ToolMode::Move => app.nudge([0, 1]),
+        Keycode::T => app.control(Control::Terrain),
         Keycode::W | Keycode::A | Keycode::S | Keycode::D => {
             let change = match key {
                 Keycode::W => [0.0, -1.0],
@@ -683,6 +1189,7 @@ fn native_present(
     renderer: &mut WgpuRenderer,
     window: &mut sdl3::video::Window,
 ) -> Result<bool> {
+    app.refresh_ui();
     let title = if let Some(reason) = &app.blocked {
         format!("Tilewright BLOCKED: {reason} | Q quit")
     } else {

@@ -68,7 +68,11 @@ fn application() -> (tempfile::TempDir, Application) {
         evidence,
         view,
         prepared,
-        terrain: false,
+        tools: tilewright_editor_ui::tools::ToolState::default(),
+        ui: crate::workspace_ui::WorkspaceUi::new((320, 240), (320, 240)),
+        notice: None,
+        sidebar_scroll: 0,
+        review_scroll: 0,
         blocked: None,
     };
     (temporary, app)
@@ -101,21 +105,18 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
 }
 
 #[test]
-fn failed_empty_undo_refreshes_pending_scene_and_invalidates_its_pick_generation() {
+fn rejected_pending_undo_refreshes_actual_pending_scene_and_invalidates_old_picks() {
     let (_temporary, mut app) = application();
-    let original = app.session.world().source_digest();
-    let before = app.frame(false).unwrap().rgba8;
     app.select_visible_object(false).unwrap();
     app.nudge([1, 0]).unwrap();
-    assert_ne!(app.prepared.source_revision, original);
+    let pending = app.session.world().source_digest();
     let pending_generation = app.view.frame_revision;
     let error = app.action(Action::Undo).unwrap_err();
-    assert!(error.contains("NothingToUndo"), "{error}");
-    assert!(app.session.history().pending().is_none());
-    assert_eq!(app.session.world().source_digest(), original);
-    assert_eq!(app.prepared.source_revision, original);
+    assert!(error.contains("pending"), "{error}");
+    assert!(app.session.history().pending().is_some());
+    assert_eq!(app.session.world().source_digest(), pending);
+    assert_eq!(app.prepared.source_revision, pending);
     assert!(app.view.frame_revision > pending_generation);
-    assert_eq!(app.frame(false).unwrap().rgba8, before);
     assert!(app.prepared.pick(pending_generation, 1, 1, false).is_err());
 }
 
@@ -132,4 +133,64 @@ fn background_click_cannot_paint_an_earlier_cell_selection() {
     assert!(result.unwrap_err().contains("no selectable semantic hit"));
     assert!(app.session.history().pending().is_none());
     assert_eq!(app.session.world().source_digest(), original);
+}
+
+#[test]
+fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation() {
+    use crate::workspace_ui::Control;
+    use sdl3::keyboard::Keycode;
+    let (_temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    let generation = app.session.generation();
+    let camera = app.view.camera.center;
+    let draft = app.tools.draft_text().unwrap().to_owned();
+    for key in [
+        Keycode::Q,
+        Keycode::Z,
+        Keycode::Y,
+        Keycode::W,
+        Keycode::A,
+        Keycode::S,
+        Keycode::D,
+        Keycode::Left,
+    ] {
+        super::native_key(&mut app, key).unwrap();
+    }
+    app.refresh_ui();
+    assert_eq!(app.tools.draft_text(), Some(draft.as_str()));
+    assert_eq!(app.session.generation(), generation);
+    assert_eq!(app.view.camera.center, camera);
+    assert!(app.session.history().pending().is_none());
+    app.tools.input(" qzywasd").unwrap();
+    app.refresh_ui();
+    assert_eq!(app.session.generation(), generation);
+    assert!(app.tools.draft_text().unwrap().ends_with(" qzywasd"));
+    super::native_key(&mut app, Keycode::Escape).unwrap();
+    assert!(app.tools.draft_text().is_none());
+    assert_eq!(app.session.generation(), generation);
+}
+
+#[test]
+fn terrain_requires_explicit_palette_and_panel_controls_never_publish() {
+    use crate::workspace_ui::Control;
+    let (_temporary, mut app) = application();
+    app.select_empty_cell().unwrap();
+    assert!(app.paint().unwrap_err().contains("Choose"));
+    let revision = app.session.history().document().revision();
+    let choice = tilewright_editor_ui::tools::terrain_palette(app.session.catalog())
+        .into_iter()
+        .next_back()
+        .unwrap();
+    app.control(Control::Palette {
+        grid: choice.grid,
+        prototype: choice.prototype,
+    })
+    .unwrap();
+    app.refresh_ui();
+    assert_eq!(app.session.history().document().revision(), revision);
+    assert!(app.session.history().pending().is_none());
+    app.paint().unwrap();
+    assert!(app.session.history().pending().is_some());
+    assert_eq!(app.session.history().document().revision(), revision);
 }
