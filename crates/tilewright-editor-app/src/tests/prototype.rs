@@ -557,22 +557,24 @@ fn oversized_review_blocks_button_enter_and_scripted_accept_without_losing_pendi
         let schema_path = world.join("profile/schema/object.jsonc");
         let mut schema: serde_json::Value =
             serde_json::from_slice(&fs::read(&schema_path).unwrap()).unwrap();
-        schema["fields"]["label"]["max_length"] = serde_json::Value::from(50_000);
+        schema["fields"]["label"]["max_length"] = serde_json::Value::from(80_000);
         fs::write(schema_path, serde_json::to_vec_pretty(&schema).unwrap()).unwrap();
         let path = world.join("planes/main/layers/0/0_0.jsonc");
         let mut source: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        source["objects"][0]["fields"]["label"] = serde_json::Value::String("a".repeat(40_000));
+        source["objects"][0]["fields"]["label"] = serde_json::Value::String("a".repeat(70_000));
         fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
     });
     let path = temporary
         .path()
         .join("world/planes/main/layers/0/0_0.jsonc");
     let original = fs::read(&path).unwrap();
+    // A valid large existing value makes the complete before-image exceed the
+    // review budget. Keep the new value small enough for unchanged Session admission.
     app.action(Action::SetField {
         uid: "marker_1".into(),
         field: "label".into(),
-        value: serde_json::Value::String("b".repeat(40_000)),
+        value: serde_json::Value::String("b".repeat(100)),
         expected: app.session.history().document().revision(),
     })
     .unwrap();
