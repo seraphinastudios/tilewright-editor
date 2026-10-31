@@ -55,6 +55,8 @@ jobs:
         shell: pwsh
         run: python tools/prepare-font-pack.py prepare --acquire --output "$env:RUNNER_TEMP/unicode-font-pack"
       - run: cargo test --locked --workspace --all-targets
+        env:
+          TILEWRIGHT_UNICODE_FONT_ROOT: ${{ runner.temp }}/unicode-font-pack
       - name: Install pinned packaging tools
         shell: pwsh
         run: |
