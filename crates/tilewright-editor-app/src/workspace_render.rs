@@ -95,6 +95,9 @@ pub fn fit_text(system: &mut TextSystem, text: &str, width: u32, height: u32) ->
         return text.into();
     }
     for &end in layout.grapheme_boundaries().iter().rev() {
+        if !cluster_boundary(&layout, end) {
+            continue;
+        }
         let candidate = format!("{}...", &text[..end]);
         if system
             .layout(&candidate, size, None)
@@ -121,6 +124,7 @@ pub fn wrap_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -
             .rev()
             .find(|&end| {
                 end > 0
+                    && cluster_boundary(&layout, end)
                     && system
                         .layout(&remaining[..end], text_size(height), None)
                         .is_ok_and(|l| l.size()[0] <= available)
@@ -132,6 +136,12 @@ pub fn wrap_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -
         remaining = &remaining[end..];
     }
     lines
+}
+fn cluster_boundary(layout: &UnicodeLayout, byte: usize) -> bool {
+    !layout
+        .clusters()
+        .iter()
+        .any(|cluster| cluster.bytes.start < byte && byte < cluster.bytes.end)
 }
 pub fn renderer_cursor(cursor: tilewright_editor_ui::text_input::TextCursor) -> TextCursor {
     TextCursor {
@@ -440,5 +450,18 @@ mod tests {
         let layout = system.layout("e\u{301}", 18.0, None).unwrap();
         assert_eq!(layout.grapheme_boundaries(), &[0, 3]);
         assert!(!composition_rects(&layout, 1..3).is_empty());
+    }
+    #[test]
+    fn elision_preserves_original_grapheme_and_shaping_cluster_boundaries() {
+        let mut system = crate::font_pack::test_system();
+        let text = "office e\u{301} العربية";
+        let layout = system.layout(text, 18.0, None).unwrap();
+        for width in 20..80 {
+            let fitted = fit_text(&mut system, text, width, 26);
+            if let Some(prefix) = fitted.strip_suffix("...") {
+                assert!(layout.grapheme_boundaries().contains(&prefix.len()));
+                assert!(cluster_boundary(&layout, prefix.len()));
+            }
+        }
     }
 }
