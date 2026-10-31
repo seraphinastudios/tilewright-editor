@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 //! Local input only; every edit leaves this module as a Session action.
+use crate::text_input::{TextInput, TextInputSnapshot, TextRevision, TextSelection};
 use crate::{
     Action, SelectionKey,
     inspector::{
@@ -52,7 +53,7 @@ enum DraftKind {
 struct Draft {
     stamp: SnapshotStamp,
     kind: DraftKind,
-    text: String,
+    input: TextInput,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -60,6 +61,7 @@ pub struct ToolState {
     mode: ToolMode,
     terrain: Option<TerrainChoice>,
     draft: Option<Draft>,
+    next_draft: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,10 +122,11 @@ impl ToolState {
         if text.len() > MAX_INPUT_BYTES {
             return Err(ToolError("Input exceeds byte budget"));
         }
+        let input = self.new_input(text)?;
         self.draft = Some(Draft {
             stamp,
             kind: DraftKind::Field(field.into()),
-            text,
+            input,
         });
         Ok(())
     }
@@ -141,39 +144,80 @@ impl ToolState {
         else {
             return Err(ToolError("Selection has no movement capability"));
         };
+        let input = self.new_input(format!("{x},{y}"))?;
         self.draft = Some(Draft {
             stamp: inspector
                 .stamp
                 .clone()
                 .ok_or(ToolError("No valid selection"))?,
             kind: DraftKind::Move,
-            text: format!("{x},{y}"),
+            input,
         });
         Ok(())
     }
-    /// Append complete UTF-8 input atomically; rejection preserves the draft.
+    /// Replace selection with exact UTF-8 atomically; commit any active preedit.
     pub fn input(&mut self, text: &str) -> Result<(), ToolError> {
-        let draft = self.draft.as_mut().ok_or(ToolError("No input draft"))?;
-        if draft.text.len().saturating_add(text.len()) > MAX_INPUT_BYTES
-            || text.chars().any(char::is_control)
-        {
-            return Err(ToolError(
-                "Input exceeds byte budget or contains control characters",
-            ));
-        }
-        draft.text.push_str(text);
-        Ok(())
+        self.input_mut()?.input(text)
     }
     pub fn backspace(&mut self) {
         if let Some(draft) = &mut self.draft {
-            draft.text.pop();
+            // Legacy callers need no error result. Composition blocks deletion;
+            // native dispatch handles IME keys before calling this method.
+            let _ = draft.input.backspace();
         }
     }
     pub fn cancel(&mut self) {
         self.draft = None;
     }
     pub fn draft_text(&self) -> Option<&str> {
-        self.draft.as_ref().map(|draft| draft.text.as_str())
+        self.draft.as_ref().map(|draft| draft.input.text())
+    }
+    pub fn draft_snapshot(&self) -> Option<TextInputSnapshot> {
+        self.draft.as_ref().map(|draft| draft.input.snapshot())
+    }
+    pub fn input_revision(&self) -> Option<TextRevision> {
+        self.draft.as_ref().map(|draft| draft.input.revision())
+    }
+    pub fn is_composing(&self) -> bool {
+        self.draft
+            .as_ref()
+            .is_some_and(|draft| draft.input.is_composing())
+    }
+    pub fn set_selection(
+        &mut self,
+        selection: TextSelection,
+        presented: TextRevision,
+    ) -> Result<(), ToolError> {
+        self.input_mut()?.set_selection(selection, presented)
+    }
+    pub fn select_all(&mut self) -> Result<(), ToolError> {
+        self.input_mut()?.select_all()
+    }
+    pub fn delete(&mut self) -> Result<(), ToolError> {
+        self.input_mut()?.delete()
+    }
+    pub fn update_preedit(&mut self, text: &str, start: i32, length: i32) -> Result<(), ToolError> {
+        self.input_mut()?.update_preedit(text, start, length)
+    }
+    pub fn cancel_preedit(&mut self) -> Result<(), ToolError> {
+        self.input_mut()?.cancel_preedit()
+    }
+
+    fn input_mut(&mut self) -> Result<&mut TextInput, ToolError> {
+        self.draft
+            .as_mut()
+            .map(|draft| &mut draft.input)
+            .ok_or(ToolError("No input draft"))
+    }
+
+    fn new_input(&mut self, text: String) -> Result<TextInput, ToolError> {
+        let identity = self
+            .next_draft
+            .checked_add(1)
+            .ok_or(ToolError("Draft identity exhausted"))?;
+        let input = TextInput::with_identity(text, identity)?;
+        self.next_draft = identity;
+        Ok(input)
     }
     pub fn build_action(
         &self,
@@ -187,6 +231,9 @@ impl ToolState {
                 "Draft selection, generation or source revision is stale",
             ));
         }
+        if draft.input.is_composing() {
+            return Err(ToolError("Finish or cancel composition before review"));
+        }
         let SelectionKey::Object { uid } = &draft.stamp.key else {
             return Err(ToolError("Draft requires an object"));
         };
@@ -197,7 +244,7 @@ impl ToolState {
                     .iter()
                     .find(|row| row.name == field && row.editable)
                     .ok_or(ToolError("Field is no longer editable"))?;
-                let value = parse_scalar(&row.spec.field_type, &draft.text, inspector)?;
+                let value = parse_scalar(&row.spec.field_type, draft.input.text(), inspector)?;
                 Ok(Action::SetField {
                     uid: uid.clone(),
                     field: field.clone(),
@@ -213,7 +260,8 @@ impl ToolState {
                     return Err(ToolError("Selection has no movement capability"));
                 }
                 let (x, y) = draft
-                    .text
+                    .input
+                    .text()
                     .split_once(',')
                     .ok_or(ToolError("Enter coordinates as x,y"))?;
                 let x = x

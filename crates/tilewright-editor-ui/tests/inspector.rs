@@ -292,6 +292,44 @@ fn utf8_input_boundaries_are_atomic_and_backspace_removes_a_character() {
 }
 
 #[test]
+fn composition_never_reaches_an_action_and_draft_identity_fences_old_frames() {
+    let (_dir, document, catalog) = fixture();
+    let key = key();
+    let view = inspect(
+        document.world(),
+        &catalog,
+        Some(&key),
+        4,
+        document.revision(),
+    );
+    let mut tools = ToolState::default();
+    tools.begin_field(&view, "label", false).unwrap();
+    tools.select_all().unwrap();
+    tools.input("e\u{301} العربية עברית क्ष 👨‍👩‍👧‍👦").unwrap();
+    let committed = tools.draft_text().unwrap().to_owned();
+    let old = tools.input_revision().unwrap();
+    let source = document.revision();
+    tools.update_preedit("青", 1, 0).unwrap();
+    assert!(tools.build_action(&view, false).is_err());
+    assert_eq!(tools.draft_text(), Some(committed.as_str()));
+    assert_eq!(document.revision(), source);
+    tools.cancel_preedit().unwrap();
+    assert!(
+        matches!(tools.build_action(&view, false).unwrap(), Action::SetField { value, .. } if value.as_str() == Some(committed.as_str()))
+    );
+    tools.begin_field(&view, "label", false).unwrap();
+    assert!(
+        tools
+            .set_selection(
+                tilewright_editor_ui::text_input::TextSelection::default(),
+                old
+            )
+            .is_err()
+    );
+    assert!(tools.build_action(&view, false).is_ok());
+}
+
+#[test]
 fn large_authoritative_schemas_are_bounded_and_report_truncation() {
     let (dir, document, _catalog) = fixture();
     drop(document);
