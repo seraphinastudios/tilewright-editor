@@ -139,7 +139,9 @@ pub fn inspect<'a>(
                     Some("Field has no editing capability")
                 } else if !choices_bounded(world, &spec.field_type) {
                     Some("Field choices exceed input budget")
-                } else if current.is_some_and(|v| scalar_text(v).len() > MAX_INPUT_BYTES) {
+                } else if current.is_some_and(
+                    |v| matches!(v, FieldValue::String(text) if text.len() > MAX_INPUT_BYTES),
+                ) {
                     Some("Current value exceeds input budget")
                 } else if current.is_none() {
                     Some("Optional field is absent; enter a value to add it")

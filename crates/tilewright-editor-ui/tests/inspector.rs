@@ -38,6 +38,7 @@ fn fixture() -> (tempfile::TempDir, WorldDocument, PreviewCatalog) {
     }}"#).unwrap();
     let path = dir.path().join("preview.jsonc");
     let mut catalog: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    catalog["view"]["bounds"] = serde_json::json!([-1, 0, 9, 6]);
     catalog["editing"]["fields"] = serde_json::json!(
         [
             "flag",
