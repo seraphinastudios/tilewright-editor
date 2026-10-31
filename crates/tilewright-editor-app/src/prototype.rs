@@ -55,6 +55,9 @@ struct Application {
     unsupported_runs: usize,
     presented_generation: Option<u64>,
     blocked: Option<String>,
+    text: tilewright_render_ui::unicode::TextSystem,
+    displayed_text: Option<crate::workspace_render::EditableGeometry>,
+    presented_text_revision: Option<tilewright_editor_ui::text_input::TextRevision>,
 }
 
 /// This command is intentionally a deployment seam, not arbitrary recovery-path
@@ -74,6 +77,12 @@ pub fn run(arguments: &[String]) -> Result<()> {
     }
     let reference = arguments.iter().any(|argument| argument == "--reference");
     let demo = arguments.iter().any(|argument| argument == "--demo-script");
+    let font_path = arguments
+        .iter()
+        .position(|arg| arg == "--font-pack")
+        .and_then(|index| arguments.get(index + 1))
+        .ok_or("missing --font-pack PATH; use the trusted packaged font pack")?;
+    let text = crate::font_pack::load(std::path::Path::new(font_path), &world)?;
     let document = WorldDocument::open_prototype(&world).map_err(|error| error.to_string())?;
     let (catalog, resources) = loader::load(
         document.source(),
@@ -110,6 +119,9 @@ pub fn run(arguments: &[String]) -> Result<()> {
         unsupported_runs: 0,
         presented_generation: None,
         blocked: None,
+        text,
+        displayed_text: None,
+        presented_text_revision: None,
     };
     println!(
         "{}\n{}",
@@ -169,6 +181,19 @@ impl Application {
             PreviewLimits::default(),
         )
         .map_err(|error| error.to_string())?;
+        self.prepared = tilewright_editor_preview::prepare(
+            self.session.world(),
+            self.session.catalog(),
+            self.session.resources(),
+            &self.view,
+            PreviewLimits::default(),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn reflow(&mut self) -> Result<()> {
+        self.presented_generation = None;
         self.prepared = tilewright_editor_preview::prepare(
             self.session.world(),
             self.session.catalog(),
@@ -357,6 +382,7 @@ impl Application {
 
     fn displayed_input_ready(&self) -> bool {
         self.presented_generation == Some(self.view.frame_revision)
+            && self.presented_text_revision == self.tools.input_revision()
     }
 
     fn refresh_ui(&mut self) {
@@ -364,6 +390,16 @@ impl Application {
         self.toolbar(&mut ui);
         self.sidebar(&mut ui);
         self.review(&mut ui);
+        for widget in &mut ui.widgets {
+            if widget.editable.is_none() {
+                widget.text = crate::workspace_render::fit_text(
+                    &mut self.text,
+                    &widget.text,
+                    widget.layout.width,
+                    widget.layout.height,
+                );
+            }
+        }
         self.ui = ui;
     }
 
@@ -587,12 +623,7 @@ impl Application {
                     _ => inspector::display_text(&inspector::scalar_text(value)),
                 },
             );
-            let supported = row.current.is_none_or(|value| match value {
-                tilewright_source::FieldValue::String(text) => {
-                    crate::workspace_render::supports_text(text)
-                }
-                _ => true,
-            });
+            let supported = true;
             rows.push((
                 format!("{} = {}", row.name, value),
                 Some(Control::Field(row.name.into())),
@@ -631,19 +662,19 @@ impl Application {
         let width = ui.sidebar_width();
         let rows = self.inspector_rows();
         let mut y = 56;
-        if let Some(text) = self.tools.draft_text() {
-            let supported = crate::workspace_render::supports_text(text);
-            ui.widget(
+        if let Some(snapshot) = self.tools.draft_snapshot() {
+            let supported = self
+                .text
+                .layout(&snapshot.display_text, 18.0, None)
+                .is_ok_and(|layout| layout.missing_glyphs().is_empty());
+            ui.editable(
                 Rect {
                     x,
                     y,
                     width,
                     height: 30,
                 },
-                crate::workspace_render::tail_text(text, width, 30),
-                None,
-                true,
-                true,
+                snapshot,
             );
             y += 34;
             ui.widget(
@@ -654,7 +685,7 @@ impl Application {
                     height: 22,
                 },
                 if supported {
-                    "Ctrl+A clears / Enter reviews"
+                    "Ctrl+A selects / Enter reviews"
                 } else {
                     "Unsupported text; cannot review"
                 },
@@ -799,7 +830,7 @@ impl Application {
         .into()
     }
 
-    fn review_lines(&self, width: u32) -> Vec<String> {
+    fn review_lines(&mut self, width: u32) -> Vec<String> {
         let mut details = Vec::new();
         if let Some(reason) = &self.blocked {
             details.push(format!("Rendering blocked: {reason}"));
@@ -829,7 +860,12 @@ impl Application {
         details
             .into_iter()
             .flat_map(|line| {
-                crate::workspace_render::wrap_text(&inspector::display_text(&line), width, 20)
+                crate::workspace_render::wrap_text(
+                    &mut self.text,
+                    &inspector::display_text(&line),
+                    width,
+                    20,
+                )
             })
             .collect()
     }
@@ -903,6 +939,7 @@ impl Application {
                 }
                 Ok(())
             }
+            Control::EditDraft => Ok(()),
             Control::CancelDraft => {
                 self.tools.cancel();
                 Ok(())
@@ -921,35 +958,20 @@ impl Application {
                         .tools
                         .begin_move(&inspected, unavailable)
                         .map_err(|error| error.to_string()),
-                    Control::Field(field) => {
-                        let supported = inspected
-                            .rows
-                            .iter()
-                            .find(|row| row.name == field)
-                            .and_then(|row| row.current)
-                            .is_none_or(|value| match value {
-                                tilewright_source::FieldValue::String(text) => {
-                                    crate::workspace_render::supports_text(text)
-                                }
-                                _ => true,
-                            });
-                        if !supported {
-                            return Err(
-                                "field is read-only: unsupported text/shaping; source preserved"
-                                    .into(),
-                            );
-                        }
-                        self.tools
-                            .begin_field(&inspected, &field, unavailable)
-                            .map_err(|error| error.to_string())
-                    }
+                    Control::Field(field) => self
+                        .tools
+                        .begin_field(&inspected, &field, unavailable)
+                        .map_err(|error| error.to_string()),
                     _ => {
-                        if !self
-                            .tools
-                            .draft_text()
-                            .is_some_and(crate::workspace_render::supports_text)
-                        {
-                            return Err("unsupported text/shaping: review is blocked; draft and source preserved".into());
+                        let snapshot = self.tools.draft_snapshot().ok_or("no draft")?;
+                        let layout = self
+                            .text
+                            .layout(&snapshot.display_text, 18.0, None)
+                            .map_err(|error| error.to_string())?;
+                        if !layout.missing_glyphs().is_empty() {
+                            return Err(
+                                "missing font glyphs: review blocked; draft preserved".into()
+                            );
                         }
                         let action = self
                             .tools
@@ -1330,8 +1352,18 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
     let mut dirty = true;
     let mut phase = None;
     let mut minimized = false;
+    let mut input = crate::native_input::NativeInput::new(window.id());
     'running: loop {
-        for event in events.poll_iter() {
+        let batch: Vec<Event> = events.poll_iter().collect();
+        input.begin_batch(batch.iter().any(|event| matches!(event,
+            Event::TextInput { window_id, .. } | Event::TextEditing { window_id, .. } if *window_id == input.window_id)));
+        for event in batch {
+            if event
+                .get_window_id()
+                .is_some_and(|id| id != input.window_id)
+            {
+                continue;
+            }
             if matches!(
                 event,
                 Event::Quit { .. }
@@ -1352,20 +1384,44 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             {
                 break 'running;
             }
-            let result = native_event(&mut app, &mut renderer, &window, &event, &mut minimized);
+            let composing = app.tools.is_composing();
+            let result = native_text_event(&mut app, &event, &mut input).unwrap_or_else(|| {
+                native_event(&mut app, &mut renderer, &window, &event, &mut minimized)
+            });
+            if composing && !app.tools.is_composing() && !matches!(event, Event::TextInput { .. }) {
+                crate::native_input::clear_composition(&window)?;
+            }
+            if matches!(event, Event::MouseButtonDown { .. }) && app.tools.draft_text().is_some() {
+                input.focused = true;
+            }
             if matches!(
                 event,
                 Event::MouseButtonDown { .. }
                     | Event::MouseWheel { .. }
                     | Event::TextInput { .. }
+                    | Event::TextEditing { .. }
                     | Event::KeyDown { .. }
             ) {
                 app.presented_generation = None;
             }
-            if app.tools.draft_text().is_some() {
-                video.text_input().start(&window);
-            } else {
-                video.text_input().stop(&window);
+            let should_start = input.focused && !minimized && app.tools.draft_text().is_some();
+            if should_start != input.started {
+                if should_start {
+                    video
+                        .text_input()
+                        .start_with_options(
+                            &window,
+                            sdl3::keyboard::TextInputOptions {
+                                multiline: Some(false),
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    crate::native_input::clear_composition(&window)?;
+                    video.text_input().stop(&window);
+                }
+                input.started = should_start;
             }
             dirty = true;
             if let Err(error) = result {
@@ -1388,9 +1444,36 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             {
                 println!("native-phase={name}");
             }
+            if input.started {
+                if let Some(geometry) = &app.displayed_text {
+                    if let Some(caret) =
+                        geometry
+                            .layout
+                            .caret(crate::workspace_render::renderer_cursor(
+                                geometry.snapshot.display_selection.focus,
+                            ))
+                    {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let area = sdl3::rect::Rect::new(
+                            geometry.clip.x as i32,
+                            geometry.clip.y as i32,
+                            geometry.clip.width as u32,
+                            geometry.clip.height as u32,
+                        );
+                        #[allow(clippy::cast_possible_truncation)]
+                        let cursor = (geometry.origin[0] + caret.x - geometry.clip.x)
+                            .clamp(0.0, geometry.clip.width)
+                            as i32;
+                        video.text_input().set_rect(&window, area, cursor);
+                    }
+                }
+            }
             dirty = false;
         }
         std::thread::sleep(Duration::from_millis(16));
+    }
+    if input.started {
+        video.text_input().stop(&window);
     }
     pollster::block_on(renderer.finish()).map_err(|error| error.to_string())?;
     println!("native window closed cleanly");
@@ -1410,6 +1493,149 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
         .get(step)
         .copied()
     }
+}
+
+/// Testable routing uses real SDL event values without initializing SDL/GPU.
+fn native_text_event(
+    app: &mut Application,
+    event: &Event,
+    input: &mut crate::native_input::NativeInput,
+) -> Option<Result<()>> {
+    if event
+        .get_window_id()
+        .is_some_and(|id| id != input.window_id)
+    {
+        return Some(Ok(()));
+    }
+    match event {
+        Event::Window {
+            win_event: WindowEvent::FocusLost | WindowEvent::Minimized,
+            ..
+        } => {
+            input.lose_focus();
+            let result = if app.tools.draft_text().is_some() { app.tools.cancel_preedit().map_err(|error| error.to_string()) } else { Ok(()) };
+            if matches!(
+                event,
+                Event::Window {
+                    win_event: WindowEvent::Minimized,
+                    ..
+                }
+            ) {
+                return None;
+            }
+            Some(result)
+        }
+        Event::KeyUp {
+            keycode: Some(Keycode::Return | Keycode::KpEnter),
+            ..
+        } => {
+            input.return_released(app.tools.is_composing());
+            Some(Ok(()))
+        }
+        Event::TextInput { text, .. } => {
+            if app.tools.is_composing() { input.text_activity(); }
+            Some(if input.focused && app.tools.draft_text().is_some() {
+                app.tools.input(text).map_err(|error| error.to_string())
+            } else {
+                Ok(())
+            })
+        }
+        Event::TextEditing {
+            text,
+            start,
+            length,
+            ..
+        } => {
+            input.text_activity();
+            Some(if input.focused && app.tools.draft_text().is_some() {
+                app.tools
+                    .update_preedit(text, *start, *length)
+                    .map_err(|error| error.to_string())
+            } else {
+                Ok(())
+            })
+        }
+        Event::KeyDown {
+            keycode: Some(key),
+            keymod,
+            repeat,
+            ..
+        } => {
+            if matches!(key, Keycode::Return | Keycode::KpEnter)
+                && (!input.submit_allowed(app.tools.is_composing()) || *repeat)
+            {
+                return Some(Ok(()));
+            }
+            if app.tools.draft_text().is_none() {
+                return None;
+            }
+            if !input.focused {
+                return Some(Ok(()));
+            }
+            let command = keymod.intersects(
+                sdl3::keyboard::Mod::LCTRLMOD
+                    | sdl3::keyboard::Mod::RCTRLMOD
+                    | sdl3::keyboard::Mod::LGUIMOD
+                    | sdl3::keyboard::Mod::RGUIMOD,
+            );
+            let shift =
+                keymod.intersects(sdl3::keyboard::Mod::LSHIFTMOD | sdl3::keyboard::Mod::RSHIFTMOD);
+            Some(match key {
+                Keycode::A if command => app.tools.select_all().map_err(|error| error.to_string()),
+                Keycode::Left | Keycode::Right | Keycode::Home | Keycode::End
+                    if !app.tools.is_composing() =>
+                {
+                    visual_move(app, *key, shift)
+                }
+                Keycode::Delete => app.tools.delete().map_err(|error| error.to_string()),
+                Keycode::Escape if app.tools.is_composing() => app
+                    .tools
+                    .cancel_preedit()
+                    .map_err(|error| error.to_string()),
+                _ => native_key(app, *key),
+            })
+        }
+        _ => None,
+    }
+}
+fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> {
+    use tilewright_editor_ui::text_input::TextSelection;
+    use tilewright_render_ui::unicode::VisualMotion;
+    if !app.displayed_input_ready() {
+        return Err("caret movement waits for displayed current draft".into());
+    }
+    let geometry = app
+        .displayed_text
+        .as_ref()
+        .ok_or("no displayed text layout")?;
+    if Some(geometry.revision) != app.tools.input_revision() {
+        return Err("stale text layout".into());
+    }
+    let motion = match key {
+        Keycode::Left => VisualMotion::Left,
+        Keycode::Right => VisualMotion::Right,
+        Keycode::Home => VisualMotion::Home,
+        _ => VisualMotion::End,
+    };
+    let focus = crate::workspace_render::model_cursor(geometry.layout.move_visual(
+        crate::workspace_render::renderer_cursor(geometry.snapshot.display_selection.focus),
+        motion,
+    ));
+    let focus = geometry
+        .snapshot
+        .committed_cursor(focus)
+        .map_err(|error| error.to_string())?;
+    let selection = if extend {
+        TextSelection {
+            anchor: geometry.snapshot.selection.anchor,
+            focus,
+        }
+    } else {
+        TextSelection::caret(focus)
+    };
+    app.tools
+        .set_selection(selection, geometry.revision)
+        .map_err(|error| error.to_string())
 }
 
 fn native_event(
@@ -1443,7 +1669,7 @@ fn native_event(
             app.ui = WorkspaceUi::new(window.size(), size);
             app.view.camera.width = size.0;
             app.view.camera.height = size.1;
-            app.rebuild()
+            app.reflow()
         }
         Event::MouseButtonDown {
             mouse_btn: MouseButton::Left,
@@ -1481,22 +1707,6 @@ fn native_event(
             };
             Ok(())
         }
-        Event::TextInput { text, .. } if app.tools.draft_text().is_some() => {
-            app.tools.input(text).map_err(|error| error.to_string())
-        }
-        Event::KeyDown {
-            keycode: Some(Keycode::A),
-            keymod,
-            repeat: false,
-            ..
-        } if app.tools.draft_text().is_some()
-            && keymod.intersects(sdl3::keyboard::Mod::LCTRLMOD | sdl3::keyboard::Mod::RCTRLMOD) =>
-        {
-            while app.tools.draft_text().is_some_and(|text| !text.is_empty()) {
-                app.tools.backspace();
-            }
-            Ok(())
-        }
         Event::KeyDown {
             keycode: Some(key),
             repeat: false,
@@ -1527,6 +1737,35 @@ fn native_pointer(
         .ok_or("pointer outside physical viewport")?;
     app.refresh_ui();
     match app.ui.hit(px, py) {
+        Hit::Control(Control::EditDraft) => {
+            let geometry = app
+                .displayed_text
+                .as_ref()
+                .ok_or("no displayed text layout")?;
+            if Some(geometry.revision) != app.tools.input_revision() {
+                return Err("stale text layout".into());
+            }
+            if app.tools.is_composing() {
+                return app
+                    .tools
+                    .cancel_preedit()
+                    .map_err(|error| error.to_string());
+            }
+            let cursor = geometry.layout.hit([
+                position[0] - geometry.origin[0],
+                position[1] - geometry.origin[1],
+            ]);
+            let cursor = geometry
+                .snapshot
+                .committed_cursor(crate::workspace_render::model_cursor(cursor))
+                .map_err(|error| error.to_string())?;
+            app.tools
+                .set_selection(
+                    tilewright_editor_ui::text_input::TextSelection::caret(cursor),
+                    geometry.revision,
+                )
+                .map_err(|error| error.to_string())
+        }
         Hit::Control(control) => app.control(control),
         Hit::World(x, y) => {
             app.tools.cancel();
@@ -1630,6 +1869,8 @@ fn native_present(
     ) {
         Ok(proof) => {
             app.presented_generation = Some(app.view.frame_revision);
+            app.presented_text_revision = app.tools.input_revision();
+            app.displayed_text = presentation.editable;
             println!(
                 "native presented {}x{} backend={} adapter={}",
                 proof.width,
@@ -1656,6 +1897,7 @@ fn native_present(
 
 fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {
     let mut presentation = crate::workspace_render::compose(
+        &mut app.text,
         &app.ui,
         &app.prepared.scene,
         app.prepared.resources.clone(),
@@ -1665,6 +1907,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         app.unsupported_runs = presentation.unsupported_runs;
         app.refresh_ui();
         presentation = crate::workspace_render::compose(
+            &mut app.text,
             &app.ui,
             &app.prepared.scene,
             app.prepared.resources.clone(),

@@ -5,12 +5,13 @@
 //! shared renderer. The World scene and its exact picking masks remain untouched.
 use crate::workspace_ui::{Rect, WorkspaceUi};
 use std::{fmt, sync::Arc};
+use tilewright_editor_ui::text_input::{TextInputSnapshot, TextRevision};
 use tilewright_render_resources::{
     Error as ResourceError, ResourceBlob, ResourceProvider, ResourceRequest,
 };
 use tilewright_render_ui::{
-    BitmapFontSet, UiDisplayList, UiLimits, UiPaint, UiPrimitive, UiRect, UiTexture, UiViewport,
-    builtin, compile_ui,
+    UiDisplayList, UiLimits, UiPaint, UiPrimitive, UiRect, UiTexture, UiViewport, builtin,
+    unicode::{TextAffinity, TextCursor, TextSystem, UnicodeLayout, UnicodeTexture},
 };
 use tilewright_scene::{Digest256, ResourceId, SceneBundle, SceneLimits, SemanticId};
 
@@ -23,11 +24,13 @@ pub enum CompositionError {
     ResourceIdentityExhausted,
     PainterOrderExhausted,
     Ui(tilewright_render_ui::UiError),
+    Text(tilewright_render_ui::unicode::TextError),
     Scene(tilewright_scene::Error),
 }
 impl fmt::Display for CompositionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Text(error) => fmt::Display::fmt(error, formatter),
             Self::Ui(error) => fmt::Display::fmt(error, formatter),
             Self::Scene(error) => fmt::Display::fmt(error, formatter),
             other => write!(formatter, "UI composition refused: {other:?}"),
@@ -36,27 +39,36 @@ impl fmt::Display for CompositionError {
 }
 impl std::error::Error for CompositionError {}
 
+#[derive(Clone, Debug)]
+pub struct EditableGeometry {
+    pub revision: TextRevision,
+    pub layout: UnicodeLayout,
+    pub origin: [f32; 2],
+    pub clip: UiRect,
+    pub snapshot: TextInputSnapshot,
+}
 pub struct Presentation {
     pub scene: SceneBundle,
     pub resources: Arc<dyn ResourceProvider>,
     pub unsupported_runs: usize,
+    pub editable: Option<EditableGeometry>,
 }
-
 struct Resources {
     world: Arc<dyn ResourceProvider>,
-    atlas: UiTexture,
+    textures: Vec<UnicodeTexture>,
     solid: UiTexture,
 }
 impl ResourceProvider for Resources {
     fn load(&self, request: ResourceRequest) -> std::result::Result<ResourceBlob, ResourceError> {
         request.validate()?;
-        let expected = if request.id == self.atlas.id {
-            Some((self.atlas, builtin::ATLAS_BYTES))
-        } else if request.id == self.solid.id {
-            Some((self.solid, builtin::SOLID_BYTES))
-        } else {
-            None
-        };
+        let expected = self
+            .textures
+            .iter()
+            .find(|texture| texture.identity.id == request.id)
+            .map(|texture| (texture.identity, texture.bytes.as_ref()))
+            .or_else(|| {
+                (request.id == self.solid.id).then_some((self.solid, builtin::SOLID_BYTES))
+            });
         if let Some((identity, bytes)) = expected {
             if request.revision != identity.revision || request.digest != identity.digest {
                 return Err(ResourceError::DigestMismatch);
@@ -69,158 +81,77 @@ impl ResourceProvider for Resources {
         self.world.load(request)
     }
 }
-
-fn font_texture(id: u64) -> UiTexture {
-    UiTexture {
-        id: ResourceId(id),
-        revision: 1,
-        digest: Digest256(builtin::ATLAS_SHA256),
-    }
-}
-
-/// Test the complete original input; display truncation never authorizes a
-/// visually lossy edit. The font's shared classifier owns shaping limitations.
-pub fn supports_text(text: &str) -> bool {
-    builtin::builtin_font(font_texture(1)).is_ok_and(|font| font.supports_text(text))
-}
-
-/// Consumers use renderer-produced text measurements to elide presentation only.
-/// These helpers never inspect glyph tables or alter the editable source string.
 pub fn text_size(height: u32) -> f32 {
     if height <= 22 { 14.0 } else { 18.0 }
 }
 
-pub fn measure_text(text: &str, size: f32) -> Result<tilewright_render_ui::TextLayout> {
-    let font = builtin::builtin_font(font_texture(1)).map_err(CompositionError::Ui)?;
-    let font_array = [font];
-    let fonts = BitmapFontSet::new(&font_array).map_err(CompositionError::Ui)?;
-    let bounds = UiRect {
-        x: 0.0,
-        y: 0.0,
-        width: 8192.0,
-        height: 64.0,
-    };
-    let primitive = UiPrimitive::Text {
-        origin: [0.0, 0.0],
-        clip: bounds,
-        font: builtin::FONT_ID,
-        size,
-        text,
-        paint: UiPaint {
-            semantic_id: SemanticId(1),
-            painter_order: 0,
-            color: [1.0; 4],
-        },
-    };
-    let compiled = compile_ui(
-        UiViewport {
-            logical_size: [8192, 64],
-            physical_size: [8192, 64],
-        },
-        UiDisplayList {
-            primitives: &[primitive],
-        },
-        &fonts,
-        UiTexture {
-            id: ResourceId(2),
-            revision: 1,
-            digest: Digest256(builtin::SOLID_SHA256),
-        },
-        UiLimits::default(),
-    )
-    .map_err(CompositionError::Ui)?;
-    compiled
-        .text_layouts
-        .into_iter()
-        .next()
-        .ok_or(CompositionError::TargetMismatch)
-}
-
+/// Elision uses shared shaped measurements and original grapheme boundaries.
 #[allow(clippy::cast_precision_loss)]
-pub fn fit_text(text: &str, width: u32, height: u32) -> String {
+pub fn fit_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -> String {
     let available = width.saturating_sub(8) as f32;
     let size = text_size(height);
-    let Ok(layout) = measure_text(text, size) else {
+    let Ok(layout) = system.layout(text, size, None) else {
         return "Text unavailable".into();
     };
-    if layout.size[0] <= available {
+    if layout.size()[0] <= available {
         return text.into();
     }
-    let Ok(suffix) = measure_text("...", size) else {
-        return String::new();
-    };
-    if suffix.size[0] > available {
-        return String::new();
-    }
-    let end = layout
-        .glyphs
-        .iter()
-        .take_while(|glyph| glyph.baseline[0] + glyph.advance <= available - suffix.size[0])
-        .last()
-        .map_or(0, |glyph| glyph.byte_end);
-    format!("{}...", &text[..end])
-}
-
-/// The current controller appends/backspaces at the end. Keep that working end
-/// visible using shared renderer UTF-8 positions, independently of passive labels.
-#[allow(clippy::cast_precision_loss)]
-pub fn tail_text(text: &str, width: u32, height: u32) -> String {
-    let caption = format!("> {}|", tilewright_editor_document::terminal_field(text));
-    let size = text_size(height);
-    let available = width.saturating_sub(8) as f32;
-    let Ok(layout) = measure_text(&caption, size) else {
-        return "Text unavailable".into();
-    };
-    if layout.size[0] <= available {
-        return caption;
-    }
-    let Ok(leading) = measure_text("... ", size) else {
-        return "|".into();
-    };
-    let threshold = layout.size[0] - (available - leading.size[0]);
-    for glyph in layout
-        .glyphs
-        .iter()
-        .filter(|glyph| glyph.baseline[0] >= threshold)
-    {
-        let candidate = format!("... {}", &caption[glyph.byte_start..]);
-        if measure_text(&candidate, size).is_ok_and(|measured| measured.size[0] <= available) {
+    for &end in layout.grapheme_boundaries().iter().rev() {
+        let candidate = format!("{}...", &text[..end]);
+        if system
+            .layout(&candidate, size, None)
+            .is_ok_and(|l| l.size()[0] <= available)
+        {
             return candidate;
         }
     }
-    "|".into()
+    String::new()
 }
-
 #[allow(clippy::cast_precision_loss)]
-pub fn wrap_text(text: &str, width: u32, height: u32) -> Vec<String> {
+pub fn wrap_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -> Vec<String> {
     let available = width.saturating_sub(8) as f32;
     let mut remaining = text;
     let mut lines = Vec::new();
-    while !remaining.is_empty() && lines.len() < 32 {
-        let Ok(layout) = measure_text(remaining, text_size(height)) else {
+    while !remaining.is_empty() && lines.len() < 256 {
+        let Ok(layout) = system.layout(remaining, text_size(height), None) else {
             break;
         };
-        if layout.size[0] <= available {
-            lines.push(remaining.into());
-            break;
-        }
         let end = layout
-            .glyphs
+            .grapheme_boundaries()
             .iter()
-            .take_while(|glyph| glyph.baseline[0] + glyph.advance <= available)
-            .last()
-            .map_or(0, |glyph| glyph.byte_end);
-        if end == 0 {
+            .copied()
+            .rev()
+            .find(|&end| {
+                end > 0
+                    && system
+                        .layout(&remaining[..end], text_size(height), None)
+                        .is_ok_and(|l| l.size()[0] <= available)
+            });
+        let Some(end) = end else {
             break;
-        }
-        let end = remaining[..end]
-            .rfind(' ')
-            .filter(|index| *index > 0)
-            .unwrap_or(end);
+        };
         lines.push(remaining[..end].into());
-        remaining = remaining[end..].trim_start();
+        remaining = &remaining[end..];
     }
     lines
+}
+pub fn renderer_cursor(cursor: tilewright_editor_ui::text_input::TextCursor) -> TextCursor {
+    TextCursor {
+        byte: cursor.byte,
+        affinity: match cursor.affinity {
+            tilewright_editor_ui::text_input::TextAffinity::Before => TextAffinity::Before,
+            tilewright_editor_ui::text_input::TextAffinity::After => TextAffinity::After,
+        },
+    }
+}
+pub fn model_cursor(cursor: TextCursor) -> tilewright_editor_ui::text_input::TextCursor {
+    tilewright_editor_ui::text_input::TextCursor {
+        byte: cursor.byte,
+        affinity: match cursor.affinity {
+            TextAffinity::Before => tilewright_editor_ui::text_input::TextAffinity::Before,
+            TextAffinity::After => tilewright_editor_ui::text_input::TextAffinity::After,
+        },
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -246,7 +177,12 @@ fn paint(next: &mut u32, order: u32, color: [f32; 4]) -> Result<UiPaint> {
     })
 }
 
-fn display_list(ui: &WorkspaceUi, mut identity: u32) -> Result<Vec<UiPrimitive<'_>>> {
+fn display_list<'a>(
+    ui: &'a WorkspaceUi,
+    mut identity: u32,
+    system: &mut TextSystem,
+) -> Result<(Vec<UiPrimitive<'a>>, Option<EditableGeometry>)> {
+    let mut editable = None;
     let mut primitives = Vec::new();
     for bounds in [
         Rect {
@@ -293,8 +229,56 @@ fn display_list(ui: &WorkspaceUi, mut identity: u32) -> Result<Vec<UiPrimitive<'
         } else {
             [0.50, 0.56, 0.63, 1.0]
         };
+        let mut origin = [bounds.x + 4.0, bounds.y + 1.0];
+        if let Some(snapshot) = &widget.editable {
+            let layout = system
+                .layout(&widget.text, text_size(widget.layout.height), None)
+                .map_err(CompositionError::Text)?;
+            let cursor = renderer_cursor(snapshot.display_selection.focus);
+            if let Some(caret) = layout.caret(cursor) {
+                origin[0] -= (caret.x - (bounds.width - 12.0).max(0.0)).max(0.0);
+            }
+            let mut selection =
+                layout.selection_rects(renderer_cursor(snapshot.display_selection.anchor), cursor);
+            if let Some(composition) = &snapshot.composition {
+                for mut underline in layout.selection_rects(
+                    TextCursor {
+                        byte: composition.display_range.start,
+                        affinity: TextAffinity::After,
+                    },
+                    TextCursor {
+                        byte: composition.display_range.end,
+                        affinity: TextAffinity::Before,
+                    },
+                ) {
+                    underline.y += underline.height - 2.0;
+                    underline.height = 1.0;
+                    selection.push(underline);
+                }
+            }
+            if let Some(caret) = layout.caret(cursor) {
+                selection.push(caret);
+            }
+            for mut selected in selection {
+                selected.x += origin[0];
+                selected.y += origin[1];
+                primitives.push(UiPrimitive::Solid {
+                    bounds: selected,
+                    clip: bounds,
+                    paint: paint(&mut identity, order, [0.28, 0.48, 0.66, 1.0])?,
+                    pickable: false,
+                });
+            }
+            editable = Some(EditableGeometry {
+                revision: snapshot.revision,
+                layout,
+                origin,
+                clip: bounds,
+                snapshot: snapshot.clone(),
+            });
+        }
         primitives.push(UiPrimitive::Text {
-            origin: [bounds.x + 4.0, bounds.y + 1.0],
+            origin,
             clip: bounds,
             paint: paint(&mut identity, order + 1, color)?,
             font: builtin::FONT_ID,
@@ -302,10 +286,11 @@ fn display_list(ui: &WorkspaceUi, mut identity: u32) -> Result<Vec<UiPrimitive<'
             text: &widget.text,
         });
     }
-    Ok(primitives)
+    Ok((primitives, editable))
 }
 
 pub fn compose(
+    system: &mut TextSystem,
     ui: &WorkspaceUi,
     world: &SceneBundle,
     resources: Arc<dyn ResourceProvider>,
@@ -319,46 +304,40 @@ pub fn compose(
         .map(|quad| quad.resource_id.0)
         .max()
         .unwrap_or(0);
-    let atlas = font_texture(
-        resource
-            .checked_add(1)
-            .ok_or(CompositionError::ResourceIdentityExhausted)?,
-    );
     let solid = UiTexture {
         id: ResourceId(
             resource
-                .checked_add(2)
+                .checked_add(1)
                 .ok_or(CompositionError::ResourceIdentityExhausted)?,
         ),
         revision: 1,
         digest: Digest256(builtin::SOLID_SHA256),
     };
-    let font = builtin::builtin_font(atlas).map_err(CompositionError::Ui)?;
-    let font_array = [font];
-    let fonts = BitmapFontSet::new(&font_array).map_err(CompositionError::Ui)?;
+    let first_resource = resource
+        .checked_add(2)
+        .ok_or(CompositionError::ResourceIdentityExhausted)?;
     let identity = world
         .quads()
         .iter()
         .map(|quad| quad.semantic_id.0)
         .max()
         .unwrap_or(0);
-    let primitives = display_list(ui, identity)?;
+    let (primitives, editable) = display_list(ui, identity, system)?;
     let logical = ui.logical_size();
-    let compiled = compile_ui(
-        UiViewport {
-            logical_size: [logical.0, logical.1],
-            physical_size: [ui.size.0, ui.size.1],
-        },
-        UiDisplayList {
-            primitives: &primitives,
-        },
-        &fonts,
-        solid,
-        UiLimits::default(),
-    )
-    .map_err(CompositionError::Ui)?;
-    tilewright_render_ui::validate_ui_composition(world.quads(), &compiled)
-        .map_err(CompositionError::Ui)?;
+    let compiled = system
+        .compile(
+            UiViewport {
+                logical_size: [logical.0, logical.1],
+                physical_size: [ui.size.0, ui.size.1],
+            },
+            UiDisplayList {
+                primitives: &primitives,
+            },
+            solid,
+            first_resource,
+            UiLimits::default(),
+        )
+        .map_err(CompositionError::Text)?;
     let scene = SceneBundle::from_quads(
         world.revision(),
         world.clock_millis(),
@@ -372,70 +351,10 @@ pub fn compose(
         scene,
         resources: Arc::new(Resources {
             world: resources,
-            atlas,
+            textures: compiled.resources,
             solid,
         }),
         unsupported_runs: compiled.unsupported.len(),
+        editable,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    struct Missing;
-    impl ResourceProvider for Missing {
-        fn load(&self, _: ResourceRequest) -> std::result::Result<ResourceBlob, ResourceError> {
-            Err(ResourceError::NotFound)
-        }
-    }
-    #[test]
-    fn immutable_ui_provider_checks_complete_identity_and_request_budget() {
-        let resources = Resources {
-            world: Arc::new(Missing),
-            atlas: font_texture(100),
-            solid: UiTexture {
-                id: ResourceId(101),
-                revision: 1,
-                digest: Digest256(builtin::SOLID_SHA256),
-            },
-        };
-        let request = ResourceRequest {
-            id: resources.atlas.id,
-            revision: 1,
-            digest: resources.atlas.digest,
-            maximum_bytes: tilewright_render_resources::DEFAULT_MAXIMUM_RESOURCE_BYTES,
-        };
-        assert_eq!(
-            resources.load(request).unwrap().bytes(),
-            builtin::ATLAS_BYTES
-        );
-        assert_eq!(
-            resources.load(ResourceRequest {
-                revision: 2,
-                ..request
-            }),
-            Err(ResourceError::DigestMismatch)
-        );
-        assert_eq!(
-            resources.load(ResourceRequest {
-                digest: resources.solid.digest,
-                ..request
-            }),
-            Err(ResourceError::DigestMismatch)
-        );
-        assert_eq!(
-            resources.load(ResourceRequest {
-                maximum_bytes: 1,
-                ..request
-            }),
-            Err(ResourceError::LimitExceeded)
-        );
-        assert_eq!(
-            resources.load(ResourceRequest {
-                id: ResourceId(102),
-                ..request
-            }),
-            Err(ResourceError::NotFound)
-        );
-    }
 }

@@ -31,6 +31,7 @@ pub enum Control {
     Nudge([i64; 2]),
     Field(String),
     Palette { grid: String, prototype: String },
+    EditDraft,
     ApplyDraft,
     CancelDraft,
 }
@@ -41,6 +42,7 @@ pub struct Widget {
     /// Logical layout rectangle consumed by the shared UI compiler.
     pub layout: Rect,
     pub text: String,
+    pub editable: Option<tilewright_editor_ui::text_input::TextInputSnapshot>,
     pub control: Option<Control>,
     pub enabled: bool,
     pub active: bool,
@@ -181,19 +183,29 @@ impl WorkspaceUi {
             self.widgets.push(Widget {
                 bounds,
                 layout,
-                text: crate::workspace_render::fit_text(
-                    &tilewright_editor_ui::inspector::display_text(
-                        &tilewright_editor_document::terminal_field(
-                            &tilewright_editor_ui::inspector::display_text(&text.into()),
-                        ),
-                    ),
-                    layout.width,
-                    layout.height,
-                ),
+                text: text.into(),
+                editable: None,
                 control,
                 enabled,
                 active,
             });
+        }
+    }
+
+    pub fn editable(
+        &mut self,
+        bounds: Rect,
+        snapshot: tilewright_editor_ui::text_input::TextInputSnapshot,
+    ) {
+        self.widget(
+            bounds,
+            snapshot.display_text.clone(),
+            Some(Control::EditDraft),
+            true,
+            true,
+        );
+        if let Some(widget) = self.widgets.last_mut() {
+            widget.editable = Some(snapshot);
         }
     }
 

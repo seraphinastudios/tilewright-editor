@@ -1,8 +1,10 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
+mod font_pack;
+mod native_input;
 mod prototype;
 mod viewport;
 mod workspace_render;

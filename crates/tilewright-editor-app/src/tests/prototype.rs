@@ -81,6 +81,9 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         unsupported_runs: 0,
         presented_generation: None,
         blocked: None,
+        text: crate::font_pack::test_system(),
+        displayed_text: None,
+        presented_text_revision: None,
     };
     (temporary, app)
 }
@@ -206,25 +209,19 @@ fn terrain_requires_explicit_palette_and_panel_controls_never_publish() {
 }
 
 #[test]
-fn unsupported_draft_is_visible_local_state_and_cannot_prepare_a_lossy_edit() {
+fn combining_text_reaches_review_without_normalization_or_source_write() {
     use crate::workspace_ui::Control;
     let (_temporary, mut app) = application();
     app.select_visible_object(true).unwrap();
     app.control(Control::Field("label".into())).unwrap();
-    app.tools.input("\u{301}").unwrap();
+    app.tools.select_all().unwrap();
+    app.tools.input("Cafe\u{301} العربية עברית हिन्दी தமிழ் 青🙂").unwrap();
     let draft = app.tools.draft_text().unwrap().to_owned();
     let revision = app.session.history().document().revision();
-    let generation = app.session.generation();
-    assert!(
-        app.control(Control::ApplyDraft)
-            .unwrap_err()
-            .contains("unsupported")
-    );
-    app.refresh_ui();
-    assert_eq!(app.tools.draft_text(), Some(draft.as_str()));
+    app.control(Control::ApplyDraft).unwrap();
     assert_eq!(app.session.history().document().revision(), revision);
-    assert_eq!(app.session.generation(), generation);
-    assert!(app.session.history().pending().is_none());
+    assert!(app.session.history().pending().is_some());
+    assert!(app.session.world().object("marker_1").unwrap().fields.iter().any(|(name, value)| name == "label" && value == &tilewright_source::FieldValue::String(draft.clone())));
 }
 
 #[test]
@@ -250,6 +247,7 @@ fn composed_ui_preserves_world_geometry_and_rejects_exhausted_identities() {
     let (_temporary, mut app) = application();
     app.refresh_ui();
     let presentation = crate::workspace_render::compose(
+        &mut app.text,
         &app.ui,
         &app.prepared.scene,
         app.prepared.resources.clone(),
@@ -272,7 +270,7 @@ fn composed_ui_preserves_world_geometry_and_rejects_exhausted_identities() {
         )
         .unwrap();
         let error =
-            crate::workspace_render::compose(&app.ui, &world, app.prepared.resources.clone())
+            crate::workspace_render::compose(&mut app.text, &app.ui, &world, app.prepared.resources.clone())
                 .err()
                 .unwrap();
         assert!(matches!(
@@ -362,15 +360,15 @@ fn readable_controls_and_inspector_copy_fit_960_and_1280_windows() {
             .unwrap();
         assert_eq!(terrain.text, "Terrain");
         for widget in &app.ui.widgets {
-            let measured = crate::workspace_render::measure_text(
+            let measured = app.text.layout(
                 &widget.text,
-                crate::workspace_render::text_size(widget.layout.height),
+                crate::workspace_render::text_size(widget.layout.height), None,
             )
             .unwrap();
             #[allow(clippy::cast_precision_loss)]
             let available = widget.layout.width.saturating_sub(8) as f32;
             assert!(
-                measured.size[0] <= available + 0.001,
+                measured.size()[0] <= available + 0.001,
                 "{} exceeds {}",
                 widget.text,
                 available
@@ -639,10 +637,9 @@ fn long_utf8_draft_shows_working_tail_and_caret_while_full_value_reaches_review(
         .ui
         .widgets
         .iter()
-        .find(|widget| widget.active && widget.control.is_none())
+        .find(|widget| widget.editable.is_some())
         .unwrap();
-    assert!(display.text.starts_with("... "), "{}", display.text);
-    assert!(display.text.ends_with("NEW-éà|"), "{}", display.text);
+    assert_eq!(display.text, full);
     assert_eq!(app.tools.draft_text(), Some(full.as_str()));
     super::native_key(&mut app, sdl3::keyboard::Keycode::Backspace).unwrap();
     app.refresh_ui();
@@ -650,9 +647,9 @@ fn long_utf8_draft_shows_working_tail_and_caret_while_full_value_reaches_review(
         .ui
         .widgets
         .iter()
-        .find(|widget| widget.active && widget.control.is_none())
+        .find(|widget| widget.editable.is_some())
         .unwrap();
-    assert!(display.text.ends_with("NEW-é|"), "{}", display.text);
+    assert!(display.text.ends_with("NEW-é"), "{}", display.text);
     app.tools.input("à").unwrap();
     app.refresh_ui();
     assert_eq!(app.tools.draft_text(), Some(full.as_str()));
@@ -681,4 +678,76 @@ fn long_utf8_draft_shows_working_tail_and_caret_while_full_value_reaches_review(
         .unwrap(),
         original
     );
+}
+
+fn input_key(window_id: u32, key: sdl3::keyboard::Keycode, up: bool) -> sdl3::event::Event {
+    if up { sdl3::event::Event::KeyUp { timestamp: 0, window_id, keycode: Some(key), scancode: None, keymod: sdl3::keyboard::Mod::NOMOD, repeat: false, which: 0, raw: 0 } }
+    else { sdl3::event::Event::KeyDown { timestamp: 0, window_id, keycode: Some(key), scancode: None, keymod: sdl3::keyboard::Mod::NOMOD, repeat: false, which: 0, raw: 0 } }
+}
+
+#[test]
+fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
+    use sdl3::{event::{Event, WindowEvent}, keyboard::Keycode};
+    use crate::workspace_ui::Control;
+    let (temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    app.tools.select_all().unwrap();
+    let original = fs::read(temporary.path().join("world/planes/main/layers/0/0_0.jsonc")).unwrap();
+    let committed = app.tools.draft_text().unwrap().to_owned();
+    let revision = app.session.history().document().revision();
+    let mut input = crate::native_input::NativeInput::new(7);
+    input.begin_batch(true);
+    let preedit = Event::TextEditing { timestamp: 0, window_id: 7, text: "é🙂青".into(), start: 1, length: 1 };
+    super::native_text_event(&mut app, &preedit, &mut input).unwrap().unwrap();
+    let snapshot = app.tools.draft_snapshot().unwrap();
+    assert_eq!(snapshot.composition.unwrap().selection, Some(2..6));
+    assert_eq!(app.tools.draft_text(), Some(committed.as_str()));
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).unwrap().unwrap();
+    let commit = Event::TextInput { timestamp: 0, window_id: 7, text: "é🙂青".into() };
+    super::native_text_event(&mut app, &commit, &mut input).unwrap().unwrap();
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).unwrap().unwrap();
+    assert_eq!(app.tools.draft_text(), Some("é🙂青"));
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.session.history().document().revision(), revision);
+    assert_eq!(fs::read(temporary.path().join("world/planes/main/layers/0/0_0.jsonc")).unwrap(), original);
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, true), &mut input).unwrap().unwrap();
+    input.begin_batch(false);
+    super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).unwrap().unwrap();
+    assert!(app.session.history().pending().is_some());
+    // A second Return in the same drain cannot accept the undisplayed diff.
+    assert!(super::native_text_event(&mut app, &input_key(7, Keycode::Return, false), &mut input).is_none());
+    assert!(!app.displayed_input_ready());
+    app.action(Action::Cancel).unwrap();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    let prior = app.tools.draft_text().unwrap().to_owned();
+    super::native_text_event(&mut app, &preedit, &mut input).unwrap().unwrap();
+    super::native_text_event(&mut app, &Event::Window { timestamp: 0, window_id: 7, win_event: WindowEvent::FocusLost }, &mut input).unwrap().unwrap();
+    assert!(!app.tools.is_composing());
+    super::native_text_event(&mut app, &commit, &mut input).unwrap().unwrap();
+    assert_eq!(app.tools.draft_text(), Some(prior.as_str()));
+    input.focused = true;
+    let foreign = Event::TextInput { timestamp: 0, window_id: 8, text: "FOREIGN".into() };
+    super::native_text_event(&mut app, &foreign, &mut input).unwrap().unwrap();
+    assert_eq!(app.tools.draft_text(), Some(prior.as_str()));
+}
+
+#[test]
+fn stale_draft_geometry_cannot_move_caret_or_change_source() {
+    use crate::workspace_ui::{Control, WorkspaceUi};
+    let (_temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.ui = WorkspaceUi::new((960, 640), (320, 240));
+    app.control(Control::Field("label".into())).unwrap();
+    app.refresh_ui();
+    let presentation = super::workspace_presentation(&mut app).unwrap();
+    app.displayed_text = presentation.editable;
+    app.presented_generation = Some(app.view.frame_revision);
+    app.presented_text_revision = app.tools.input_revision();
+    assert!(app.displayed_input_ready());
+    app.tools.input("e\u{301}").unwrap();
+    assert!(!app.displayed_input_ready());
+    assert!(super::visual_move(&mut app, sdl3::keyboard::Keycode::Left, false).is_err());
+    assert!(app.session.history().pending().is_none());
 }
