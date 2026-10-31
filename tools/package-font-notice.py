@@ -4,8 +4,10 @@
 import argparse
 import hashlib
 import json
+import io
 from pathlib import Path
 import subprocess
+import tarfile
 import tomllib
 
 REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
@@ -28,6 +30,37 @@ def regular_bytes(path):
     require(not path.is_symlink() and path.is_file() and path.resolve() == path,
             f'font asset must be a regular file without links: {path.name}')
     return path.read_bytes()
+
+
+def registry_files(crate, checksum, names):
+    """Authenticate actual Cargo cache bytes, without trusting extracted metadata."""
+    require(crate.parent.parent.name == 'src' and crate.parent.parent.parent.name == 'registry'
+            and crate.name == f'{NAME}-{VERSION}', 'unexpected UI registry cache location')
+    archive = crate.parent.parent.parent / 'cache' / crate.parent.name / (crate.name + '.crate')
+    require(archive.stat().st_size <= 8 * 1024 * 1024, 'UI registry archive too large')
+    blob = regular_bytes(archive)
+    require(digest(blob) == checksum, 'UI font registry archive checksum mismatch')
+    wanted = {f'{crate.name}/{name}': name for name in names}
+    found = {}
+    seen = set()
+    size = 0
+    with tarfile.open(fileobj=io.BytesIO(blob), mode='r:gz') as bundle:
+        for member in bundle:
+            parts = member.name.split('/')
+            require(len(seen) < 4096 and member.name not in seen and parts[0] == crate.name
+                    and all(part not in ('', '.', '..') for part in parts)
+                    and (member.isfile() or member.isdir()), 'unsafe UI registry archive member')
+            seen.add(member.name)
+            size += member.size
+            require(0 <= member.size <= 16 * 1024 * 1024 and size <= 32 * 1024 * 1024,
+                    'UI registry archive contents too large')
+            if member.name in wanted:
+                require(member.isfile(), 'UI registry asset must be a regular file')
+                found[wanted[member.name]] = bundle.extractfile(member).read()
+    require(set(found) == set(names), 'UI registry archive missing required asset')
+    for name, data in found.items():
+        require(regular_bytes(crate / name) == data, f'font registry file checksum mismatch: {name}')
+    return found
 
 
 def verified_font(root, metadata=None):
@@ -74,8 +107,6 @@ def verified_font(root, metadata=None):
             and entry.get('license') == LICENSE, 'UI font Cargo metadata identity/license mismatch')
     crate = Path(entry['manifest_path']).parent
     require(crate.is_absolute() and crate.resolve() == crate, 'UI font source contains a link')
-    cargo_hashes = json.loads(regular_bytes(crate / '.cargo-checksum.json'))
-    require(cargo_hashes['package'] == checksum, 'UI font registry archive checksum mismatch')
     # The policy pins the whole producer manifest. Its per-file digests identify
     # generated font data; the producer checker owns cmap/metrics validation.
     manifest_blob = regular_bytes(crate / 'assets/manifest.json')
@@ -86,13 +117,12 @@ def verified_font(root, metadata=None):
     for name in ['OFL.txt', 'RobotoMono-Regular.ttf', *font['files']]:
         require(Path(name).name == name, 'font asset path outside package assets')
         blobs[name] = regular_bytes(crate / 'assets' / name)
+    registry_files(crate, checksum, ['assets/' + name for name in blobs])
     require(digest(blobs['OFL.txt']) == policy['notice_sha256'] == font['notice']['sha256'],
             'font notice checksum mismatch')
     require(digest(blobs['RobotoMono-Regular.ttf']) == policy['source_sha256'] == font['source']['sha256'],
             'font source checksum mismatch')
     for name, blob in blobs.items():
-        require(cargo_hashes['files'].get('assets/' + name) == digest(blob),
-                f'font registry file checksum mismatch: {name}')
         if name in font['files']:
             record = font['files'][name]
             require(record['sha256'] == digest(blob) and record['bytes'] == len(blob),
@@ -137,5 +167,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, subprocess.SubprocessError) as error:
         raise SystemExit(f'package font refused: {error}') from error

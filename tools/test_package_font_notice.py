@@ -3,28 +3,45 @@
 import hashlib
 import importlib.util
 import json
+import io
 from pathlib import Path
 import tempfile
+import tarfile
 import tomllib
 import unittest
 
 spec = importlib.util.spec_from_file_location('package_font_notice', Path(__file__).with_name('package-font-notice.py'))
 font = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(font)
-CHECKSUM = 'b' * 64
 
 
 def sha(blob):
     return hashlib.sha256(blob).hexdigest()
 
 
+def archive_fixture(root, crate, extra=None):
+    archive = crate.parents[2] / 'cache' / crate.parent.name / (crate.name + '.crate')
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, 'w:gz') as bundle:
+        for path in sorted(crate.rglob('*')):
+            if path.is_file():
+                blob = path.read_bytes()
+                member = tarfile.TarInfo(crate.name + '/' + str(path.relative_to(crate)))
+                member.size = len(blob)
+                bundle.addfile(member, io.BytesIO(blob))
+        if extra:
+            bundle.addfile(extra, io.BytesIO(b'x' * extra.size))
+    (root / 'Cargo.lock').write_text(f'[[package]]\nname = "{font.NAME}"\nversion = "{font.VERSION}"\nsource = "{font.REGISTRY}"\nchecksum = "{sha(archive.read_bytes())}"\n')
+    return archive
+
+
 class PackageFontNoticeTests(unittest.TestCase):
     def fixture(self, base):
-        root, crate, stage = (base / name for name in ('editor', 'registry-ui', 'stage'))
+        root, stage = base / 'editor', base / 'stage'
+        crate = base / 'registry/src/index.crates.io-test' / f'{font.NAME}-{font.VERSION}'
         for path in (root / 'policy', crate / 'assets', stage):
             path.mkdir(parents=True)
         (root / 'Cargo.toml').write_text('[workspace.dependencies]\ntilewright-render-ui = "=0.6.2"\n')
-        (root / 'Cargo.lock').write_text(f'[[package]]\nname = "{font.NAME}"\nversion = "0.6.2"\nsource = "{font.REGISTRY}"\nchecksum = "{CHECKSUM}"\n')
         # Original synthetic test bytes: no external font is copied into tests.
         blobs = {'OFL.txt': b'synthetic notice bytes for packaging test\n',
                  'RobotoMono-Regular.ttf': b'synthetic source bytes',
@@ -36,8 +53,7 @@ class PackageFontNoticeTests(unittest.TestCase):
         blobs['manifest.json'] = json.dumps(manifest).encode()
         for name, blob in blobs.items():
             (crate / 'assets' / name).write_bytes(blob)
-        (crate / '.cargo-checksum.json').write_text(json.dumps({'package': CHECKSUM,
-            'files': {'assets/' + name: sha(blob) for name, blob in blobs.items()}}))
+        archive_fixture(root, crate)
         policy = {'schema_version': 1, 'package': {'name': font.NAME, 'version': font.VERSION, 'license': font.LICENSE},
                   'manifest_sha256': sha(blobs['manifest.json']), 'source_sha256': manifest['source']['sha256'],
                   'notice_sha256': manifest['notice']['sha256'], 'notice_destination': font.DESTINATION}
@@ -53,7 +69,7 @@ class PackageFontNoticeTests(unittest.TestCase):
             self.assertEqual((stage / font.DESTINATION).read_bytes(), blobs['OFL.txt'])
             self.assertEqual(font.package_font(root, stage, metadata, verify=True), result)
             record = result['font_assets'][0]
-            self.assertEqual(record['checksum'], CHECKSUM)
+            self.assertEqual(record['checksum'], tomllib.loads((root / 'Cargo.lock').read_text())['package'][0]['checksum'])
             self.assertEqual(record['source'], font.REGISTRY)
             self.assertEqual(record['notice']['sha256'], sha(blobs['OFL.txt']))
             self.assertEqual(record['embedded_assets']['atlas.atx']['sha256'], sha(blobs['atlas.atx']))
@@ -74,6 +90,9 @@ class PackageFontNoticeTests(unittest.TestCase):
                 root, crate, stage, metadata, _ = self.fixture(Path(directory))
                 with (crate / 'assets' / name).open('ab') as output:
                     output.write(b'changed')
+                # A forged extraction-side checksum file cannot authorize new bytes.
+                (crate / '.cargo-checksum.json').write_text(json.dumps({'files': {
+                    'assets/' + name: sha((crate / 'assets' / name).read_bytes())}}))
                 with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
                     font.package_font(root, stage, metadata)
                 self.assertFalse((stage / font.DESTINATION).exists())
@@ -81,12 +100,31 @@ class PackageFontNoticeTests(unittest.TestCase):
     def test_registry_archive_checksum_mismatch_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root, crate, stage, metadata, _ = self.fixture(Path(directory))
-            checksums = crate / '.cargo-checksum.json'
-            value = json.loads(checksums.read_text())
-            value['package'] = 'c' * 64
-            checksums.write_text(json.dumps(value))
+            archive = crate.parents[2] / 'cache' / crate.parent.name / (crate.name + '.crate')
+            archive.write_bytes(archive.read_bytes() + b'tampered')
             with self.assertRaisesRegex(ValueError, 'archive checksum mismatch'):
                 font.package_font(root, stage, metadata)
+
+    def test_missing_archive_and_forged_extracted_checksums_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, crate, stage, metadata, _ = self.fixture(Path(directory))
+            (crate / '.cargo-checksum.json').write_text('{}')
+            archive = crate.parents[2] / 'cache' / crate.parent.name / (crate.name + '.crate')
+            archive.unlink()
+            with self.assertRaises(OSError):
+                font.package_font(root, stage, metadata)
+
+    def test_unsafe_or_duplicate_archive_members_refused(self):
+        for name, kind in (('../escape', tarfile.REGTYPE),
+                           (f'{font.NAME}-{font.VERSION}/assets/OFL.txt', tarfile.REGTYPE),
+                           (f'{font.NAME}-{font.VERSION}/link', tarfile.SYMTYPE)):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root, crate, stage, metadata, _ = self.fixture(Path(directory))
+                member = tarfile.TarInfo(name)
+                member.type = kind
+                archive_fixture(root, crate, member)
+                with self.assertRaisesRegex(ValueError, 'unsafe UI registry archive'):
+                    font.package_font(root, stage, metadata)
 
     def test_unreviewed_version_local_override_and_license_drift_refused(self):
         for key, value in (('version', '0.6.3'), ('source', None), ('license', 'MIT')):

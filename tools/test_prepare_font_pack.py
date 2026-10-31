@@ -21,10 +21,7 @@ class FontPreparationTests(unittest.TestCase):
         editor, crate, stage, metadata, _ = bitmap.PackageFontNoticeTests().fixture(root)
         source, blob, expected = delivery.fixture(root)
         (crate / 'assets/unicode-font-pack.json').write_bytes(blob)
-        path = crate / '.cargo-checksum.json'
-        checksums = json.loads(path.read_text())
-        checksums['files']['assets/unicode-font-pack.json'] = expected
-        path.write_text(json.dumps(checksums))
+        bitmap.archive_fixture(editor, crate)
         return editor, crate, stage, metadata, source, blob, expected
 
     def test_registry_staging_and_sbom_are_bound_to_exact_ui_archive(self):
@@ -49,7 +46,7 @@ class FontPreparationTests(unittest.TestCase):
             root, crate, stage, metadata, source, blob, expected = self.fixture(Path(directory))
             path = crate / 'assets/unicode-font-pack.json'
             path.write_bytes(blob + b' ')
-            with self.assertRaisesRegex(ValueError, 'registry Unicode manifest checksum'):
+            with self.assertRaisesRegex(ValueError, 'font registry file checksum mismatch'):
                 prepare.stage_font_pack(root, source, stage, metadata, expected_sha=expected)
             path.write_bytes(blob)
             prepare.stage_font_pack(root, source, stage, metadata, expected_sha=expected)

@@ -66,7 +66,8 @@ font lookup, parsing, rasterization, shaping or fetching.
 When the locked released graph contains this UI crate, binary packaging copies
 its exact upstream notice to `licenses/OFL-RobotoMono.txt`. The font notice
 helper uses offline Cargo metadata, exact manifest/lock coordinates, the
-registry archive checksum and unpacked Cargo file checksums, plus the reviewed
+registry archive checksum and byte comparisons against its bounded, path-checked
+archive members, plus the reviewed
 asset manifest/source/notice hashes in `policy/font-notice.json`. Package
 provenance records that registry coordinate and the exact embedded asset and
 notice hashes; it refuses missing or altered staged notices. Local candidate

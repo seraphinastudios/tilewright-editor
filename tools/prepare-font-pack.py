@@ -36,9 +36,7 @@ def trusted_manifest(root, metadata=None, candidate_ui=None, expected_sha=pack.M
         entry = next(entry for entry in metadata['packages'] if entry['name'] == notice.NAME)
         crate = Path(entry['manifest_path']).parent
         blob = pack.read_regular(crate / 'assets/unicode-font-pack.json', pack.MAX_MANIFEST)
-        checksums = json.loads(pack.read_regular(crate / '.cargo-checksum.json', 2 * 1024 * 1024))
-        pack.require(checksums['files'].get('assets/unicode-font-pack.json') == pack.digest(blob),
-                     'registry Unicode manifest checksum mismatch')
+        notice.registry_files(crate, registry['checksum'], ['assets/unicode-font-pack.json'])
         binding = {'kind': 'registry', 'name': registry['package'], 'version': registry['version'],
                    'source': registry['source'], 'checksum': registry['checksum'], 'registry_proof': True}
     pack.load_manifest(blob, expected_sha)
@@ -127,5 +125,5 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, KeyError, TypeError, notice.tarfile.TarError, subprocess.SubprocessError) as error:
         raise SystemExit(f'Unicode font delivery refused: {error}') from error
