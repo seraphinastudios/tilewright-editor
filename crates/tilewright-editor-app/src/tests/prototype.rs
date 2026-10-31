@@ -274,3 +274,43 @@ fn composed_ui_preserves_world_geometry_and_rejects_exhausted_identities() {
         ));
     }
 }
+
+#[test]
+fn cpu_evidence_png_contains_shared_workspace_ui_and_preserves_world_revision_proof() {
+    let (temporary, mut app) = application();
+    let world = app.frame(false).unwrap();
+    let generation = app.session.generation();
+    let revision = app.session.world().source_digest();
+    let composed = app.workspace_frame().unwrap();
+    assert_eq!(
+        (composed.width, composed.height),
+        (world.width, world.height)
+    );
+    assert_ne!(composed.rgba8, world.rgba8);
+    assert_eq!(app.session.generation(), generation);
+    assert_eq!(app.session.world().source_digest(), revision);
+    app.capture("workspace-cpu-proof").unwrap();
+    let bytes = fs::read(temporary.path().join("evidence/workspace-cpu-proof.png")).unwrap();
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .unwrap();
+    let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut decoded).unwrap();
+    assert_eq!(&decoded[..info.buffer_size()], composed.rgba8.as_slice());
+    let proof: serde_json::Value = serde_json::from_slice(
+        &fs::read(temporary.path().join("evidence/workspace-cpu-proof.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(proof["format"], "tilewright.prototype-frame/1");
+    assert_eq!(proof["path"], "cpu-reference");
+    assert_eq!(proof["composition"], "workspace-ui");
+    assert_eq!(proof["frame_generation"], generation);
+    assert_eq!(
+        proof["source_revision"],
+        tilewright_editor_document::revision_hex(&revision)
+    );
+    assert_eq!(
+        proof["committed_revision"],
+        tilewright_editor_document::revision_hex(&app.session.history().document().revision())
+    );
+}

@@ -898,8 +898,26 @@ impl Application {
             .map_err(|error| error.to_string())
     }
 
+    fn workspace_frame(&mut self) -> Result<FrameOutput> {
+        self.refresh_ui();
+        let presentation = workspace_presentation(self)?;
+        let mut renderer = ReferenceRenderer::new(offscreen_target(
+            self.view.camera.width,
+            self.view.camera.height,
+        ))
+        .map_err(|error| error.to_string())?;
+        renderer
+            .render(RenderRequest {
+                scene: &presentation.scene,
+                resources: presentation.resources,
+            })
+            .map_err(|error| error.to_string())
+    }
+
     fn capture(&mut self, name: &str) -> Result<()> {
-        let frame = self.frame(false)?;
+        // CPU evidence includes the exact shared-renderer workspace composition;
+        // the separate World-only frame() remains authoritative for semantic picks.
+        let frame = self.workspace_frame()?;
         let mut bytes = Vec::new();
         {
             let mut encoder = png::Encoder::new(&mut bytes, frame.width, frame.height);
@@ -914,6 +932,7 @@ impl Application {
         self.evidence.retain(&format!("{name}.png"), &bytes)?;
         self.evidence.retain(&format!("{name}.json"), serde_json::to_string_pretty(&serde_json::json!({
             "format":"tilewright.prototype-frame/1", "path":"cpu-reference", "frame_generation":self.view.frame_revision,
+            "composition":"workspace-ui", "world_pick_source":"separate-world-reference-scene",
             "source_revision":tilewright_editor_document::revision_hex(&self.session.world().source_digest()),
             "committed_revision":tilewright_editor_document::revision_hex(&self.session.history().document().revision()),
             "catalog_revision":tilewright_editor_document::revision_hex(&self.prepared.catalog_revision),
