@@ -15,9 +15,6 @@ impl Rect {
         x.checked_sub(self.x).is_some_and(|x| x < self.width)
             && y.checked_sub(self.y).is_some_and(|y| y < self.height)
     }
-    pub fn local(self, x: u32, y: u32) -> Option<(u32, u32)> {
-        self.contains(x, y).then(|| (x - self.x, y - self.y))
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,8 +44,9 @@ pub struct Widget {
     pub active: bool,
 }
 
-/// All coordinates are physical pixels, including the exact world viewport.
-/// Logical sizes are scaled here once; pointer conversion happens at SDL's boundary.
+/// All coordinates are physical pixels. The World scene retains the full target;
+/// `viewport` is its uncovered region between opaque panels. Hits preserve absolute
+/// mask coordinates. Logical sizes scale here once; SDL pointer conversion is separate.
 pub struct WorkspaceUi {
     pub size: (u32, u32),
     pub viewport: Rect,
@@ -154,7 +152,11 @@ impl WorkspaceUi {
         {
             self.widgets.push(Widget {
                 bounds,
-                text: text.into(),
+                text: tilewright_editor_ui::inspector::display_text(
+                    &tilewright_editor_document::terminal_field(
+                        &tilewright_editor_ui::inspector::display_text(&text.into()),
+                    ),
+                ),
                 control,
                 enabled,
                 active,
@@ -190,9 +192,11 @@ impl WorkspaceUi {
                 };
             }
         }
-        self.viewport
-            .local(x, y)
-            .map_or(Hit::Panel, |(x, y)| Hit::World(x, y))
+        if self.viewport.contains(x, y) {
+            Hit::World(x, y)
+        } else {
+            Hit::Panel
+        }
     }
 }
 
@@ -201,7 +205,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dpi_and_viewport_offset_convert_once() {
+    fn dpi_and_panel_offset_preserve_absolute_mask_pixels() {
         let ui = WorkspaceUi::new((960, 640), (1920, 1280));
         assert_eq!(
             ui.viewport,
@@ -212,7 +216,7 @@ mod tests {
                 height: 824
             }
         );
-        assert_eq!(ui.hit(18, 110), Hit::World(18, 14));
+        assert_eq!(ui.hit(18, 110), Hit::World(18, 110));
         assert_eq!(ui.hit(1280, 110), Hit::Panel);
         assert_eq!(ui.hit(18, 920), Hit::Panel);
         assert_eq!(ui.hit(1920, 110), Hit::Outside);
@@ -251,11 +255,11 @@ mod tests {
     }
 
     #[test]
-    fn resized_nonuniform_dpi_keeps_local_mask_pixels() {
+    fn resized_nonuniform_dpi_keeps_absolute_mask_pixels() {
         let ui = WorkspaceUi::new((800, 600), (1200, 1200));
         assert_eq!(
             ui.hit(ui.viewport.x + 5, ui.viewport.y + 9),
-            Hit::World(5, 9)
+            Hit::World(ui.viewport.x + 5, ui.viewport.y + 9)
         );
         assert_eq!(ui.hit(ui.viewport.width, ui.viewport.y), Hit::Panel);
         let empty = WorkspaceUi::new((0, 0), (0, 0));

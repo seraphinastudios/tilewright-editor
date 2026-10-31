@@ -30,6 +30,7 @@ use tilewright_source::SourceRoot;
 const HELP: &str = "Select / Move / Terrain | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 
 type Result<T> = std::result::Result<T, String>;
+type UiRows = Vec<(String, Option<Control>, bool, bool)>;
 
 struct Application {
     session: Session,
@@ -303,12 +304,14 @@ impl Application {
             .find(|(object, _)| object == &uid)
             .map(|(_, field)| field.clone())
             .ok_or("selected object has no field capability")?;
-        self.action(Action::SetField {
-            uid,
-            field,
-            value: serde_json::Value::String("Edited offline".into()),
-            expected: self.session.history().document().revision(),
-        })
+        self.control(Control::Field(field))?;
+        while self.tools.draft_text().is_some_and(|text| !text.is_empty()) {
+            self.tools.backspace();
+        }
+        self.tools
+            .input("Edited offline")
+            .map_err(|error| error.to_string())?;
+        self.control(Control::ApplyDraft)
     }
 
     fn paint(&mut self) -> Result<()> {
@@ -335,10 +338,15 @@ impl Application {
     }
 
     fn refresh_ui(&mut self) {
-        let logical = self.ui.logical_size();
-        let mut ui = WorkspaceUi::new(logical, self.ui.size);
+        let mut ui = WorkspaceUi::new(self.ui.logical_size(), self.ui.size);
+        self.toolbar(&mut ui);
+        self.sidebar(&mut ui);
+        self.review(&mut ui);
+        self.ui = ui;
+    }
+
+    fn toolbar(&self, ui: &mut WorkspaceUi) {
         let ready = self.blocked.is_none() && self.session.can_prepare();
-        let pending = self.session.history().pending().is_some();
         let mode = self.tools.mode();
         for (x, width, label, control, enabled, active) in [
             (
@@ -396,9 +404,12 @@ impl Application {
                 active,
             );
         }
-        let x = ui.sidebar_x();
-        let width = ui.sidebar_width();
-        let mut rows: Vec<(String, Option<Control>, bool, bool)> = Vec::new();
+    }
+
+    fn inspector_rows(&self) -> UiRows {
+        let ready = self.blocked.is_none() && self.session.can_prepare();
+        let mode = self.tools.mode();
+        let mut rows = Vec::new();
         let inspected = inspector::inspect(
             self.session.world(),
             self.session.catalog(),
@@ -416,66 +427,18 @@ impl Application {
                 at,
                 movable,
             }) => {
-                rows.push((format!("Object {uid}  [{prototype}]"), None, true, false));
-                rows.push((
-                    format!("{plane} / layer {layer} / {at:?}"),
-                    None,
-                    true,
-                    false,
-                ));
-                rows.push((
-                    "Edit coordinates: x,y".into(),
-                    Some(Control::Coordinates),
-                    ready && movable,
-                    false,
-                ));
-                if mode == ToolMode::Move {
-                    for (label, delta) in [
-                        ("Move left", [-1, 0]),
-                        ("Move right", [1, 0]),
-                        ("Move up", [0, -1]),
-                        ("Move down", [0, 1]),
-                    ] {
-                        rows.push((
-                            label.into(),
-                            Some(Control::Nudge(delta)),
-                            ready && movable,
-                            false,
-                        ));
-                    }
-                }
-                for row in &inspected.rows {
-                    let value = row
-                        .current
-                        .map_or_else(|| "<absent>".into(), inspector::scalar_text);
-                    rows.push((
-                        format!("{} = {}", row.name, value),
-                        Some(Control::Field(row.name.into())),
-                        ready && row.editable,
-                        false,
-                    ));
-                    let detail = row
-                        .reason
-                        .map_or_else(|| format!("{:?}", row.spec.field_type), str::to_owned);
-                    rows.push((detail, None, row.editable, false));
-                    let choices = tools::field_choices(&inspected, row.name);
-                    if !choices.is_empty() {
-                        rows.push((
-                            format!("Choices: {}", choices.join(", ")),
-                            None,
-                            true,
-                            false,
-                        ));
-                    }
-                }
-                if inspected.truncated {
-                    rows.push((
-                        "More schema rows omitted by input budget".into(),
-                        None,
-                        false,
-                        false,
-                    ));
-                }
+                self.object_rows(
+                    &mut rows,
+                    &inspected,
+                    SelectionSummary::Object {
+                        uid,
+                        prototype,
+                        plane,
+                        layer,
+                        at,
+                        movable,
+                    },
+                );
             }
             Some(SelectionSummary::Cell {
                 plane,
@@ -524,6 +487,99 @@ impl Application {
                 ));
             }
         }
+        rows
+    }
+
+    fn object_rows(
+        &self,
+        rows: &mut UiRows,
+        inspected: &inspector::Inspector<'_>,
+        summary: SelectionSummary<'_>,
+    ) {
+        let SelectionSummary::Object {
+            uid,
+            prototype,
+            plane,
+            layer,
+            at,
+            movable,
+        } = summary
+        else {
+            return;
+        };
+        let ready = self.blocked.is_none() && self.session.can_prepare();
+        let mode = self.tools.mode();
+        rows.push((format!("Object {uid}  [{prototype}]"), None, true, false));
+        rows.push((
+            format!("{plane} / layer {layer} / {at:?}"),
+            None,
+            true,
+            false,
+        ));
+        rows.push((
+            "Edit coordinates: x,y".into(),
+            Some(Control::Coordinates),
+            ready && movable,
+            false,
+        ));
+        if mode == ToolMode::Move {
+            for (label, delta) in [
+                ("Move left", [-1, 0]),
+                ("Move right", [1, 0]),
+                ("Move up", [0, -1]),
+                ("Move down", [0, 1]),
+            ] {
+                rows.push((
+                    label.into(),
+                    Some(Control::Nudge(delta)),
+                    ready && movable,
+                    false,
+                ));
+            }
+        }
+        for row in &inspected.rows {
+            let value = row.current.map_or_else(
+                || "<absent>".into(),
+                |value| match value {
+                    tilewright_source::FieldValue::String(text) => inspector::display_text(text),
+                    _ => inspector::display_text(&inspector::scalar_text(value)),
+                },
+            );
+            rows.push((
+                format!("{} = {}", row.name, value),
+                Some(Control::Field(row.name.into())),
+                ready && row.editable,
+                false,
+            ));
+            let detail = row
+                .reason
+                .map_or_else(|| format!("{:?}", row.spec.field_type), str::to_owned);
+            rows.push((detail, None, row.editable, false));
+            let choices = tools::field_choices(inspected, row.name);
+            if !choices.is_empty() {
+                rows.push((
+                    format!("Choices: {}", choices.join(", ")),
+                    None,
+                    true,
+                    false,
+                ));
+            }
+        }
+        if inspected.truncated {
+            rows.push((
+                "More schema rows omitted by input budget".into(),
+                None,
+                false,
+                false,
+            ));
+        }
+    }
+
+    fn sidebar(&mut self, ui: &mut WorkspaceUi) {
+        let ready = self.blocked.is_none() && self.session.can_prepare();
+        let x = ui.sidebar_x();
+        let width = ui.sidebar_width();
+        let rows = self.inspector_rows();
         let mut y = 56;
         if let Some(text) = self.tools.draft_text() {
             ui.widget(
@@ -584,6 +640,11 @@ impl Application {
             );
             y += 28;
         }
+    }
+
+    fn review(&mut self, ui: &mut WorkspaceUi) {
+        let logical = ui.logical_size();
+        let pending = self.session.history().pending().is_some();
         let y = ui.review_y();
         ui.widget(
             Rect {
@@ -626,31 +687,7 @@ impl Application {
             true,
             false,
         );
-        let mut diff = Vec::new();
-        if let Some(plan) = self.session.history().pending() {
-            for file in plan.changed().take(32) {
-                diff.push(format!("--- {}", file.path));
-                diff.extend(
-                    file.before
-                        .as_deref()
-                        .unwrap_or("<absent>")
-                        .lines()
-                        .take(2048)
-                        .map(|line| format!("- {}", inspector::display_text(line))),
-                );
-                diff.push(format!("+++ {}", file.path));
-                diff.extend(
-                    file.after
-                        .as_deref()
-                        .unwrap_or("<absent>")
-                        .lines()
-                        .take(2048)
-                        .map(|line| format!("+ {}", inspector::display_text(line))),
-                );
-            }
-        } else {
-            diff.push("No pending source diff. Edits are reviewed before acceptance.".into());
-        }
+        let diff = self.diff_lines();
         let lines = usize::try_from(logical.1.saturating_sub(y + 64) / 20).unwrap_or(0);
         self.review_scroll = self.review_scroll.min(diff.len().saturating_sub(lines));
         for (index, line) in diff
@@ -672,7 +709,46 @@ impl Application {
                 false,
             );
         }
-        self.ui = ui;
+    }
+
+    fn diff_lines(&self) -> Vec<String> {
+        let mut diff = Vec::new();
+        if let Some(plan) = self.session.history().pending() {
+            for file in plan.changed().take(32) {
+                let before = file.before.as_deref().unwrap_or("<absent>");
+                let after = file.after.as_deref().unwrap_or("<absent>");
+                let first_change = before
+                    .lines()
+                    .zip(after.lines())
+                    .position(|(a, b)| a != b)
+                    .unwrap_or_else(|| before.lines().count().min(after.lines().count()));
+                let start = first_change.saturating_sub(2);
+                diff.push(format!(
+                    "--- {} / source excerpt at line {}",
+                    file.path,
+                    start + 1
+                ));
+                diff.extend(
+                    before
+                        .lines()
+                        .skip(start)
+                        .take(8)
+                        .map(|line| format!("- {}", inspector::display_text(line))),
+                );
+                diff.push(format!("+++ {}", file.path));
+                diff.extend(
+                    after
+                        .lines()
+                        .skip(start)
+                        .take(8)
+                        .map(|line| format!("+ {}", inspector::display_text(line))),
+                );
+                diff.push("Full reviewed before/after images are printed in the terminal.".into());
+            }
+        } else {
+            diff.push("No pending source diff. Edits are reviewed before acceptance.".into());
+        }
+        diff
     }
 
     fn control(&mut self, control: Control) -> Result<()> {
@@ -829,6 +905,7 @@ impl Application {
                 self.select_visible_object(false)?;
             }
             1 => {
+                self.tools.set_mode(ToolMode::Move);
                 self.nudge([1, 0])?;
                 self.capture("pending")?;
             }
@@ -932,7 +1009,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
     let sdl = sdl3::init().map_err(|error| error.to_string())?;
     let video = sdl.video().map_err(|error| error.to_string())?;
     let mut window = video
-        .window("Tilewright offline prototype", 960, 640)
+        .window("Tilewright offline prototype", 1280, 800)
         .position_centered()
         .resizable()
         .build()
@@ -942,8 +1019,8 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
         .map_err(|error| error.to_string())?;
     let (width, height) = window.size_in_pixels();
     app.ui = WorkspaceUi::new(window.size(), (width, height));
-    app.view.camera.width = app.ui.viewport.width;
-    app.view.camera.height = app.ui.viewport.height;
+    app.view.camera.width = width;
+    app.view.camera.height = height;
     app.rebuild()?;
     let mut renderer = WgpuRenderer::new(TargetDescriptor {
         kind: TargetKind::Window,
@@ -1056,8 +1133,8 @@ fn native_event(
                 .resize(size.0, size.1)
                 .map_err(|error| error.to_string())?;
             app.ui = WorkspaceUi::new(window.size(), size);
-            app.view.camera.width = app.ui.viewport.width;
-            app.view.camera.height = app.ui.viewport.height;
+            app.view.camera.width = size.0;
+            app.view.camera.height = size.1;
             app.rebuild()
         }
         Event::MouseButtonDown {
