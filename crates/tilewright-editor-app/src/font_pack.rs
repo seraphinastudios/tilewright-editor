@@ -5,10 +5,7 @@
 //! rejects symlink/traversal/special-file inputs; renderer validates all bytes.
 use sha2::{Digest, Sha256};
 use std::{path::Path, sync::Arc};
-use tilewright_render_ui::{
-    unicode::{FontBlob, FontPack, TextLimits, TextSystem},
-    unicode_fonts::FONTS,
-};
+use tilewright_render_ui::{FontBlob, FontPack, TextLimits, TextSystem, unicode_fonts::FONTS};
 use tilewright_source::SourceRoot;
 
 pub fn load(path: &Path, world: &Path) -> Result<TextSystem, String> {

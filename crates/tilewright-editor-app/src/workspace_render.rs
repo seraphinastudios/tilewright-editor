@@ -10,8 +10,8 @@ use tilewright_render_resources::{
     Error as ResourceError, ResourceBlob, ResourceProvider, ResourceRequest,
 };
 use tilewright_render_ui::{
-    UiDisplayList, UiLimits, UiPaint, UiPrimitive, UiRect, UiTexture, UiViewport, builtin,
-    unicode::{TextAffinity, TextCursor, TextSystem, UnicodeLayout, UnicodeTexture},
+    TextAffinity, TextCursor, TextSystem, UiDisplayList, UiLimits, UiPaint, UiPrimitive, UiRect,
+    UiTexture, UiViewport, UnicodeLayout, UnicodeTexture, builtin,
 };
 use tilewright_scene::{Digest256, ResourceId, SceneBundle, SceneLimits, SemanticId};
 
@@ -23,15 +23,13 @@ pub enum CompositionError {
     SemanticIdentityExhausted,
     ResourceIdentityExhausted,
     PainterOrderExhausted,
-    Ui(tilewright_render_ui::UiError),
-    Text(tilewright_render_ui::unicode::TextError),
+    Text(tilewright_render_ui::TextError),
     Scene(tilewright_scene::Error),
 }
 impl fmt::Display for CompositionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Text(error) => fmt::Display::fmt(error, formatter),
-            Self::Ui(error) => fmt::Display::fmt(error, formatter),
             Self::Scene(error) => fmt::Display::fmt(error, formatter),
             other => write!(formatter, "UI composition refused: {other:?}"),
         }
@@ -357,4 +355,63 @@ pub fn compose(
         unsupported_runs: compiled.unsupported.len(),
         editable,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Missing;
+    impl ResourceProvider for Missing {
+        fn load(&self, _: ResourceRequest) -> std::result::Result<ResourceBlob, ResourceError> {
+            Err(ResourceError::NotFound)
+        }
+    }
+    #[test]
+    fn immutable_unicode_resources_validate_complete_identity_and_budget() {
+        let identity = UiTexture {
+            id: ResourceId(100),
+            revision: 4,
+            digest: Digest256([7; 32]),
+        };
+        let resources = Resources {
+            world: Arc::new(Missing),
+            textures: vec![UnicodeTexture {
+                identity,
+                bytes: Arc::from([1_u8, 2, 3]),
+            }],
+            solid: UiTexture {
+                id: ResourceId(101),
+                revision: 1,
+                digest: Digest256(builtin::SOLID_SHA256),
+            },
+        };
+        let request = ResourceRequest {
+            id: identity.id,
+            revision: identity.revision,
+            digest: identity.digest,
+            maximum_bytes: 100,
+        };
+        assert_eq!(resources.load(request).unwrap().bytes(), &[1, 2, 3]);
+        assert_eq!(
+            resources.load(ResourceRequest {
+                revision: 3,
+                ..request
+            }),
+            Err(ResourceError::DigestMismatch)
+        );
+        assert_eq!(
+            resources.load(ResourceRequest {
+                maximum_bytes: 1,
+                ..request
+            }),
+            Err(ResourceError::LimitExceeded)
+        );
+        assert_eq!(
+            resources.load(ResourceRequest {
+                id: ResourceId(102),
+                ..request
+            }),
+            Err(ResourceError::NotFound)
+        );
+    }
 }

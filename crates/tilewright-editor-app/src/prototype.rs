@@ -55,7 +55,7 @@ struct Application {
     unsupported_runs: usize,
     presented_generation: Option<u64>,
     blocked: Option<String>,
-    text: tilewright_render_ui::unicode::TextSystem,
+    text: tilewright_render_ui::TextSystem,
     displayed_text: Option<crate::workspace_render::EditableGeometry>,
     presented_text_revision: Option<tilewright_editor_ui::text_input::TextRevision>,
 }
@@ -1385,13 +1385,29 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                 break 'running;
             }
             let composing = app.tools.is_composing();
-            let result = native_text_event(&mut app, &event, &mut input).unwrap_or_else(|| {
-                native_event(&mut app, &mut renderer, &window, &event, &mut minimized)
-            });
+            let had_draft = app.tools.draft_text().is_some();
+            let refocus = if let Event::MouseButtonDown { x, y, .. } = event {
+                crate::viewport::physical_pixel([x, y], window.size(), window.size_in_pixels())
+                    .is_some_and(|(x, y)| app.ui.hit(x, y) == Hit::Control(Control::EditDraft))
+            } else {
+                false
+            };
+            let result = native_clipboard_event(&mut app, &event, &video, input.focused)
+                .or_else(|| native_text_event(&mut app, &event, &mut input))
+                .unwrap_or_else(|| {
+                    native_event(
+                        &mut app,
+                        &mut renderer,
+                        &window,
+                        &event,
+                        &mut minimized,
+                        input.shift,
+                    )
+                });
             if composing && !app.tools.is_composing() && !matches!(event, Event::TextInput { .. }) {
                 crate::native_input::clear_composition(&window)?;
             }
-            if matches!(event, Event::MouseButtonDown { .. }) && app.tools.draft_text().is_some() {
+            if refocus || (!had_draft && app.tools.draft_text().is_some()) {
                 input.focused = true;
             }
             if matches!(
@@ -1495,6 +1511,61 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
     }
 }
 
+fn native_clipboard_event(
+    app: &mut Application,
+    event: &Event,
+    video: &sdl3::VideoSubsystem,
+    focused: bool,
+) -> Option<Result<()>> {
+    let Event::KeyDown {
+        keycode: Some(key),
+        keymod,
+        repeat: false,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if !focused
+        || app.tools.draft_text().is_none()
+        || app.tools.is_composing()
+        || !keymod.intersects(
+            sdl3::keyboard::Mod::LCTRLMOD
+                | sdl3::keyboard::Mod::RCTRLMOD
+                | sdl3::keyboard::Mod::LGUIMOD
+                | sdl3::keyboard::Mod::RGUIMOD,
+        )
+    {
+        return None;
+    }
+    if !matches!(key, Keycode::C | Keycode::X | Keycode::V) {
+        return None;
+    }
+    Some((|| {
+        if *key == Keycode::V {
+            let text = video
+                .clipboard()
+                .clipboard_text()
+                .map_err(|error| error.to_string())?;
+            app.tools.input(&text).map_err(|error| error.to_string())
+        } else {
+            let snapshot = app.tools.draft_snapshot().ok_or("no draft")?;
+            let range = snapshot.selection.range();
+            if range.is_empty() {
+                return Ok(());
+            }
+            video
+                .clipboard()
+                .set_clipboard_text(&snapshot.committed[range])
+                .map_err(|error| error.to_string())?;
+            if *key == Keycode::X {
+                app.tools.input("").map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        }
+    })())
+}
+
 /// Testable routing uses real SDL event values without initializing SDL/GPU.
 fn native_text_event(
     app: &mut Application,
@@ -1506,6 +1577,10 @@ fn native_text_event(
         .is_some_and(|id| id != input.window_id)
     {
         return Some(Ok(()));
+    }
+    if let Event::KeyDown { keymod, .. } | Event::KeyUp { keymod, .. } = event {
+        input.shift =
+            keymod.intersects(sdl3::keyboard::Mod::LSHIFTMOD | sdl3::keyboard::Mod::RSHIFTMOD);
     }
     match event {
         Event::Window {
@@ -1608,7 +1683,7 @@ fn native_text_event(
 }
 fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> {
     use tilewright_editor_ui::text_input::TextSelection;
-    use tilewright_render_ui::unicode::VisualMotion;
+    use tilewright_render_ui::VisualMotion;
     if !app.displayed_input_ready() {
         return Err("caret movement waits for displayed current draft".into());
     }
@@ -1652,6 +1727,7 @@ fn native_event(
     window: &sdl3::video::Window,
     event: &Event,
     minimized: &mut bool,
+    extend_selection: bool,
 ) -> Result<()> {
     match event {
         Event::Window {
@@ -1684,7 +1760,13 @@ fn native_event(
             x,
             y,
             ..
-        } if !*minimized => native_pointer(app, [*x, *y], window.size(), window.size_in_pixels()),
+        } if !*minimized => native_pointer_selection(
+            app,
+            [*x, *y],
+            window.size(),
+            window.size_in_pixels(),
+            extend_selection,
+        ),
         Event::MouseWheel {
             integer_y,
             mouse_x,
@@ -1738,6 +1820,15 @@ fn native_pointer(
     logical: (u32, u32),
     physical: (u32, u32),
 ) -> Result<()> {
+    native_pointer_selection(app, position, logical, physical, false)
+}
+fn native_pointer_selection(
+    app: &mut Application,
+    position: [f32; 2],
+    logical: (u32, u32),
+    physical: (u32, u32),
+    extend: bool,
+) -> Result<()> {
     if !app.displayed_input_ready() {
         return Err("input waits for the current displayed frame".into());
     }
@@ -1767,11 +1858,16 @@ fn native_pointer(
                 .snapshot
                 .committed_cursor(crate::workspace_render::model_cursor(cursor))
                 .map_err(|error| error.to_string())?;
+            let selection = if extend {
+                tilewright_editor_ui::text_input::TextSelection {
+                    anchor: geometry.snapshot.selection.anchor,
+                    focus: cursor,
+                }
+            } else {
+                tilewright_editor_ui::text_input::TextSelection::caret(cursor)
+            };
             app.tools
-                .set_selection(
-                    tilewright_editor_ui::text_input::TextSelection::caret(cursor),
-                    geometry.revision,
-                )
+                .set_selection(selection, geometry.revision)
                 .map_err(|error| error.to_string())
         }
         Hit::Control(control) => app.control(control),

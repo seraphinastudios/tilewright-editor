@@ -7,6 +7,7 @@ pub struct NativeInput {
     pub window_id: u32,
     pub focused: bool,
     pub started: bool,
+    pub shift: bool,
     submit_blocked: bool,
     batch_has_text: bool,
 }
@@ -16,6 +17,7 @@ impl NativeInput {
             window_id,
             focused: true,
             started: false,
+            shift: false,
             submit_blocked: false,
             batch_has_text: false,
         }
@@ -38,6 +40,7 @@ impl NativeInput {
     }
     pub fn lose_focus(&mut self) {
         self.focused = false;
+        self.shift = false;
         self.submit_blocked = true;
     }
 }
