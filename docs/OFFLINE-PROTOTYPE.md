@@ -1,6 +1,8 @@
 # Offline editing prototype
 
-The prototype composes released World 0.1.0 and renderer 0.5.1. The generic
+The prototype targets World 0.1.0 and renderer 0.6.0. Release builds require
+the exact published registry dependencies; local source candidates do not
+establish released-consumer acceptance. The generic
 editor opens ordinary World data and its strict `preview.jsonc` catalog. A
 separate Atrinik toolkit adapter imports a selected external Classic map and
 exports a checked subset of edits. The editor contains no Classic parser and
@@ -60,17 +62,39 @@ outside this private-directory/advisory-lock model.
 
 ## Controls and review
 
-The native window presents the prepared scene through the released wgpu/SDL3
-adapter and remains open until the user closes it. Window title and terminal
-show state, selection, help, diagnostics and the actual planned source diff.
+The native window presents the prepared scene through the shared wgpu/SDL3
+adapter and remains open until the user closes it. A toolbar selects Select,
+Move or Terrain mode and exposes Clear, Undo and Redo. The inspector shows
+the selected object's identity, position and schema fields, or the selected
+cell and explicit terrain choices. Only profile-authorized scalar fields are
+editable; structured values remain read-only.
+
+Click an editable field or position, type or backspace at the working end,
+then choose Review. Long focused input keeps its tail and caret visible.
+Text focus consumes world shortcuts. The bounded common-Latin font reports
+unsupported/complex text, preserves the complete original value and prevents
+a lossy visual replacement. Full shaping, bidirectional editing, selection
+ranges and international composition UI remain separate work.
+
+The source review panel shows change-centered before/after sections and can
+scroll. Unchanged omitted context is marked explicitly. Complete changed spans
+must fit the 64 KiB escaped-review budget and 32-file bound; an oversized review
+disables acceptance and retains the pending plan for cancellation. The complete
+sealed source images remain authoritative. The terminal also retains the full
+planned source diff and diagnostics.
 Selection uses exact reference-renderer semantic masks for the matching frame;
 terrain mode uses a separate opaque cell-reference scene. SDL logical pointer
-positions convert to physical pixels once. Resize/camera/session changes
+positions convert to physical pixels once. Opaque panel hit regions consume
+input before world picking. The world remains full-window behind the panels;
+the editor does not translate or rasterize world geometry. Resize/camera/session changes
 invalidate earlier masks.
 
 Planned edits are visible before acceptance. Accept retains the exact inverse
 before World publication; Cancel publishes nothing. Undo and redo prepare World
-transactions and require acceptance through the same path. An uncertain
+transactions and require acceptance through the same path. A pending plan must
+be accepted or cancelled before another edit, undo or redo is prepared. Valid
+semantic selections survive acceptance. Native input cannot accept a pending
+change before its current frame has been presented. An uncertain
 applied/durable/cleaned result blocks further editing and preserves its record.
 Reopen is explicit inspection/reload, never blind recovery or retry.
 
@@ -93,7 +117,8 @@ for its manifest/stale-source/unsupported-edit rejection contract.
 
 `--demo-script` drives the same session actions, command history and scene
 preparation as interactive input. It is a deterministic scripted demonstration,
-not a claim of human input. `--reference` produces CPU reference evidence and
+not a claim of human input. `--reference` produces composed workspace CPU
+reference evidence and
 must be reported separately from an actual visible native window run. Native
 presentation/backend/adapter evidence cannot be inferred from passing unit tests
 or CPU frames. Screenshot/video artifacts must identify which path produced
@@ -105,7 +130,7 @@ real Classic maps/art, adapter baseline, recovery records and session evidence
 are excluded. Windows build/test/package success is not Windows durable-editing
 or native D3D12 qualification.
 
-Later work includes rich panels/text, arbitrary-root provisioning APIs,
+Later work includes a full widget/text-editing system, arbitrary-root provisioning APIs,
 automatic crash replay, persistent undo, additional Classic edit forms, original
 art/effects qualification, broader platform durability and game-runtime cutover.
 Each needs its own evidence and authority; none is implied by this prototype.
