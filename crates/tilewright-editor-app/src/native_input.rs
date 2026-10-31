@@ -49,6 +49,13 @@ impl NativeInput {
         self.text_after = timestamp;
         self.submit.batch_text_blocked = true;
     }
+    /// Explicit cancellation invalidates text already drained for the old IME
+    /// session. A natural empty TextEditing can precede a legitimate commit and
+    /// must not use this cancellation transition.
+    pub fn cancel_composition(&mut self) {
+        self.submit.batch_text_blocked = true;
+        self.submit.blocked = true;
+    }
     pub fn text_activity(&mut self) {
         self.submit.blocked = true;
     }

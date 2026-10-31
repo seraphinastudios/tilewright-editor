@@ -61,5 +61,33 @@ pub fn load(path: &Path, world: &Path) -> Result<TextSystem, String> {
 pub fn test_system() -> TextSystem {
     let path = std::env::var_os("TILEWRIGHT_UNICODE_FONT_ROOT")
         .expect("tests require explicit trusted font fixture TILEWRIGHT_UNICODE_FONT_ROOT");
-    load(Path::new(&path), Path::new("/tmp")).expect("verified test font pack")
+    let world = test_world_root();
+    assert!(
+        world.is_dir(),
+        "neutral World fixture must exist on this platform"
+    );
+    load(Path::new(&path), &world).expect("verified test font pack")
+}
+
+#[cfg(test)]
+fn test_world_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tilewright-editor-testkit/fixtures/prototype-neutral")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn neutral_world_fixture_exists_and_is_separate_from_explicit_font_pack() {
+        let world = test_world_root()
+            .canonicalize()
+            .expect("platform-independent fixture root");
+        assert!(world.is_dir());
+        let fonts =
+            std::env::var_os("TILEWRIGHT_UNICODE_FONT_ROOT").expect("explicit font fixture");
+        let fonts = Path::new(&fonts).canonicalize().unwrap();
+        assert!(!world.starts_with(&fonts));
+        assert!(!fonts.starts_with(&world));
+    }
 }

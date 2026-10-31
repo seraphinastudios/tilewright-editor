@@ -1414,14 +1414,19 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                     input.shift,
                 )
             });
-            if composing && !app.tools.is_composing() && !matches!(event, Event::TextInput { .. }) {
+            if composing
+                && !app.tools.is_composing()
+                && !matches!(event, Event::TextInput { .. } | Event::TextEditing { .. })
+            {
+                input.cancel_composition();
                 crate::native_input::clear_composition(&window)?;
             }
             let draft_after = app.tools.input_revision().map(|revision| revision.draft);
             if draft_before != draft_after {
                 crate::native_input::clear_composition(&window)?;
             }
-            if result.is_ok() && (refocus || (draft_before != draft_after && draft_after.is_some())) {
+            if result.is_ok() && (refocus || (draft_before != draft_after && draft_after.is_some()))
+            {
                 input.refocus(event.get_timestamp());
             }
             if matches!(
@@ -1700,10 +1705,12 @@ fn native_text_event(
                     visual_move(app, *key, shift)
                 }
                 Keycode::Delete => app.tools.delete().map_err(|error| error.to_string()),
-                Keycode::Escape if app.tools.is_composing() => app
-                    .tools
-                    .cancel_preedit()
-                    .map_err(|error| error.to_string()),
+                Keycode::Escape if app.tools.is_composing() => {
+                    input.cancel_composition();
+                    app.tools
+                        .cancel_preedit()
+                        .map_err(|error| error.to_string())
+                }
                 _ => native_key(app, *key),
             })
         }

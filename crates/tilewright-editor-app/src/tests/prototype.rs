@@ -1029,3 +1029,97 @@ fn switched_or_refocused_draft_rejects_previously_drained_ime_events() {
     );
     assert!(app.session.history().pending().is_none());
 }
+
+#[test]
+fn escape_composition_cancel_fences_queued_text_and_allows_fresh_input() {
+    use crate::workspace_ui::Control;
+    use sdl3::{event::Event, keyboard::Keycode};
+    let (temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    app.tools.select_all().unwrap();
+    let committed = app.tools.draft_snapshot().unwrap();
+    let path = temporary
+        .path()
+        .join("world/planes/main/layers/0/0_0.jsonc");
+    let source = fs::read(&path).unwrap();
+    let revision = app.session.history().document().revision();
+    let mut input = crate::native_input::NativeInput::new(7);
+    input.begin_batch(true, Some(committed.revision.draft));
+    let preedit = Event::TextEditing {
+        timestamp: 1,
+        window_id: 7,
+        text: "OLD".into(),
+        start: 0,
+        length: 1,
+    };
+    super::native_text_event(&mut app, &preedit, &mut input)
+        .unwrap()
+        .unwrap();
+    assert!(app.tools.is_composing());
+    super::native_text_event(&mut app, &input_key(7, Keycode::Escape, false), &mut input)
+        .unwrap()
+        .unwrap();
+    assert!(!app.tools.is_composing());
+    assert_eq!(
+        app.tools.draft_snapshot().unwrap().selection,
+        committed.selection
+    );
+    for queued in [
+        Event::TextInput {
+            timestamp: 3,
+            window_id: 7,
+            text: "OLD".into(),
+        },
+        preedit,
+    ] {
+        super::native_text_event(&mut app, &queued, &mut input)
+            .unwrap()
+            .unwrap();
+    }
+    assert_eq!(app.tools.draft_text(), Some(committed.committed.as_str()));
+    assert!(!app.tools.is_composing());
+    assert!(input.focused);
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.session.history().document().revision(), revision);
+    assert_eq!(fs::read(&path).unwrap(), source);
+    input.begin_batch(
+        true,
+        app.tools.input_revision().map(|revision| revision.draft),
+    );
+    let fresh_preedit = Event::TextEditing {
+        timestamp: 4,
+        window_id: 7,
+        text: "NEW".into(),
+        start: 1,
+        length: 1,
+    };
+    super::native_text_event(&mut app, &fresh_preedit, &mut input)
+        .unwrap()
+        .unwrap();
+    assert!(app.tools.is_composing());
+    // Backends may end preedit with an empty edit before delivering the commit.
+    let natural_end = Event::TextEditing {
+        timestamp: 5,
+        window_id: 7,
+        text: String::new(),
+        start: -1,
+        length: -1,
+    };
+    super::native_text_event(&mut app, &natural_end, &mut input)
+        .unwrap()
+        .unwrap();
+    assert!(!app.tools.is_composing());
+    assert_eq!(app.tools.draft_text(), Some(committed.committed.as_str()));
+    let fresh_commit = Event::TextInput {
+        timestamp: 5,
+        window_id: 7,
+        text: "NEW".into(),
+    };
+    super::native_text_event(&mut app, &fresh_commit, &mut input)
+        .unwrap()
+        .unwrap();
+    assert_eq!(app.tools.draft_text(), Some("NEW"));
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(fs::read(path).unwrap(), source);
+}
