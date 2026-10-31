@@ -38,20 +38,26 @@ pub enum Control {
 #[derive(Clone, Debug)]
 pub struct Widget {
     pub bounds: Rect,
+    /// Logical layout rectangle consumed by the shared UI compiler.
+    pub layout: Rect,
     pub text: String,
     pub control: Option<Control>,
     pub enabled: bool,
     pub active: bool,
 }
 
-/// All coordinates are physical pixels. The World scene retains the full target;
+/// Hit rectangles use physical pixels; display rectangles retain logical units
+/// for the shared UI compiler. The World scene retains the full target;
 /// `viewport` is its uncovered region between opaque panels. Hits preserve absolute
-/// mask coordinates. Logical sizes scale here once; SDL pointer conversion is separate.
+/// mask coordinates. Each layout/input path scales once at its own boundary.
 pub struct WorkspaceUi {
     pub size: (u32, u32),
     pub viewport: Rect,
     pub sidebar: Rect,
     pub review: Rect,
+    pub logical_viewport: Rect,
+    pub logical_sidebar: Rect,
+    pub logical_review: Rect,
     pub widgets: Vec<Widget>,
     logical: (u32, u32),
 }
@@ -90,27 +96,48 @@ impl WorkspaceUi {
                 width: 0,
                 height: 0,
             },
+            logical_viewport: Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+            logical_sidebar: Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+            logical_review: Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
             widgets: Vec::new(),
             logical,
         };
-        ui.viewport = ui.scale(Rect {
+        ui.logical_viewport = Rect {
             x: 0,
             y: top,
             width: logical.0 - side,
             height: logical.1 - top - review,
-        });
-        ui.sidebar = ui.scale(Rect {
+        };
+        ui.logical_sidebar = Rect {
             x: logical.0 - side,
             y: top,
             width: side,
             height: logical.1 - top,
-        });
-        ui.review = ui.scale(Rect {
+        };
+        ui.logical_review = Rect {
             x: 0,
             y: logical.1 - review,
             width: logical.0 - side,
             height: review,
-        });
+        };
+        ui.viewport = ui.scale(ui.logical_viewport);
+        ui.sidebar = ui.scale(ui.logical_sidebar);
+        ui.review = ui.scale(ui.logical_review);
         ui
     }
 
@@ -144,6 +171,7 @@ impl WorkspaceUi {
         enabled: bool,
         active: bool,
     ) {
+        let layout = bounds;
         let bounds = self.scale(bounds);
         if bounds.width > 0
             && bounds.height > 0
@@ -152,6 +180,7 @@ impl WorkspaceUi {
         {
             self.widgets.push(Widget {
                 bounds,
+                layout,
                 text: tilewright_editor_ui::inspector::display_text(
                     &tilewright_editor_document::terminal_field(
                         &tilewright_editor_ui::inspector::display_text(&text.into()),
@@ -264,5 +293,35 @@ mod tests {
         assert_eq!(ui.hit(ui.viewport.width, ui.viewport.y), Hit::Panel);
         let empty = WorkspaceUi::new((0, 0), (0, 0));
         assert_eq!(empty.hit(0, 0), Hit::Outside);
+    }
+}
+
+#[cfg(test)]
+mod dpi_tests {
+    use super::*;
+    #[test]
+    fn shared_logical_layout_and_physical_hit_bounds_agree_at_supported_dpi() {
+        for (width, height, x, y) in [
+            (960, 640, 10, 60),
+            (1200, 800, 12, 75),
+            (1440, 960, 15, 90),
+            (1920, 1280, 20, 120),
+        ] {
+            let mut ui = WorkspaceUi::new((960, 640), (width, height));
+            let layout = Rect {
+                x: 10,
+                y: 60,
+                width: 80,
+                height: 26,
+            };
+            ui.widget(layout, "Test", Some(Control::Select), true, false);
+            assert_eq!(ui.widgets[0].layout, layout);
+            assert_eq!((ui.widgets[0].bounds.x, ui.widgets[0].bounds.y), (x, y));
+            assert_eq!(ui.hit(x, y), Hit::Control(Control::Select));
+            assert_eq!(
+                ui.hit(ui.widgets[0].bounds.x + ui.widgets[0].bounds.width, y),
+                Hit::World(ui.widgets[0].bounds.x + ui.widgets[0].bounds.width, y)
+            );
+        }
     }
 }

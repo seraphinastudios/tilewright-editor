@@ -73,6 +73,8 @@ fn application() -> (tempfile::TempDir, Application) {
         notice: None,
         sidebar_scroll: 0,
         review_scroll: 0,
+        unsupported_runs: 0,
+        presented_generation: None,
         blocked: None,
     };
     (temporary, app)
@@ -193,4 +195,82 @@ fn terrain_requires_explicit_palette_and_panel_controls_never_publish() {
     app.paint().unwrap();
     assert!(app.session.history().pending().is_some());
     assert_eq!(app.session.history().document().revision(), revision);
+}
+
+#[test]
+fn unsupported_draft_is_visible_local_state_and_cannot_prepare_a_lossy_edit() {
+    use crate::workspace_ui::Control;
+    let (_temporary, mut app) = application();
+    app.select_visible_object(true).unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    app.tools.input("\u{301}").unwrap();
+    let draft = app.tools.draft_text().unwrap().to_owned();
+    let revision = app.session.history().document().revision();
+    let generation = app.session.generation();
+    assert!(
+        app.control(Control::ApplyDraft)
+            .unwrap_err()
+            .contains("unsupported")
+    );
+    app.refresh_ui();
+    assert_eq!(app.tools.draft_text(), Some(draft.as_str()));
+    assert_eq!(app.session.history().document().revision(), revision);
+    assert_eq!(app.session.generation(), generation);
+    assert!(app.session.history().pending().is_none());
+}
+
+#[test]
+fn input_requires_a_displayed_current_frame_and_panels_consume_blank_pixels() {
+    let (_temporary, mut app) = application();
+    let revision = app.session.world().source_digest();
+    assert!(
+        super::native_pointer(&mut app, [20.0, 20.0], (320, 240), (320, 240))
+            .unwrap_err()
+            .contains("displayed")
+    );
+    app.presented_generation = Some(app.view.frame_revision);
+    super::native_pointer(&mut app, [250.0, 230.0], (320, 240), (320, 240)).unwrap();
+    assert!(app.session.selection().is_none());
+    assert_eq!(app.session.world().source_digest(), revision);
+    app.rebuild().unwrap();
+    assert!(!app.displayed_input_ready());
+}
+
+#[test]
+fn composed_ui_preserves_world_geometry_and_rejects_exhausted_identities() {
+    use tilewright_scene::{ResourceId, SceneBundle, SceneLimits, SemanticId};
+    let (_temporary, mut app) = application();
+    app.refresh_ui();
+    let presentation = crate::workspace_render::compose(
+        &app.ui,
+        &app.prepared.scene,
+        app.prepared.resources.clone(),
+    )
+    .unwrap();
+    for original in app.prepared.scene.quads() {
+        assert!(presentation.scene.quads().contains(original));
+    }
+    for (resource, semantic) in [(u64::MAX, 1), (1, u32::MAX)] {
+        let mut quads = vec![app.prepared.scene.quads()[0]];
+        quads[0].resource_id = ResourceId(resource);
+        quads[0].semantic_id = SemanticId(semantic);
+        let world = SceneBundle::from_quads(
+            app.view.frame_revision,
+            0,
+            app.prepared.scene.viewport(),
+            app.prepared.scene.clear_color(),
+            quads,
+            SceneLimits::default(),
+        )
+        .unwrap();
+        let error =
+            crate::workspace_render::compose(&app.ui, &world, app.prepared.resources.clone())
+                .err()
+                .unwrap();
+        assert!(matches!(
+            error,
+            crate::workspace_render::CompositionError::ResourceIdentityExhausted
+                | crate::workspace_render::CompositionError::SemanticIdentityExhausted
+        ));
+    }
 }

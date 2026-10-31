@@ -18,7 +18,7 @@ use tilewright_editor_preview::{PreparedPreview, PreviewLimits, SelectionKey, Vi
 use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
 use tilewright_editor_ui::inspector::{self, SelectionSummary};
 use tilewright_editor_ui::tools::{self, ToolMode, ToolState};
-use tilewright_editor_ui::{Action, Session};
+use tilewright_editor_ui::{Action, Session, SessionPhase};
 use tilewright_render_api::{
     BackendPreference, FrameOutput, RenderRequest, Renderer, TargetDescriptor, TargetKind,
 };
@@ -43,6 +43,8 @@ struct Application {
     notice: Option<String>,
     sidebar_scroll: usize,
     review_scroll: usize,
+    unsupported_runs: usize,
+    presented_generation: Option<u64>,
     blocked: Option<String>,
 }
 
@@ -96,6 +98,8 @@ pub fn run(arguments: &[String]) -> Result<()> {
         notice: None,
         sidebar_scroll: 0,
         review_scroll: 0,
+        unsupported_runs: 0,
+        presented_generation: None,
         blocked: None,
     };
     println!(
@@ -143,6 +147,7 @@ impl Application {
     }
 
     fn rebuild_inner(&mut self) -> Result<()> {
+        self.presented_generation = None;
         self.tools.cancel();
         self.session
             .invalidate_frame()
@@ -337,6 +342,10 @@ impl Application {
         self.action(action)
     }
 
+    fn displayed_input_ready(&self) -> bool {
+        self.presented_generation == Some(self.view.frame_revision)
+    }
+
     fn refresh_ui(&mut self) {
         let mut ui = WorkspaceUi::new(self.ui.logical_size(), self.ui.size);
         self.toolbar(&mut ui);
@@ -402,6 +411,23 @@ impl Application {
                 Some(control),
                 enabled,
                 active,
+            );
+        }
+        if self.unsupported_runs > 0 {
+            ui.widget(
+                Rect {
+                    x: 470,
+                    y: 8,
+                    width: ui.logical_size().0.saturating_sub(480),
+                    height: 32,
+                },
+                format!(
+                    "Text fallback: {} runs / unsupported fields read-only",
+                    self.unsupported_runs
+                ),
+                None,
+                true,
+                false,
             );
         }
     }
@@ -545,15 +571,24 @@ impl Application {
                     _ => inspector::display_text(&inspector::scalar_text(value)),
                 },
             );
+            let supported = row.current.is_none_or(|value| match value {
+                tilewright_source::FieldValue::String(text) => {
+                    crate::workspace_render::supports_text(text)
+                }
+                _ => true,
+            });
             rows.push((
                 format!("{} = {}", row.name, value),
                 Some(Control::Field(row.name.into())),
-                ready && row.editable,
+                ready && row.editable && supported,
                 false,
             ));
-            let detail = row
-                .reason
-                .map_or_else(|| format!("{:?}", row.spec.field_type), str::to_owned);
+            let detail = if supported {
+                row.reason
+                    .map_or_else(|| format!("{:?}", row.spec.field_type), str::to_owned)
+            } else {
+                "Read-only: unsupported text/shaping; source preserved".into()
+            };
             rows.push((detail, None, row.editable, false));
             let choices = tools::field_choices(inspected, row.name);
             if !choices.is_empty() {
@@ -582,6 +617,7 @@ impl Application {
         let rows = self.inspector_rows();
         let mut y = 56;
         if let Some(text) = self.tools.draft_text() {
+            let supported = crate::workspace_render::supports_text(text);
             ui.widget(
                 Rect {
                     x,
@@ -589,7 +625,11 @@ impl Application {
                     width,
                     height: 30,
                 },
-                format!("> {text}|  [Ctrl+A clears]"),
+                if supported {
+                    format!("> {text}|  [Ctrl+A clears]")
+                } else {
+                    format!("UNSUPPORTED: {text}|  / review blocked")
+                },
                 None,
                 true,
                 true,
@@ -604,7 +644,7 @@ impl Application {
                 },
                 "Review edit",
                 Some(Control::ApplyDraft),
-                ready,
+                ready && supported,
                 false,
             );
             ui.widget(
@@ -644,7 +684,8 @@ impl Application {
 
     fn review(&mut self, ui: &mut WorkspaceUi) {
         let logical = ui.logical_size();
-        let pending = self.session.history().pending().is_some();
+        let pending = self.session.history().pending().is_some()
+            && self.session.status().phase != SessionPhase::Blocked;
         let y = ui.review_y();
         ui.widget(
             Rect {
@@ -722,28 +763,28 @@ impl Application {
                     .zip(after.lines())
                     .position(|(a, b)| a != b)
                     .unwrap_or_else(|| before.lines().count().min(after.lines().count()));
-                let start = first_change.saturating_sub(2);
                 diff.push(format!(
-                    "--- {} / source excerpt at line {}",
+                    "{} / first changed line {}",
                     file.path,
-                    start + 1
+                    first_change + 1
                 ));
-                diff.extend(
-                    before
-                        .lines()
-                        .skip(start)
-                        .take(8)
-                        .map(|line| format!("- {}", inspector::display_text(line))),
-                );
-                diff.push(format!("+++ {}", file.path));
+                diff.push(format!(
+                    "- {}",
+                    inspector::display_text(before.lines().nth(first_change).unwrap_or("<absent>"))
+                ));
+                diff.push(format!(
+                    "+ {}",
+                    inspector::display_text(after.lines().nth(first_change).unwrap_or("<absent>"))
+                ));
+                let start = first_change.saturating_sub(2);
+                diff.push("After excerpt (exact plan retained; bounded terminal diff):".into());
                 diff.extend(
                     after
                         .lines()
                         .skip(start)
                         .take(8)
-                        .map(|line| format!("+ {}", inspector::display_text(line))),
+                        .map(|line| inspector::display_text(line)),
                 );
-                diff.push("Full reviewed before/after images are printed in the terminal.".into());
             }
         } else {
             diff.push("No pending source diff. Edits are reviewed before acceptance.".into());
@@ -752,6 +793,7 @@ impl Application {
     }
 
     fn control(&mut self, control: Control) -> Result<()> {
+        self.presented_generation = None;
         self.notice = None;
         match control {
             Control::Select | Control::Move | Control::Terrain => {
@@ -797,11 +839,36 @@ impl Application {
                         .tools
                         .begin_move(&inspected, unavailable)
                         .map_err(|error| error.to_string()),
-                    Control::Field(field) => self
-                        .tools
-                        .begin_field(&inspected, &field, unavailable)
-                        .map_err(|error| error.to_string()),
+                    Control::Field(field) => {
+                        let supported = inspected
+                            .rows
+                            .iter()
+                            .find(|row| row.name == field)
+                            .and_then(|row| row.current)
+                            .is_none_or(|value| match value {
+                                tilewright_source::FieldValue::String(text) => {
+                                    crate::workspace_render::supports_text(text)
+                                }
+                                _ => true,
+                            });
+                        if !supported {
+                            return Err(
+                                "field is read-only: unsupported text/shaping; source preserved"
+                                    .into(),
+                            );
+                        }
+                        self.tools
+                            .begin_field(&inspected, &field, unavailable)
+                            .map_err(|error| error.to_string())
+                    }
                     _ => {
+                        if !self
+                            .tools
+                            .draft_text()
+                            .is_some_and(crate::workspace_render::supports_text)
+                        {
+                            return Err("unsupported text/shaping: review is blocked; draft and source preserved".into());
+                        }
                         let action = self
                             .tools
                             .build_action(&inspected, unavailable)
@@ -1059,6 +1126,15 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                 break 'running;
             }
             let result = native_event(&mut app, &mut renderer, &window, &event, &mut minimized);
+            if matches!(
+                event,
+                Event::MouseButtonDown { .. }
+                    | Event::MouseWheel { .. }
+                    | Event::TextInput { .. }
+                    | Event::KeyDown { .. }
+            ) {
+                app.presented_generation = None;
+            }
             if app.tools.draft_text().is_some() {
                 video.text_input().start(&window);
             } else {
@@ -1142,25 +1218,7 @@ fn native_event(
             x,
             y,
             ..
-        } if !*minimized => {
-            let (px, py) =
-                crate::viewport::physical_pixel([*x, *y], window.size(), window.size_in_pixels())
-                    .ok_or("pointer outside physical viewport")?;
-            app.refresh_ui();
-            match app.ui.hit(px, py) {
-                Hit::Control(control) => app.control(control),
-                Hit::World(x, y) => {
-                    app.tools.cancel();
-                    app.click(x, y)?;
-                    if app.tools.mode() == ToolMode::Terrain {
-                        app.paint()
-                    } else {
-                        Ok(())
-                    }
-                }
-                Hit::Panel | Hit::Outside => Ok(()),
-            }
-        }
+        } if !*minimized => native_pointer(app, [*x, *y], window.size(), window.size_in_pixels()),
         Event::MouseWheel {
             integer_y,
             mouse_x,
@@ -1211,8 +1269,43 @@ fn native_event(
             keycode: Some(key),
             repeat: false,
             ..
-        } => native_key(app, *key),
+        } => {
+            if matches!(key, Keycode::Return | Keycode::KpEnter)
+                && app.tools.draft_text().is_none()
+                && !app.displayed_input_ready()
+            {
+                return Err("accept waits for the current displayed pending diff".into());
+            }
+            native_key(app, *key)
+        }
         _ => Ok(()),
+    }
+}
+
+fn native_pointer(
+    app: &mut Application,
+    position: [f32; 2],
+    logical: (u32, u32),
+    physical: (u32, u32),
+) -> Result<()> {
+    if !app.displayed_input_ready() {
+        return Err("input waits for the current displayed frame".into());
+    }
+    let (px, py) = crate::viewport::physical_pixel(position, logical, physical)
+        .ok_or("pointer outside physical viewport")?;
+    app.refresh_ui();
+    match app.ui.hit(px, py) {
+        Hit::Control(control) => app.control(control),
+        Hit::World(x, y) => {
+            app.tools.cancel();
+            app.click(x, y)?;
+            if app.tools.mode() == ToolMode::Terrain {
+                app.paint()
+            } else {
+                Ok(())
+            }
+        }
+        Hit::Panel | Hit::Outside => Ok(()),
     }
 }
 
@@ -1280,15 +1373,31 @@ fn native_present(
     window
         .set_title(&terminal_field(&title))
         .map_err(|error| error.to_string())?;
+    let presentation = match workspace_presentation(app) {
+        Ok(presentation) => presentation,
+        Err(reason) => {
+            app.blocked = Some(reason.clone());
+            app.presented_generation = None;
+            window
+                .set_title(&format!(
+                    "Tilewright BLOCKED: {} | Q quit",
+                    terminal_field(&reason)
+                ))
+                .map_err(|error| error.to_string())?;
+            eprintln!("{}", terminal_field(&reason));
+            return Ok(false);
+        }
+    };
     match tilewright_render_sdl3::present_existing(
         renderer,
         window,
         RenderRequest {
-            scene: &app.prepared.scene,
-            resources: app.prepared.resources.clone(),
+            scene: &presentation.scene,
+            resources: presentation.resources,
         },
     ) {
         Ok(proof) => {
+            app.presented_generation = Some(app.view.frame_revision);
             println!(
                 "native presented {}x{} backend={} adapter={}",
                 proof.width,
@@ -1311,6 +1420,26 @@ fn native_present(
             Ok(false)
         }
     }
+}
+
+fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {
+    let mut presentation = crate::workspace_render::compose(
+        &app.ui,
+        &app.prepared.scene,
+        app.prepared.resources.clone(),
+    )
+    .map_err(|error| error.to_string())?;
+    if app.unsupported_runs != presentation.unsupported_runs {
+        app.unsupported_runs = presentation.unsupported_runs;
+        app.refresh_ui();
+        presentation = crate::workspace_render::compose(
+            &app.ui,
+            &app.prepared.scene,
+            app.prepared.resources.clone(),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(presentation)
 }
 
 #[cfg(all(test, target_os = "linux"))]

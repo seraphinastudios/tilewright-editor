@@ -5,6 +5,7 @@
 
 mod prototype;
 mod viewport;
+mod workspace_render;
 mod workspace_ui;
 
 fn main() {
