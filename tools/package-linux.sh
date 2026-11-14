@@ -17,7 +17,8 @@ fi
 for command in cargo-auditable syft strip python3; do command -v "${command}" >/dev/null || { echo "missing required tool: ${command}" >&2; exit 1; }; done
 
 stage=$(mktemp -d /tmp/tilewright-editor-stage.XXXXXX)
-trap 'rm -rf -- "${stage}"' EXIT
+render_smoke=$(mktemp -d /tmp/tilewright-editor-render.XXXXXX)
+trap 'rm -rf -- "${stage}" "${render_smoke}"' EXIT
 cargo auditable build --locked --release --package tilewright-editor
 target=$(cargo metadata --locked --offline --format-version 1 --no-deps | jq -r .target_directory)
 install -d "${stage}/tilewright-editor-${version}/bin" "${output}"
@@ -46,6 +47,24 @@ python3 tools/prepare-font-pack.py stage --root . --font-pack "${font_pack}" \
   "${stage}/tilewright-editor-${version}/samples/prototype-neutral" >/dev/null
 "${stage}/tilewright-editor-${version}/bin/tilewright-editor" lint \
   "${stage}/tilewright-editor-${version}/samples/prototype-neutral" >/dev/null
+# render writes one PNG, outside the sample and the staged package: its
+# signature and size must be what its report says.
+"${stage}/tilewright-editor-${version}/bin/tilewright-editor" render --json \
+  --out "${render_smoke}/sample.png" \
+  "${stage}/tilewright-editor-${version}/samples/prototype-neutral" >"${render_smoke}/report.json"
+python3 -I - "${render_smoke}/sample.png" "${render_smoke}/report.json" <<'PYTHON'
+import json, struct, sys
+with open(sys.argv[1], "rb") as image:
+    png = image.read()
+with open(sys.argv[2], encoding="utf-8") as report:
+    report = json.load(report)
+assert png[:8] == b"\x89PNG\r\n\x1a\n" and png[12:16] == b"IHDR", "render did not write a PNG"
+size = struct.unpack(">II", png[16:24])
+assert size == (256, 192), size
+assert size == (report["image"]["width"], report["image"]["height"]), report["image"]
+assert len(png) == report["png"]["bytes"], report["png"]
+PYTHON
+test "$(ls -A "${render_smoke}" | wc -l)" -eq 2
 SYFT_CHECK_FOR_APP_UPDATE=false syft \
   "${stage}/tilewright-editor-${version}/bin/tilewright-editor" \
   --source-name tilewright-editor --source-version "${version}" \

@@ -97,14 +97,18 @@ tools/validate.sh
 `overview`, `tile`, `catalog` and `lint` describe a world without a window or
 an editing session (tested on Linux and Windows), as text or, with `--json`, as one
 bounded JSON document. World text in their output is data, escaped in both
-forms. See [the read-only commands](docs/CLI.md) for the output shapes,
-limits and exit codes.
+forms. `render` draws a region of the catalog's view (at most 4,096 tiles)
+with the CPU reference renderer and writes it as a PNG: the one new file
+`--out` names, refusing any path it can see is inside the world. See
+[the read-only commands](docs/CLI.md) for the output shapes, limits and exit
+codes.
 
 ```sh
 cargo run --locked --package tilewright-editor -- overview crates/tilewright-editor-testkit/fixtures/prototype-neutral
 cargo run --locked --package tilewright-editor -- tile --json crates/tilewright-editor-testkit/fixtures/prototype-neutral main 0 7 0
 cargo run --locked --package tilewright-editor -- catalog --match grass crates/tilewright-editor-testkit/fixtures/prototype-neutral
 cargo run --locked --package tilewright-editor -- lint crates/tilewright-editor-testkit/fixtures/prototype-neutral
+cargo run --locked --package tilewright-editor -- render --out /absolute/path/outside/the/world/neutral.png crates/tilewright-editor-testkit/fixtures/prototype-neutral
 ```
 
 `tools/validate.sh` checks formatting, Clippy-as-errors, all tests/docs,

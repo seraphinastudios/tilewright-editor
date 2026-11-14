@@ -45,3 +45,18 @@ if grep -RnE --include='*.rs' \
   echo "the read-only observe crate reaches editing, history, recovery or provisioning" >&2
   exit 1
 fi
+# Nor does it write: `render` returns pixels, and the binary writes the one
+# file `--out` names. World's confined access writes only through a
+# directory it opens, and its lock creates a file in the root on Windows;
+# the observe crate names no root, directory or lock type, resolves no path,
+# and calls no method or function (`.f(` or `path::f(`) that opens a
+# directory, writes, locks, renames or removes. To allow a lock the crate
+# needs later (a Mutex, say), strip that exact call before matching, with
+# an anchored pattern such as `sed -E 's/\bstate\.lock\(\)//g'`, rather
+# than loosening the pattern below.
+if grep -RnE --include='*.rs' \
+  '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory)\b|\.(directory|lock)[[:space:]]*\(|(\.|::)(rename|remove_file|remove_directory|set_own_access|make_directory|write)[[:space:]]*\(' \
+  crates/tilewright-editor-observe/src | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
+  echo "the read-only observe crate opens a root or directory, locks, resolves a path or writes" >&2
+  exit 1
+fi

@@ -43,8 +43,8 @@ bypass anything the desktop app enforces. See
   or returns it escapes and labels it.
 
 Questions that need no editing session (what a world holds, one tile, the
-catalog, lint findings) are answered by the read-only commands of
-[docs/CLI.md](CLI.md), which build no `Session` at all.
+catalog, lint findings, a picture of a region) are answered by the read-only
+commands of [docs/CLI.md](CLI.md), which build no `Session` at all.
 
 The front end owns everything else: layout and drawing, input, the frame
 selection, the recovery store it passes to `dispatch` and the recovery

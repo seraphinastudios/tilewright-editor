@@ -67,3 +67,30 @@ pub const MAXIMUM_FINDINGS: usize = 256;
 /// `tilewright_editor_document::MAXIMUM_DIAGNOSTICS` (256) itself;
 /// `problems` counts them all.
 pub const MAXIMUM_DIAGNOSTICS: usize = 128;
+
+/// `render`: most tiles in the region, the preview's own view budget
+/// (`PreviewLimits::default().maximum_cells`); a test keeps them equal.
+pub const MAXIMUM_RENDER_TILES: usize = 4_096;
+
+/// `render`: most pixels on either side of the image, and in all, the
+/// reference renderer's own target limits (`TargetLimits::default()`).
+/// The image grows with the region, the tile size and `--scale`: a 64 × 64
+/// region of 32-pixel top-down tiles is at least 2,048 pixels a side at
+/// scale 1 and 4,096 at scale 2, the most pixels this allows in all, while
+/// one side may reach 8,192 when the other is at most 2,048.
+pub const MAXIMUM_RENDER_SIDE: u32 = 8_192;
+pub const MAXIMUM_RENDER_PIXELS: u64 = 16_777_216;
+
+/// `render`: the largest `--scale`, screen pixels per art pixel, the
+/// renderer's own largest zoom.
+pub const MAXIMUM_RENDER_SCALE: u32 = 8;
+
+/// `render`: most bytes of the PNG file, a backstop checked after
+/// encoding. An RGBA image of the most pixels is 4 bytes a pixel and a
+/// filter byte a row before compression; DEFLATE that stores data it
+/// cannot shrink adds 5 bytes per 65,535, and the PNG chunks a few more,
+/// far less than the extra MiB here.
+pub const MAXIMUM_PNG_BYTES: usize = 4 * 16_777_216 + 8_192 + (1 << 20);
+
+/// `render`: preview diagnostics listed in the report.
+pub const MAXIMUM_RENDER_DIAGNOSTICS: usize = 16;
