@@ -525,13 +525,19 @@ fn the_world_is_found_whatever_case_or_separators_name_it() {
 
 #[cfg(unix)]
 #[test]
-fn a_hostile_output_name_is_written_and_never_echoed() {
+fn a_hostile_output_directory_is_written_into_and_never_echoed() {
     let (_directory, root, out) = scratch();
-    // The report never names the output path, so terminal control
-    // characters in it cannot reach stdout.
-    let file = out.join("hostile\u{1b}]0;title\u{7}.png");
+    // Terminal control characters may be in the directory's name, never in
+    // the file's. The report never names the output path, so they cannot
+    // reach stdout; stderr, which names it only when a write fails, escapes
+    // them (a_failed_write_exits_5_names_the_path_escaped_and_leaves_no_file).
+    let hostile = out.join("hostile\u{1b}]0;title\u{7}");
+    std::fs::create_dir(&hostile).unwrap();
+    let file = hostile.join("image.png");
     let (exit, report, stderr) = run(&root, &file, &[]);
     assert_eq!((exit, stderr.as_str()), (0, ""));
     assert!(!report.to_string().contains("hostile"));
     assert!(file.is_file());
+    // The same characters in the file's name are refused.
+    refused(&root, &hostile.join("x\u{1b}[31m.png"), &[], "output.name");
 }

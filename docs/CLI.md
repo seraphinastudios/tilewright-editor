@@ -4,8 +4,9 @@ The `tilewright-editor` binary answers five read-only questions about a world
 without opening a window or an editing session: `overview`, `tile`,
 `catalog`, `lint` and `render` (issue #57). The MCP server's observe tools
 will return the same reports later. `render` is the only one that writes,
-and it writes at most one new file, never inside the world (see
-[render](#render)). They are tested on Linux and Windows in CI; macOS is
+and it writes one new file, and refuses any output path it can see is
+inside the world; the cases it cannot see are listed under
+[What it writes](#what-it-writes). They are tested on Linux and Windows in CI; macOS is
 expected to work, since nothing in them is platform-specific, but no CI job
 builds or tests it. Editing stays Linux-only.
 
@@ -251,30 +252,40 @@ from, and writes it as an RGBA PNG.
 
 ### What it writes
 
-`render` writes at most one file, never inside the world: the new file
-`--out FILE` names. It creates no directory and, apart from the race below,
-replaces nothing.
+`render` writes one new file, the one `--out FILE` names, and refuses any
+output path it can see is inside the world; the cases it cannot see, and a
+race, are listed below. It creates no directory and, apart from that race,
+replaces nothing. On a refusal or a failed write it leaves no file of its
+own.
 
 - `FILE`'s directory must exist and be a directory that can be searched
   (`output.directory`).
 - `FILE`'s last component must be a name every platform makes as written
-  (`output.name`), one rule everywhere: UTF-8, at most 255 bytes, without
-  `\`, `:` or NUL, not `.` or `..`, not ending in a dot or a space, not a
+  (`output.name`), by one rule on every platform: UTF-8, at most 255 bytes,
+  without control characters (U+0000 to U+001F and DEL) or any of
+  `\ : < > " | ? *`, not `.` or `..`, not ending in a dot or a space, not a
   Windows device name (CON, PRN, AUX, NUL, COM0 to COM9, LPT0 to LPT9, also
   with superscript digits, in any case, whatever follows a dot), and with no
-  separator after it. The directories before it need not be UTF-8.
+  separator after it. The directories before it need not be UTF-8 and may
+  hold any characters their platform allows; stderr escapes them.
 - `FILE` must be outside the world root (`output.inside-world`). Its
   directory, with every link resolved, may be neither the root, with every
   link resolved, nor beneath it, so a link to the world, or to a directory
   in it, is inside. The two are also compared with each path component
-  lowercased: Linux keeps the case a path was typed in when it resolves it,
-  even on a file system that ignores case (a network share, FAT or exFAT
-  media, a casefolded directory), where `/share/WORLD` is the world
-  `/share/World`. Lowercasing approximates those file systems' folding and
-  fails closed: on a file system that tells case apart, a different
+  case-folded (lowercased, uppercased, then lowercased again, so that long
+  s, sharp s, final sigma, ligatures such as `ﬁ` and the dotless i fold as
+  file systems fold them): Linux keeps the case a path was typed in when it
+  resolves it, even on a file system that ignores case (a network share, FAT
+  or exFAT media, a casefolded directory), where `/share/WORLD` is the world
+  `/share/World`. The fold fails closed for case and approximates the file
+  system's folding: on a file system that tells case apart, a different
   directory whose path differs from the world's only in case, such as a
-  sibling `WORLD` of `world`, is refused too. Aliases that neither can see,
-  such as a bind mount of the world elsewhere, are not detected.
+  sibling `WORLD` of `world`, is refused too.
+- Not detected: aliases that neither comparison sees. A bind mount of the
+  world elsewhere; the same name in another Unicode normalisation (NFC
+  against NFD, which casefolding file systems treat as one); and Windows
+  short (8.3) names such as `WORLDD~1`, on Windows or on a share served from
+  it.
 - Nothing may be at `FILE`'s name: no file, directory or link, not even a
   dangling link (`output.exists`). A link at the name is never followed. On a
   file system that ignores case, an entry whose name differs only in case

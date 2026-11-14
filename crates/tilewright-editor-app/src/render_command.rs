@@ -1,18 +1,22 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! `render`: the one command that writes, and only the file `--out`
-//! names. The observe crate draws the pixels; this encodes them as a PNG in
+//! `render`: the one command that writes. It writes one new file, the one
+//! `--out` names, and refuses any output path it can see is inside the
+//! world; the cases it cannot see are listed below and in `docs/CLI.md`.
+//! The observe crate draws the pixels; this encodes them as a PNG in
 //! memory and writes it through World's confined file access
 //! (`tilewright_source`), the only file-writing authority the editor's
 //! crates may use. The rules, in `docs/CLI.md`:
 //!
 //! - the file's directory must exist: none is created;
 //! - the file must be outside the world root, compared after resolving
-//!   links in both paths, and also with each path component lowercased, so
-//!   a link into the world, or a spelling of it in another case, is inside
-//!   it;
-//! - its name must be one every platform can make as written;
+//!   links in both paths, and also with each path component case-folded,
+//!   so a link into the world, or a spelling of it in another case, is
+//!   inside it (aliases neither comparison sees, such as bind mounts, other
+//!   Unicode normalisations or Windows short names, are not detected);
+//! - its name must be one every platform can make as written, by one rule
+//!   on every platform;
 //! - nothing may be at the file's name, a link included;
 //! - the image is drawn and encoded completely before the file is made.
 //!
@@ -75,7 +79,7 @@ fn run_checked(arguments: &[OsString]) -> Result<Outcome, Outcome> {
 fn output_refused(code: &'static str, json: bool) -> Outcome {
     let message = match code {
         "output.name" => {
-            "The output must name a file every platform can make: a UTF-8 name of at most 255 bytes, without \\, :, NUL or a trailing dot or space, not a device name such as NUL or COM1, and not ending in a separator."
+            "The output must name a file every platform can make: a UTF-8 name of at most 255 bytes, without control characters or any of \\ : < > \" | ? *, not ending in a dot or space, not a device name such as NUL or COM1, and not ending in a separator."
         }
         "output.directory" => {
             "The output's directory does not exist, is not a directory, or cannot be resolved or searched."
@@ -145,7 +149,8 @@ fn file_name(out: &Path) -> Option<&str> {
     }
     name.to_str().filter(|name| {
         name.len() <= 255
-            && !name.contains(['\\', ':', '\0'])
+            && !name.contains(['\\', ':', '<', '>', '"', '|', '?', '*'])
+            && !name.chars().any(|character| character.is_ascii_control())
             && !name.ends_with(['.', ' '])
             && !device_name(name)
     })
@@ -177,19 +182,23 @@ fn device_name(name: &str) -> bool {
 
 /// Whether a file in `directory`, both resolved, would be inside the
 /// world: in its root directory or beneath it, compared exactly and also
-/// with every component lowercased. Linux keeps the case a path was typed
+/// with every component case-folded. Linux keeps the case a path was typed
 /// in when it resolves one, even on a file system that ignores case (a
 /// network share, FAT or exFAT media, a casefolded directory), so
-/// `/share/WORLD` can be the world `/share/World`. Lowercasing each
-/// component approximates such file systems' folding; it fails closed,
-/// refusing as well a different directory whose name differs from the
-/// world's only in case.
+/// `/share/WORLD` can be the world `/share/World`. The fold approximates
+/// such file systems' folding and fails closed for case: it also refuses a
+/// different directory whose name differs from the world's only in case.
+/// It does not detect other aliases: another Unicode normalisation (NFC
+/// against NFD), Windows short (8.3) names, or bind mounts.
 fn inside_world(directory: &Path, world: &Path) -> bool {
+    // Lowercase, uppercase, lowercase: closer to Unicode case folding than
+    // lowercasing alone (long s, sharp s, final sigma, ligatures, dotless i).
+    let fold = |text: std::borrow::Cow<'_, str>| text.to_lowercase().to_uppercase().to_lowercase();
     let folded = |path: &Path| -> Vec<String> {
         path.components()
             .map(|component| match component {
-                Component::Normal(name) => name.to_string_lossy().to_lowercase(),
-                other => other.as_os_str().to_string_lossy().to_lowercase(),
+                Component::Normal(name) => fold(name.to_string_lossy()),
+                other => fold(other.as_os_str().to_string_lossy()),
             })
             .collect()
     };
@@ -290,6 +299,17 @@ mod tests {
             "x.png ",
             "a:b",
             "image.png:stream",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "a|b",
+            "a?b",
+            "a*b",
+            "tab\there",
+            "esc\u{1b}[31m",
+            "bell\u{7}",
+            "nul\u{0}byte",
+            "del\u{7f}",
         ] {
             assert_eq!(file_name(Path::new(refused)), None, "{refused}");
         }
@@ -321,6 +341,28 @@ mod tests {
         assert!(inside_world(Path::new("/w/WORLD"), world));
         assert!(inside_world(Path::new("/W/World/Planes"), world));
         assert!(!inside_world(Path::new("/w/WORLD2"), world));
+        // Spellings that file systems which fold case treat as one name.
+        for (spelled, world) in [
+            ("/m/aſſets", "/m/assets"),
+            ("/m/STRASSE", "/m/Straße"),
+            ("/m/ΚΟΣΜΟΣ", "/m/κοσμοσ"),
+            ("/m/κοσμος", "/m/ΚΟΣΜΟΣ"),
+            ("/m/ﬁle", "/m/FILE"),
+            ("/m/tıles", "/m/tiles"),
+        ] {
+            assert!(
+                inside_world(Path::new(spelled), Path::new(world)),
+                "{spelled} {world}"
+            );
+            assert!(
+                inside_world(Path::new(world), Path::new(spelled)),
+                "{world} {spelled}"
+            );
+        }
+        assert!(!inside_world(
+            Path::new("/m/assets2"),
+            Path::new("/m/aſſets")
+        ));
     }
 
     #[test]

@@ -98,8 +98,8 @@ tools/validate.sh
 an editing session (tested on Linux and Windows), as text or, with `--json`, as one
 bounded JSON document. World text in their output is data, escaped in both
 forms. `render` draws a region of the catalog's view (at most 4,096 tiles)
-with the CPU reference renderer and writes it as a PNG: the one file `--out`
-names, which must be new and outside the world. See
+with the CPU reference renderer and writes it as a PNG: the one new file
+`--out` names, refusing any path it can see is inside the world. See
 [the read-only commands](docs/CLI.md) for the output shapes, limits and exit
 codes.
 

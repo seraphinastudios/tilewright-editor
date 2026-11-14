@@ -287,6 +287,77 @@ fn work_only_this_render_exceeds_is_a_budget_refusal() {
 }
 
 #[test]
+fn the_measuring_compile_never_refuses_what_the_final_compile_fits() {
+    let (_directory, root) = neutral_copy();
+    // A standing prototype with tile-sized art, stacked on one tile.
+    std::fs::write(
+        root.join("defs/proto/slab.jsonc"),
+        r#"{"format": "tilewright.def/1", "type": "proto", "id": "slab", "fields": {}}"#,
+    )
+    .unwrap();
+    let path = root.join("preview.jsonc");
+    let mut catalog: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    catalog["prototypes"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"proto": "slab", "resource": "grass", "anchor": "standing"}));
+    std::fs::write(&path, serde_json::to_string_pretty(&catalog).unwrap()).unwrap();
+    // At scale 8 tile (0, 0) is a 256 × 256 frame. In it the final compile
+    // charges each quad 256 × 256 raster samples: 4,090 slabs and the
+    // tile's ground charge 268,107,776, within the scene's 268,435,456. The
+    // measuring viewport charges each 257 × 257, about 270 million in all,
+    // so without headroom the measuring compile would refuse it.
+    edit_chunk(&root, |chunk| {
+        let objects = chunk["objects"].as_array_mut().unwrap();
+        for index in 0..4_090 {
+            objects.push(json!({
+                "uid": format!("slab_{index}"),
+                "at": [0, 0],
+                "proto": "slab",
+                "layer": "item",
+            }));
+        }
+    });
+    // Framed and prepared, not drawn: drawing it takes seconds in a debug
+    // build, and the final compile at the default limits is the check.
+    let arguments: Vec<OsString> = [
+        "--out",
+        "unused.png",
+        root.to_str().unwrap(),
+        "--region",
+        "0",
+        "0",
+        "1",
+        "1",
+        "--scale",
+        "8",
+    ]
+    .iter()
+    .map(OsString::from)
+    .collect();
+    let parsed = cli::render_request(&arguments).unwrap();
+    let observed = render::open(&parsed).unwrap();
+    let framed =
+        render::frame_region(&observed, &parsed).unwrap_or_else(|outcome| panic!("{outcome:?}"));
+    assert_eq!(framed.size(), [256, 256]);
+    // Twice as many is past the final compile's budget as well.
+    edit_chunk(&root, |chunk| {
+        let objects = chunk["objects"].as_array_mut().unwrap();
+        for index in 4_090..8_180 {
+            objects.push(json!({
+                "uid": format!("slab_{index}"),
+                "at": [0, 0],
+                "proto": "slab",
+                "layer": "item",
+            }));
+        }
+    });
+    let value = refusal(&root, &["--region", "0", "0", "1", "1", "--scale", "8"]);
+    assert_eq!(value["code"], "output.budget");
+}
+
+#[test]
 fn rendering_is_deterministic() {
     let root = fixture_world("prototype-neutral");
     let first = draw(&root, &["--region", "1", "1", "5", "4"]).unwrap();

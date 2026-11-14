@@ -96,6 +96,54 @@ const OVER_WORK: &str = "The region at this scale exceeds the renderer's scene b
 /// The refusal to print (exit 4).
 pub fn render(observed: &Observed, request: &Request) -> Result<Rendered, Outcome> {
     let json = request.json;
+    let Framed {
+        prepared,
+        view: (plane, layer, region, tiles),
+    } = frame_region(observed, request)?;
+    let frame = prepared.reference_frame().map_err(|_| {
+        refused(
+            "render.failed",
+            "The reference renderer could not draw the view.",
+            json,
+        )
+    })?;
+    let report = report(
+        observed,
+        request,
+        (plane, layer, region, tiles),
+        &frame,
+        &prepared.diagnostics,
+    );
+    Ok(Rendered {
+        frame,
+        report,
+        json,
+    })
+}
+
+/// A region framed and prepared for drawing, not yet drawn.
+pub struct Framed<'a> {
+    /// The World scene in its final viewport, whose size is the image's.
+    pub prepared: tilewright_editor_preview::PreparedPreview,
+    /// Plane, spatial layer, region and its tile count.
+    pub view: (&'a str, i32, [i64; 4], usize),
+}
+
+impl Framed<'_> {
+    /// `[width, height]` of the image.
+    pub fn size(&self) -> [u32; 2] {
+        let viewport = self.prepared.scene.viewport();
+        [viewport.width, viewport.height]
+    }
+}
+
+/// Checks `request`'s region of `observed`'s catalog view, frames it and
+/// prepares it for drawing: everything [`render`] does but the drawing.
+///
+/// # Errors
+/// The refusal to print (exit 4).
+pub fn frame_region<'a>(observed: &'a Observed, request: &Request) -> Result<Framed<'a>, Outcome> {
+    let json = request.json;
     let (catalog, resources) = match &observed.catalog {
         Catalog::Absent => {
             return Err(refused(
@@ -159,13 +207,18 @@ pub fn render(observed: &Observed, request: &Request) -> Result<Rendered, Outcom
     // point. Both viewports have even sides, so the camera moves every quad
     // by whole pixels between them and the second frame holds what the
     // first measured.
-    // Only the viewport bounds are raised for the measuring compile. Its
-    // raster work equals the final compile's: the renderer charges each
-    // quad's samples clipped to the viewport, and every quad of a framed
-    // region lies inside the final frame.
+    // The measuring compile only finds the frame; the final compile, at the
+    // default limits, enforces the real budget. The renderer charges each
+    // quad's raster samples clipped to the viewport, a pixel row and column
+    // past the quad included, so a quad that spans the final frame costs
+    // more in the larger measuring viewport: the measuring compile gets
+    // four times the sample budget so that it never refuses a region whose
+    // final compile fits. It draws nothing, so the headroom costs no memory.
     let mut measuring = PreviewLimits::default();
     measuring.scene.maximum_dimension = measuring.scene.maximum_dimension.max(MEASURE);
     measuring.scene.maximum_pixels = u64::from(MEASURE) * u64::from(MEASURE);
+    measuring.scene.maximum_raster_samples =
+        measuring.scene.maximum_raster_samples.saturating_mul(4);
     let measured = tilewright_editor_preview::prepare(
         world,
         catalog,
@@ -183,24 +236,9 @@ pub fn render(observed: &Observed, request: &Request) -> Result<Rendered, Outcom
         PreviewLimits::default(),
     )
     .map_err(|_| unprepared())?;
-    let frame = prepared.reference_frame().map_err(|_| {
-        refused(
-            "render.failed",
-            "The reference renderer could not draw the view.",
-            json,
-        )
-    })?;
-    let report = report(
-        observed,
-        request,
-        (plane, layer, region, tiles),
-        &frame,
-        &prepared.diagnostics,
-    );
-    Ok(Rendered {
-        frame,
-        report,
-        json,
+    Ok(Framed {
+        prepared,
+        view: (plane, layer, region, tiles),
     })
 }
 

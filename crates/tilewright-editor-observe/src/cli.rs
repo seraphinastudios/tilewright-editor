@@ -43,7 +43,8 @@ They exit 0 on success, 2 for a usage error, 3 when the world does not load
 and 4 when refused (an unknown plane or region, a report or image past its
 budget, or an --out render may not write); lint exits 1 when a finding is an
 error, and render exits 5 when the image could not be written. render writes
-only the new file FILE, never inside ROOT. See docs/CLI.md.";
+only the new file FILE and refuses a FILE it can see is inside ROOT. See
+docs/CLI.md.";
 
 /// What a command prints and its exit code.
 #[derive(Debug, Eq, PartialEq)]

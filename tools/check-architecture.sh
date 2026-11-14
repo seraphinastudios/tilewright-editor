@@ -48,11 +48,15 @@ fi
 # Nor does it write: `render` returns pixels, and the binary writes the one
 # file `--out` names. World's confined access writes only through a
 # directory it opens, and its lock creates a file in the root on Windows;
-# the observe crate opens no root or directory of its own, takes no lock,
-# resolves no path and calls nothing that writes, renames or removes.
-if grep -RnE --include='*.rs' \
-  '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory|remove_file|remove_directory|rename|set_own_access)\b|\.(directory|write|lock)[[:space:]]*\(' \
-  crates/tilewright-editor-observe/src | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
+# the observe crate names no root, directory or lock type, resolves no path
+# and calls no method that opens a directory, writes, locks, renames or
+# removes. Locks of the standard streams are removed before matching; to
+# allow another lock (a Mutex, say), remove its exact call the same way in
+# the sed below rather than loosening the pattern.
+if grep -RnE --include='*.rs' '' crates/tilewright-editor-observe/src \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+  | sed -E 's/(std::io::)?std(in|out|err)\(\)[[:space:]]*\.lock[[:space:]]*\(\)//g' \
+  | grep -E '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory)\b|\.(directory|write|lock|rename|remove_file|remove_directory|set_own_access|make_directory)[[:space:]]*\(' >/dev/null; then
   echo "the read-only observe crate opens a root or directory, locks, resolves a path or writes" >&2
   exit 1
 fi
