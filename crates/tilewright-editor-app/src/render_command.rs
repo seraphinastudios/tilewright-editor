@@ -86,8 +86,8 @@ fn target(root: &Path, out: &Path, json: bool) -> Result<Target, Outcome> {
         _ => Path::new("."),
     };
     // The only file system calls here besides World's confined access:
-    // resolving two paths. tools/check-architecture.sh allows them in this
-    // file alone.
+    // resolving two paths, and below whether one is a directory; all
+    // read-only.
     let directory = parent
         .canonicalize()
         .map_err(|_| output_refused("output.directory", json))?;
@@ -102,10 +102,14 @@ fn target(root: &Path, out: &Path, json: bool) -> Result<Target, Outcome> {
         name: name.to_owned(),
     };
     // The resolved parent must be a directory World's access can open.
-    if !matches!(
-        SourceRoot::new(&target.directory).directory("", false),
-        Ok(Some(_))
-    ) {
+    // World checks Windows paths when it uses them, not when it opens a
+    // root, so a file named as the directory is ruled out here first.
+    if !target.directory.is_dir()
+        || !matches!(
+            SourceRoot::new(&target.directory).directory("", false),
+            Ok(Some(_))
+        )
+    {
         return Err(output_refused("output.directory", json));
     }
     if occupied(&target).map_err(|_| output_refused("output.directory", json))? {
