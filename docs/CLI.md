@@ -4,7 +4,7 @@ The `tilewright-editor` binary answers five read-only questions about a world
 without opening a window or an editing session: `overview`, `tile`,
 `catalog`, `lint` and `render` (issue #57). The MCP server's observe tools
 will return the same reports later. `render` is the only one that writes,
-and it writes exactly one new file, never inside the world (see
+and it writes at most one new file, never inside the world (see
 [render](#render)). They are tested on Linux and Windows in CI; macOS is
 expected to work, since nothing in them is platform-specific, but no CI job
 builds or tests it. Editing stays Linux-only.
@@ -213,65 +213,99 @@ from, and writes it as an RGBA PNG.
   pixels (an integer from 1 to 8, default 1). The image is that camera's
   viewport, centred on the region and sized to hold everything the region
   draws (its ground, and objects that reach past their tile), so nothing the
-  region draws is cut. Both sides are even, at least 2, so the image is
-  exactly the middle of what the desktop shows of the same region; a test
-  compares the whole view with the desktop's own 1280 × 800 frame. Because
-  the frame is centred, art that reaches far to one side leaves an empty
-  margin on the other.
+  region draws is cut. Both sides are even, at least 2. The whole view's
+  image is therefore exactly the middle of the CPU reference rendering of
+  the scene the desktop prepares for its default 1280 × 800 view (tested,
+  top-down and isometric); the desktop itself draws that scene on the GPU,
+  which this does not compare with. Because the frame is centred, art that
+  reaches far to one side leaves an empty margin on the other.
 - **Regions and the whole view.** A region draws only the objects and ground
-  of its own tiles. In the neutral sample, where nothing reaches past its
-  tile, a region's image is exactly that part of the whole view's (a test
-  checks it). In general it is not: art of a tile outside the region that
-  reaches into it (a tall object, raised ground, an isometric neighbour) is
-  not drawn.
+  of its own tiles. Its image equals that part of the whole view's image
+  only when no art of the region's tiles reaches past the region and no art
+  of other tiles reaches into it. In the neutral sample, a marker's art
+  reaches 8 pixels above its tile: a region holding the marker's tile and
+  the tile above is that part of the view, while one with the marker's tile
+  on its top row is framed 8 pixels taller above and, centred, below (both
+  tested). Art of a tile outside the region (a tall object, raised ground,
+  an isometric neighbour) is never drawn into it.
 - **Bounds.** The image is at most 8,192 pixels a side and 16,777,216 pixels
   in all, the reference renderer's own target limits; past them `render` is
-  refused (`output.budget`). The region is first compiled in an 8,192 × 8,192
-  viewport to find what it draws; if any object or tile of the region has no
-  art in that viewport, it is refused the same way. The PNG may be at most
-  68,165,632 bytes, a backstop checked after encoding: storing an image of
-  the most pixels uncompressed would take about 67.1 MB.
+  refused (`output.budget`). The region is first compiled in an 8,194 ×
+  8,194 viewport, the largest image and a pixel more on every side, to find
+  what it draws; if any object or tile of the region has no art in that
+  viewport, it is refused the same way. A region the desktop's default view
+  can prepare but that, at this scale, exceeds the renderer's scene budget
+  (its quads or the raster work they take) is refused `output.budget` too;
+  `preview.unprepared` means the desktop's default view cannot be prepared
+  either, and lint says why. The PNG may be at most 68,165,632 bytes, a
+  backstop checked after encoding: storing an image of the most pixels
+  uncompressed would take about 67.1 MB.
 - **Determinism.** The same world and arguments give the same pixels on
-  every platform (the goldens, digests of the decoded pixels, are checked on
-  Linux and Windows in CI), and the same build gives the same PNG bytes:
-  the encoder is pure Rust with fixed settings (8-bit RGBA, balanced
-  compression, adaptive filtering) and writes no time or text chunks. A
+  every platform CI tests, Linux and Windows (the goldens, digests of the
+  decoded pixels, are checked on both); other platforms are expected to
+  match but are not tested. The same build gives the same PNG bytes: the
+  encoder is pure Rust with fixed settings (8-bit RGBA, balanced
+  compression, adaptive filtering) and writes only the IHDR, IDAT and IEND
+  chunks (tested: the header and the chunk list, not the compression). A
   different version of the encoder may compress differently.
 
 ### What it writes
 
-`render` writes exactly one file, never inside the world: the new file
-`--out FILE` names. It replaces nothing and creates no directory.
+`render` writes at most one file, never inside the world: the new file
+`--out FILE` names. It creates no directory and, apart from the race below,
+replaces nothing.
 
-- `FILE`'s directory must exist and be a directory (`output.directory`).
-- `FILE`'s last component must be a file name World's file access can make:
-  UTF-8, at most 255 bytes, without `\`, `:` or NUL, not `.` or `..`, and
-  with no separator after it (`output.name`). The directories before it need
-  not be UTF-8.
-- `FILE` must be outside the world root: its directory, with every link
-  resolved, may be neither the root, with every link resolved, nor beneath
-  it (`output.inside-world`). A link to the world, or to a directory in it,
-  is therefore inside. Aliases that resolving links cannot see, such as a
-  bind mount of the world elsewhere, are not detected.
+- `FILE`'s directory must exist and be a directory that can be searched
+  (`output.directory`).
+- `FILE`'s last component must be a name every platform makes as written
+  (`output.name`), one rule everywhere: UTF-8, at most 255 bytes, without
+  `\`, `:` or NUL, not `.` or `..`, not ending in a dot or a space, not a
+  Windows device name (CON, PRN, AUX, NUL, COM0 to COM9, LPT0 to LPT9, also
+  with superscript digits, in any case, whatever follows a dot), and with no
+  separator after it. The directories before it need not be UTF-8.
+- `FILE` must be outside the world root (`output.inside-world`). Its
+  directory, with every link resolved, may be neither the root, with every
+  link resolved, nor beneath it, so a link to the world, or to a directory
+  in it, is inside. The two are also compared with each path component
+  lowercased: Linux keeps the case a path was typed in when it resolves it,
+  even on a file system that ignores case (a network share, FAT or exFAT
+  media, a casefolded directory), where `/share/WORLD` is the world
+  `/share/World`. Lowercasing approximates those file systems' folding and
+  fails closed: on a file system that tells case apart, a different
+  directory whose path differs from the world's only in case, such as a
+  sibling `WORLD` of `world`, is refused too. Aliases that neither can see,
+  such as a bind mount of the world elsewhere, are not detected.
 - Nothing may be at `FILE`'s name: no file, directory or link, not even a
-  dangling link (`output.exists`). An existing file is never replaced and a
-  link at the name is never followed. On a file system that ignores case, an
-  entry whose name differs only in case counts.
+  dangling link (`output.exists`). A link at the name is never followed. On a
+  file system that ignores case, an entry whose name differs only in case
+  counts.
 - The image is drawn and encoded in memory before the file is made. The file
   is made through World's confined file access (`tilewright_source`), as the
-  scripted demo writes its evidence: created new, not through a link, synced,
-  and removed again if writing it fails, so a failed `render` leaves no file.
-  A failure to write (exit 5, `output.write`) prints the path as given, escaped,
-  and the system's reason on stderr.
-- The checks and the write are separate steps. The name is checked again
-  just before the file is made, but a local process changing these paths at
-  the same moment can still defeat them, as with any command that writes
-  where it is told.
+  scripted demo writes its evidence; the editor's crates may not open files
+  with the standard library. World's writer creates the file exclusively,
+  not through a link, syncs it, and removes what is at the name again if
+  writing fails, so a failed write leaves no file of this command's.
+  A failure to write (exit 5, `output.write`) prints the path as given,
+  escaped, and the system's reason on stderr.
+- The race: World's writer first removes whatever is at the name, then
+  creates the file. The name is checked again just before, through the
+  directory that was checked (on Unix one directory handle, opened after the
+  path was resolved and compared; on Windows the resolved path, reopened).
+  A file another process creates at the name between that last check and
+  the write is deleted and replaced, and one swapped in after a failed write
+  can be removed by its cleanup. A directory swapped in for the resolved path
+  before it is opened (on Windows, at any time) is not detected. A writer
+  that only creates needs a create-only write in World.
 
-The output paths are checked after the world loads and before anything is
-drawn; the world tree, the files beside it and the output directory are
-otherwise left exactly as they were, which the tests check for success and
-for every refusal.
+The order is: the arguments (exit 2), the world loads (exit 3: its root must
+resolve before the output is compared with it), the output path (the
+`output.*` refusals), then the view and the drawing (`catalog.*`,
+`target.unknown`, `preview.unprepared`, `output.budget`, `render.failed`).
+A bad output path is therefore refused before anything is drawn, even for a
+world whose view cannot be drawn. The world tree, the files beside it and
+the output directory are left exactly as they were on every refusal and
+apart from the one new file on success, which the tests check for each
+refusal code except `render.failed`, which no test world can trigger.
 
 ## Limits
 
@@ -319,8 +353,8 @@ are a load failure (about 827 KB), `overview` (about 448 KB) and `tile`
 | 1 | `lint` only: at least one finding is an error. |
 | 2 | Usage error: nothing is printed on stdout and the usage goes to stderr. |
 | 3 | The world does not load: the load failure is the output. |
-| 4 | Refused, with a stable code: `target.unknown` (the tile's plane does not exist, or the region is not inside the view), `output.budget` (a report, region or image past its bound), and for `render` `catalog.absent`, `catalog.invalid`, `preview.unprepared` (no view to draw; lint says why), `render.failed` (the reference renderer failed), `output.directory`, `output.name`, `output.inside-world` or `output.exists`. |
-| 5 | `render` only: the image could not be written (`output.write`); no file is left. |
+| 4 | Refused, with a stable code: `target.unknown` (the tile's plane does not exist, or the region is not inside the view), `output.budget` (a report, region, image or scene past its bound), and for `render` `catalog.absent`, `catalog.invalid`, `preview.unprepared` (no view to draw; lint says why), `render.failed` (the reference renderer failed), `output.directory`, `output.name`, `output.inside-world` or `output.exists`. |
+| 5 | `render` only: the image could not be written (`output.write`); this command leaves no file of its own (see the race under [render](#render)). |
 
 `lint` follows the world CLI's `diff` convention (0 clean, 1 findings, 2
 usage) and adds 3 for a world that does not load, which every command shares.

@@ -248,7 +248,7 @@ pub fn render_request(arguments: &[OsString]) -> Result<crate::render::Request, 
 pub fn write_failed(out: &Path, problem: &str, json: bool) -> Outcome {
     let mut outcome = refused(
         "output.write",
-        "The image could not be written; nothing is left at the output path.",
+        "The image could not be written; this command left no file of its own.",
         json,
     );
     outcome.code = EXIT_WRITE_FAILED;

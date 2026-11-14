@@ -74,8 +74,9 @@ fn crop(frame: &ReferenceFrame, left: u32, top: u32, width: u32, height: u32) ->
     pixels
 }
 
-/// The World frame the desktop editor shows when it opens `root`: its
-/// default 1280 × 800 view, prepared and drawn as the editor does.
+/// The CPU reference rendering of the scene the desktop editor prepares
+/// when it opens `root`: its default 1280 × 800 view. The desktop draws the
+/// same prepared scene on the GPU; this is not that GPU frame.
 fn desktop_frame(root: &Path) -> ReferenceFrame {
     let document = tilewright_editor_document::WorldDocument::open(root).unwrap();
     let (catalog, resources) = loader::load(
@@ -111,13 +112,22 @@ fn the_whole_view_is_the_desktop_view_uncut() {
     // 8 × 6 tiles of 32 pixels: nothing in the sample reaches past them.
     assert_eq!([frame.width, frame.height], [256, 192]);
     assert_eq!(frame.rgba8.len(), 256 * 192 * 4);
-    // The same camera and renderer as the desktop's default view, so the
-    // image is the middle of what the desktop shows.
+    // The same camera and scene as the desktop's default view, so the
+    // image is the middle of that view's reference rendering.
     let desktop = desktop_frame(&root);
     assert_eq!(
         frame.rgba8,
         crop(&desktop, (1280 - 256) / 2, (800 - 192) / 2, 256, 192)
     );
+    // It is the World scene, not the cell scene (which covers every tile
+    // with opaque white): the sample's one empty tile, (6, 4), shows the
+    // clear colour, and grass at (0, 0) is green.
+    assert_eq!(
+        crop(&frame, 6 * 32 + 16, 4 * 32 + 16, 1, 1),
+        [10, 13, 18, 255]
+    );
+    let grass = crop(&frame, 16, 16, 1, 1);
+    assert!(grass[1] > grass[0] && grass[1] > grass[2], "{grass:?}");
     let value = report(rendered);
     assert_eq!(value["format"], "tilewright.editor-render/1");
     assert_eq!(value["catalog"]["status"], "loaded");
@@ -140,12 +150,30 @@ fn a_region_draws_only_its_tiles_and_scale_multiplies_pixels() {
     let region = draw(&root, &["--region", "2", "1", "4", "3"]).unwrap();
     let frame = region.frame.clone();
     assert_eq!([frame.width, frame.height], [128, 96]);
-    // In this top-down sample no art reaches past its tile, so the region
-    // is exactly that part of the whole view. That is not so in general:
-    // art that reaches across a tile edge (tall objects, raised ground,
-    // isometric neighbours) is drawn only for tiles inside the region.
+    // This region holds marker_1, whose art reaches 8 pixels above its
+    // tile, whole, and no art from outside reaches into it, so it is
+    // exactly that part of the whole view.
     assert_eq!(frame.rgba8, crop(&whole, 64, 32, 128, 96));
     assert_eq!(report(region)["image"]["region"], json!([2, 1, 4, 3]));
+    // With marker_1's tile on its top row, the art reaches past the region:
+    // the frame grows by 8 pixels above and, being centred, 8 below, where
+    // nothing is drawn. The tiles themselves are that part of the view.
+    let reaching = draw(&root, &["--region", "2", "2", "4", "2"])
+        .unwrap()
+        .frame;
+    assert_eq!([reaching.width, reaching.height], [128, 80]);
+    assert_eq!(
+        crop(&reaching, 0, 8, 128, 64),
+        crop(&whole, 64, 64, 128, 64)
+    );
+    assert_ne!(
+        crop(&reaching, 0, 0, 128, 8),
+        [10, 13, 18, 255].repeat(128 * 8)
+    );
+    assert_eq!(
+        crop(&reaching, 0, 72, 128, 8),
+        [10, 13, 18, 255].repeat(128 * 8)
+    );
     // Each art pixel becomes a scale × scale block.
     let double = draw(&root, &["--scale", "2"]).unwrap().frame;
     assert_eq!([double.width, double.height], [512, 384]);
@@ -154,6 +182,108 @@ fn a_region_draws_only_its_tiles_and_scale_multiplies_pixels() {
         assert_eq!(&crop(&double, 2 * x, 2 * y, 2, 1)[..4], original);
         assert_eq!(&crop(&double, 2 * x, 2 * y, 2, 2)[12..], original);
     }
+}
+
+/// Sets the profile's projection of the world at `root`.
+fn set_projection(root: &Path, projection: Value) {
+    let path = root.join("profile/profile.jsonc");
+    let mut profile: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    profile["projection"] = projection;
+    std::fs::write(path, serde_json::to_string_pretty(&profile).unwrap()).unwrap();
+}
+
+/// Applies `change` to the neutral copy's main chunk.
+fn edit_chunk(root: &Path, change: impl FnOnce(&mut Value)) {
+    let path = root.join("planes/main/layers/0/0_0.jsonc");
+    let mut chunk: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    change(&mut chunk);
+    std::fs::write(path, serde_json::to_string_pretty(&chunk).unwrap()).unwrap();
+}
+
+#[test]
+fn an_isometric_view_is_framed_like_the_desktop_view() {
+    let (_directory, root) = neutral_copy();
+    set_projection(
+        &root,
+        json!({"kind": "isometric", "tile_width": 64, "tile_height": 32}),
+    );
+    let frame = draw(&root, &[]).unwrap().frame;
+    // 8 × 6 tiles: a diamond 14 half-tiles wide and high, at least.
+    assert!(
+        frame.width >= 14 * 32 && frame.height >= 14 * 16,
+        "{}x{}",
+        frame.width,
+        frame.height
+    );
+    assert_eq!((frame.width % 2, frame.height % 2), (0, 0));
+    let desktop = desktop_frame(&root);
+    assert_eq!(
+        frame.rgba8,
+        crop(
+            &desktop,
+            (1280 - frame.width) / 2,
+            (800 - frame.height) / 2,
+            frame.width,
+            frame.height
+        )
+    );
+    // Nothing the desktop view draws lies outside the frame.
+    let clear = [10, 13, 18, 255];
+    let outside = (0..800).any(|y| {
+        (0..1280).any(|x| {
+            let inside_x = (1280 - frame.width) / 2 <= x && x < u32::midpoint(1280, frame.width);
+            let inside_y = (800 - frame.height) / 2 <= y && y < u32::midpoint(800, frame.height);
+            !(inside_x && inside_y) && crop(&desktop, x, y, 1, 1) != clear
+        })
+    });
+    assert!(!outside);
+    // A region at scale 3 is framed the same way.
+    let region = draw(&root, &["--region", "1", "1", "3", "2", "--scale", "3"])
+        .unwrap()
+        .frame;
+    assert!(region.width >= 5 * 32 * 3 && region.height >= 5 * 16 * 3);
+}
+
+#[test]
+fn ground_lowered_below_the_region_widens_the_frame_downwards() {
+    let (_directory, root) = neutral_copy();
+    // Tile (2, 5), on the bottom row, 40 pixels lower than the rest.
+    edit_chunk(&root, |chunk| {
+        let mut rows = vec![vec![0; 32]; 32];
+        rows[5][2] = -40;
+        chunk["terrain"]["height"] = json!({"rows": rows});
+    });
+    let frame = draw(&root, &[]).unwrap().frame;
+    // 96 pixels below the centre to the bottom row's edge, and 40 more.
+    assert_eq!([frame.width, frame.height], [256, 2 * (96 + 40)]);
+}
+
+#[test]
+fn work_only_this_render_exceeds_is_a_budget_refusal() {
+    let (_directory, root) = neutral_copy();
+    // 4,400 markers stacked on the view's tiles: at scale 8 each charges
+    // about 62,000 raster samples, past the scene's 268,435,456 in all,
+    // while the desktop's default view at scale 1 charges about 1,000.
+    edit_chunk(&root, |chunk| {
+        let objects = chunk["objects"].as_array_mut().unwrap();
+        for index in 0..4_400 {
+            objects.push(json!({
+                "uid": format!("stack_{index}"),
+                "at": [index % 8, (index / 8) % 6],
+                "proto": "marker",
+                "layer": "item",
+            }));
+        }
+    });
+    let value = refusal(&root, &["--scale", "8"]);
+    assert_eq!(value["code"], "output.budget");
+    assert_eq!(
+        value["message"],
+        "The region at this scale exceeds the renderer's scene budget; narrow the region or lower the scale."
+    );
+    assert!(draw(&root, &[]).is_ok());
+    assert!(draw(&root, &["--scale", "8", "--region", "0", "0", "1", "1"]).is_ok());
 }
 
 #[test]

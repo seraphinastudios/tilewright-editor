@@ -77,12 +77,18 @@ pub fn open(request: &Request) -> Result<Observed, Outcome> {
 }
 
 /// Side of the square viewport a region is first compiled in, to find what
-/// it draws: the largest image side. The renderer keeps every quad that
-/// reaches into a viewport with its full corners and drops the rest.
-const MEASURE: u32 = MAXIMUM_RENDER_SIDE;
+/// it draws: the largest image side and a pixel more on every edge. The
+/// renderer keeps every quad that reaches into a viewport with its full
+/// corners and drops the rest, so a dropped quad lies at least a pixel
+/// past the largest image, and a kept quad that touches it reaches past
+/// that image's edge, which [`frame`] refuses.
+const MEASURE: u32 = MAXIMUM_RENDER_SIDE + 2;
 
 /// Why an image cannot be framed.
 const TOO_LARGE: &str = "The image would exceed 8,192 pixels a side or 16,777,216 pixels.";
+
+/// Why a region the desktop view can show cannot be prepared at this size.
+const OVER_WORK: &str = "The region at this scale exceeds the renderer's scene budget; narrow the region or lower the scale.";
 
 /// Draws `request`'s region of `observed`'s catalog view.
 ///
@@ -124,12 +130,28 @@ pub fn render(observed: &Observed, request: &Request) -> Result<Rendered, Outcom
         ));
     }
     let world = observed.world();
+    // A region that cannot be prepared is the world's fault when the
+    // desktop's own default view cannot be prepared either; otherwise it is
+    // this render's work (the region at this scale) that is too much.
     let unprepared = || {
-        refused(
-            "preview.unprepared",
-            "The view cannot be prepared for display; lint reports why.",
-            json,
+        let desktop = catalog.default_view(world, 1280, 800, 1);
+        if tilewright_editor_preview::prepare(
+            world,
+            catalog,
+            resources,
+            &desktop,
+            PreviewLimits::default(),
         )
+        .is_err()
+        {
+            refused(
+                "preview.unprepared",
+                "The view cannot be prepared for display; lint reports why.",
+                json,
+            )
+        } else {
+            refused("output.budget", OVER_WORK, json)
+        }
     };
     let too_large = || refused("output.budget", TOO_LARGE, json);
     // First compile in the largest viewport to find what the region draws,
@@ -137,10 +159,13 @@ pub fn render(observed: &Observed, request: &Request) -> Result<Rendered, Outcom
     // point. Both viewports have even sides, so the camera moves every quad
     // by whole pixels between them and the second frame holds what the
     // first measured.
+    // Only the viewport bounds are raised for the measuring compile. Its
+    // raster work equals the final compile's: the renderer charges each
+    // quad's samples clipped to the viewport, and every quad of a framed
+    // region lies inside the final frame.
     let mut measuring = PreviewLimits::default();
+    measuring.scene.maximum_dimension = measuring.scene.maximum_dimension.max(MEASURE);
     measuring.scene.maximum_pixels = u64::from(MEASURE) * u64::from(MEASURE);
-    measuring.scene.maximum_raster_samples =
-        measuring.scene.maximum_raster_samples.saturating_mul(4);
     let measured = tilewright_editor_preview::prepare(
         world,
         catalog,
@@ -348,6 +373,7 @@ mod tests {
     #[test]
     fn the_frame_is_centred_even_and_holds_every_corner() {
         let center = f32::from(u16::try_from(MEASURE / 2).unwrap());
+        assert_eq!(MEASURE, 8_194);
         // 10 pixels left and 30 right of the centre, 5 up and 3.5 down.
         let measured = extent([center - 10.0, center - 5.0, center + 30.0, center + 3.5]);
         assert_eq!(frame(measured), Some([60, 10]));
@@ -365,23 +391,35 @@ mod tests {
             }),
             Some([2, 2])
         );
-        // Everything of the measuring viewport fits exactly; a pixel past
-        // its edge does not.
+        // The measuring viewport less its one-pixel ring fits exactly; the
+        // ring, or a fraction into it, does not.
         let whole = f32::from(u16::try_from(MEASURE).unwrap());
         assert_eq!(
-            frame(extent([0.0, center - 1.0, whole, center + 1.0])),
+            frame(extent([1.0, center - 1.0, whole - 1.0, center + 1.0])),
             Some([8_192, 2])
         );
-        assert_eq!(frame(extent([-0.5, center, 1.0, center])), None);
-        assert_eq!(frame(extent([center, center, whole + 0.5, center])), None);
+        assert_eq!(frame(extent([0.0, center, center, center])), None);
+        assert_eq!(frame(extent([0.5, center, center, center])), None);
+        assert_eq!(frame(extent([center, center, whole - 0.5, center])), None);
+        assert_eq!(frame(extent([center, center, center, whole])), None);
         // Within each side but past the pixel bound.
-        assert_eq!(frame(extent([0.0, 0.0, whole, 2.0 * center])), None);
+        assert_eq!(frame(extent([1.0, 1.0, whole - 1.0, whole - 1.0])), None);
         assert_eq!(
-            frame(extent([0.0, center - 1_024.0, whole, center + 1_024.0])),
+            frame(extent([
+                1.0,
+                center - 1_024.0,
+                whole - 1.0,
+                center + 1_024.0
+            ])),
             Some([8_192, 2_048])
         );
         assert_eq!(
-            frame(extent([0.0, center - 1_025.0, whole, center + 1_024.0])),
+            frame(extent([
+                1.0,
+                center - 1_025.0,
+                whole - 1.0,
+                center + 1_024.0
+            ])),
             None
         );
         // An identity with no quad in the measuring viewport is refused.

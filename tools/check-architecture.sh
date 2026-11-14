@@ -47,10 +47,12 @@ if grep -RnE --include='*.rs' \
 fi
 # Nor does it write: `render` returns pixels, and the binary writes the one
 # file `--out` names. World's confined access writes only through a
-# directory it opens; the observe crate opens none and resolves no path.
+# directory it opens, and its lock creates a file in the root on Windows;
+# the observe crate opens no root or directory of its own, takes no lock,
+# resolves no path and calls nothing that writes, renames or removes.
 if grep -RnE --include='*.rs' \
-  '\b(SourceDirectory|canonicalize|make_directory)\b|\.directory[[:space:]]*\(|\.write[[:space:]]*\(' \
+  '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory|remove_file|remove_directory|rename|set_own_access)\b|\.(directory|write|lock)[[:space:]]*\(' \
   crates/tilewright-editor-observe/src | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
-  echo "the read-only observe crate opens a directory, resolves a path or writes" >&2
+  echo "the read-only observe crate opens a root or directory, locks, resolves a path or writes" >&2
   exit 1
 fi

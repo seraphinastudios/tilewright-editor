@@ -230,25 +230,97 @@ fn render_writes_one_new_file_and_leaves_the_world_untouched() {
     );
 }
 
+/// Applies `change` to the JSON document at `path` beneath `root`.
+fn edit(root: &Path, path: &str, change: impl FnOnce(&mut Value)) {
+    let path = root.join(path);
+    let mut value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    change(&mut value);
+    std::fs::write(path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+}
+
+const MAIN_CHUNK: &str = "planes/main/layers/0/0_0.jsonc";
+
+/// Copies of the neutral sample beside `world` that `render` refuses for
+/// what they are: no catalog, a catalog that does not load, a view the
+/// preview cannot prepare, a 64 × 64 view (too many pixels at scale 3),
+/// and 4,400 stacked markers (too much raster work at scale 8).
+fn refused_worlds(parent: &Path) -> [(PathBuf, &'static [&'static str], &'static str); 5] {
+    let neutral = fixture_world("prototype-neutral");
+    let copy = |name: &str| {
+        let root = parent.join(name);
+        copy_tree(&neutral, &root);
+        root
+    };
+    let absent = copy("absent");
+    std::fs::remove_file(absent.join("preview.jsonc")).unwrap();
+    let invalid = copy("invalid");
+    std::fs::write(invalid.join("preview.jsonc"), "{\"format\": \"other\"}").unwrap();
+    let unprepared = copy("unprepared");
+    std::fs::write(
+        unprepared.join("defs/proto/orphan.jsonc"),
+        r#"{"format": "tilewright.def/1", "type": "proto", "id": "orphan", "fields": {}}"#,
+    )
+    .unwrap();
+    edit(&unprepared, MAIN_CHUNK, |chunk| {
+        chunk["objects"].as_array_mut().unwrap().push(
+            serde_json::json!({"uid": "orphan_1", "at": [2, 2], "proto": "orphan", "layer": "item"}),
+        );
+    });
+    let large = copy("large");
+    edit(&large, "preview.jsonc", |catalog| {
+        catalog["view"]["bounds"] = serde_json::json!([0, 0, 64, 64]);
+    });
+    let stacked = copy("stacked");
+    edit(&stacked, MAIN_CHUNK, |chunk| {
+        let objects = chunk["objects"].as_array_mut().unwrap();
+        for index in 0..4_400 {
+            objects.push(serde_json::json!({
+                "uid": format!("stack_{index}"),
+                "at": [index % 8, (index / 8) % 6],
+                "proto": "marker",
+                "layer": "item",
+            }));
+        }
+    });
+    [
+        (absent, &[], "catalog.absent"),
+        (invalid, &[], "catalog.invalid"),
+        (unprepared, &[], "preview.unprepared"),
+        (large, &["--scale", "3"], "output.budget"),
+        (stacked, &["--scale", "8"], "output.budget"),
+    ]
+}
+
 #[test]
 fn every_refusal_leaves_everything_as_it_was() {
     let (directory, root, out) = scratch();
     std::fs::write(out.join("existing.png"), b"keep me").unwrap();
+    let worlds = refused_worlds(directory.path());
+    // A directory beside the world whose name differs from it only in
+    // case: on a file system that ignores case it is the world itself.
+    let upper = directory.path().join("WORLD");
+    let _ = std::fs::create_dir(&upper);
     let before = snapshot(directory.path());
     let cases: Vec<(PathBuf, &[&str], &str)> = vec![
         // In the world root, beneath it, and back into it through `..`.
         (root.join("image.png"), &[], "output.inside-world"),
         (root.join("planes/image.png"), &[], "output.inside-world"),
         (out.join("../world/image.png"), &[], "output.inside-world"),
+        // A spelling of the world in another case, whether or not the
+        // file system tells it apart.
+        (upper.join("image.png"), &[], "output.inside-world"),
         // A file is never replaced.
         (out.join("existing.png"), &[], "output.exists"),
         // A directory is never created.
         (out.join("missing/image.png"), &[], "output.directory"),
         (out.join("existing.png/image.png"), &[], "output.directory"),
-        // A name it cannot make.
+        // A name it cannot make, or one Windows would alter.
         (out.join("image.png/"), &[], "output.name"),
         (out.join(".."), &[], "output.name"),
         (out.join("a:b.png"), &[], "output.name"),
+        (out.join("NUL.png"), &[], "output.name"),
+        (out.join("image.png."), &[], "output.name"),
+        (out.join("image.png "), &[], "output.name"),
         // The view and the budgets.
         (
             out.join("image.png"),
@@ -268,6 +340,14 @@ fn every_refusal_leaves_everything_as_it_was() {
             "{code} changed the tree"
         );
     }
+    // Worlds without a view to draw, or too much to draw.
+    for (world, extra, code) in &worlds {
+        refused(world, &out.join("image.png"), extra, code);
+        assert!(
+            unchanged(directory.path(), &before),
+            "{code} changed the tree"
+        );
+    }
     // A usage error and a world that does not load write nothing either.
     let (exit, _, _) = run(&root, &out.join("image.png"), &["--scale", "0"]);
     assert_eq!(exit, 2);
@@ -277,6 +357,81 @@ fn every_refusal_leaves_everything_as_it_was() {
         (3, &Value::from("tilewright.editor-load-failure/1"))
     );
     assert!(unchanged(directory.path(), &before));
+    // render.failed is not here: the reference renderer cannot be made to
+    // fail on a world that prepares without injecting a fault.
+}
+
+#[test]
+fn the_world_loads_first_then_the_output_is_checked_then_the_view() {
+    let (directory, root, out) = scratch();
+    let [_, _, (unprepared, _, _), ..] = refused_worlds(directory.path());
+    let before = snapshot(directory.path());
+    // A bad output and a view that cannot be drawn: the output refusal
+    // wins, and nothing is drawn or written.
+    refused(
+        &unprepared,
+        &unprepared.join("image.png"),
+        &[],
+        "output.inside-world",
+    );
+    refused(
+        &unprepared,
+        &out.join("missing/image.png"),
+        &[],
+        "output.directory",
+    );
+    refused(
+        &root,
+        &out.join("missing/image.png"),
+        &["--region", "9", "9", "1", "1"],
+        "output.directory",
+    );
+    // A bad output and a world that does not load: the load failure wins,
+    // since the world's root must resolve before the output is compared
+    // with it.
+    let (exit, value, _) = run(&out.join("no-world"), &out.join("missing/image.png"), &[]);
+    assert_eq!(
+        (exit, &value["format"]),
+        (3, &Value::from("tilewright.editor-load-failure/1"))
+    );
+    assert!(unchanged(directory.path(), &before));
+}
+
+#[test]
+fn a_sibling_whose_name_only_starts_like_the_world_is_outside() {
+    let (directory, root, _) = scratch();
+    for name in ["world2", "worlds", "WORLD-images", "other"] {
+        let sibling = directory.path().join(name);
+        std::fs::create_dir(&sibling).unwrap();
+        let (exit, _, stderr) = run(&root, &sibling.join("image.png"), &[]);
+        assert_eq!(exit, 0, "{name}: {stderr}");
+        assert!(sibling.join("image.png").is_file());
+    }
+}
+
+#[test]
+fn the_png_is_8_bit_rgba_with_no_ancillary_chunks() {
+    let (_directory, root, out) = scratch();
+    let file = out.join("image.png");
+    assert_eq!(run(&root, &file, &[]).0, 0);
+    let bytes = std::fs::read(&file).unwrap();
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    let mut chunks = Vec::new();
+    let mut at = 8;
+    while at < bytes.len() {
+        let length = u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        let kind = String::from_utf8(bytes[at + 4..at + 8].to_vec()).unwrap();
+        if kind == "IHDR" {
+            let header = &bytes[at + 8..at + 8 + length];
+            // Width, height, then bit depth 8, colour type 6 (RGBA),
+            // deflate, adaptive filtering, no interlace.
+            assert_eq!(&header[8..], [8, 6, 0, 0, 0]);
+        }
+        chunks.push(kind);
+        at += 12 + length;
+    }
+    chunks.dedup();
+    assert_eq!(chunks, ["IHDR", "IDAT", "IEND"]);
 }
 
 #[cfg(unix)]

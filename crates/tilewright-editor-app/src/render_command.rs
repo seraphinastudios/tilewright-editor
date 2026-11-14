@@ -4,33 +4,44 @@
 //! `render`: the one command that writes, and only the file `--out`
 //! names. The observe crate draws the pixels; this encodes them as a PNG in
 //! memory and writes it through World's confined file access
-//! (`tilewright_source`), which removes nothing here and follows no link at
-//! the file's name. The rules, in `docs/CLI.md`:
+//! (`tilewright_source`), the only file-writing authority the editor's
+//! crates may use. The rules, in `docs/CLI.md`:
 //!
 //! - the file's directory must exist: none is created;
 //! - the file must be outside the world root, compared after resolving
-//!   links in both paths, so a link into the world is inside it;
-//! - nothing may be at the file's name, a link included: no file is
-//!   replaced and no link is followed;
-//! - the image is drawn and encoded completely before the file is made,
-//!   and a failed write leaves no file behind.
+//!   links in both paths, and also with each path component lowercased, so
+//!   a link into the world, or a spelling of it in another case, is inside
+//!   it;
+//! - its name must be one every platform can make as written;
+//! - nothing may be at the file's name, a link included;
+//! - the image is drawn and encoded completely before the file is made.
 //!
-//! The checks and the write are separate steps: a local process that
-//! changes the paths between them can defeat them, as with any command
-//! that writes where its caller says.
+//! World's writer creates the file exclusively and does not follow a link
+//! at its name, but it first removes whatever is at the name. The name is
+//! therefore checked just before the write. On Unix the directory is
+//! opened once, after its path is resolved and compared with the world's,
+//! and the name checks and the write all go through that handle; a
+//! directory swapped in between resolving and opening is not detected, and
+//! on Windows, where World opens by path each time, neither is one swapped
+//! later. Something put at the name between the last check and the write is
+//! removed and replaced; and if the write fails, World removes what is at
+//! the name by name. A writer that
+//! only creates needs World to offer one: no editor crate may open files
+//! with the standard library (`tools/check-architecture.sh`).
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path};
 use tilewright_editor_observe::cli::{
     EXIT_REFUSED, Outcome, refused, render_request, write_failed,
 };
 use tilewright_editor_observe::limits::MAXIMUM_PNG_BYTES;
 use tilewright_editor_observe::render;
-use tilewright_source::SourceRoot;
+use tilewright_source::{SourceDirectory, SourceRoot};
 
-/// Where the image goes: an existing directory, resolved, and a new file
-/// name in it.
+/// Where the image goes: an existing directory, resolved and opened once,
+/// and a new file name in it.
 struct Target {
-    directory: PathBuf,
+    root: SourceRoot,
+    directory: SourceDirectory,
     name: String,
 }
 
@@ -64,9 +75,11 @@ fn run_checked(arguments: &[OsString]) -> Result<Outcome, Outcome> {
 fn output_refused(code: &'static str, json: bool) -> Outcome {
     let message = match code {
         "output.name" => {
-            "The output must name a file: a UTF-8 name without \\, : or NUL, not ending in a separator."
+            "The output must name a file every platform can make: a UTF-8 name of at most 255 bytes, without \\, :, NUL or a trailing dot or space, not a device name such as NUL or COM1, and not ending in a separator."
         }
-        "output.directory" => "The output's directory does not exist or cannot be resolved.",
+        "output.directory" => {
+            "The output's directory does not exist, is not a directory, or cannot be resolved or searched."
+        }
         "output.inside-world" => {
             "The output is inside the world root, or could not be shown to be outside it."
         }
@@ -97,21 +110,21 @@ fn target(root: &Path, out: &Path, json: bool) -> Result<Target, Outcome> {
     if inside_world(&directory, &world) {
         return Err(output_refused("output.inside-world", json));
     }
-    let target = Target {
-        directory,
-        name: name.to_owned(),
-    };
     // The resolved parent must be a directory World's access can open.
     // World checks Windows paths when it uses them, not when it opens a
     // root, so a file named as the directory is ruled out here first.
-    if !target.directory.is_dir()
-        || !matches!(
-            SourceRoot::new(&target.directory).directory("", false),
-            Ok(Some(_))
-        )
-    {
+    if !directory.is_dir() {
         return Err(output_refused("output.directory", json));
     }
+    let root = SourceRoot::new(&directory);
+    let Ok(Some(opened)) = root.directory("", false) else {
+        return Err(output_refused("output.directory", json));
+    };
+    let target = Target {
+        root,
+        directory: opened,
+        name: name.to_owned(),
+    };
     if occupied(&target).map_err(|_| output_refused("output.directory", json))? {
         return Err(output_refused("output.exists", json));
     }
@@ -131,21 +144,63 @@ fn file_name(out: &Path) -> Option<&str> {
         return None;
     }
     name.to_str().filter(|name| {
-        name.len() <= 255 && !name.contains(['\\', ':', '\0']) && *name != "." && *name != ".."
+        name.len() <= 255
+            && !name.contains(['\\', ':', '\0'])
+            && !name.ends_with(['.', ' '])
+            && !device_name(name)
     })
 }
 
+/// Whether `name` is a Windows device name, which Windows opens as the
+/// device whatever follows its first dot: CON, PRN, AUX, NUL, COM0 to COM9
+/// and LPT0 to LPT9, with the superscript digits ¹ ² ³ too, in any case and
+/// with spaces before the dot. Refused on every platform, so one name rule
+/// holds everywhere.
+fn device_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    match stem.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => {
+            let mut characters = stem.chars();
+            let device: String = characters.by_ref().take(3).collect();
+            let digit: Vec<char> = characters.collect();
+            (device == "COM" || device == "LPT")
+                && matches!(digit[..], [digit] if digit.is_ascii_digit() || matches!(digit, '¹' | '²' | '³'))
+        }
+    }
+}
+
 /// Whether a file in `directory`, both resolved, would be inside the
-/// world: in its root directory or beneath it.
+/// world: in its root directory or beneath it, compared exactly and also
+/// with every component lowercased. Linux keeps the case a path was typed
+/// in when it resolves one, even on a file system that ignores case (a
+/// network share, FAT or exFAT media, a casefolded directory), so
+/// `/share/WORLD` can be the world `/share/World`. Lowercasing each
+/// component approximates such file systems' folding; it fails closed,
+/// refusing as well a different directory whose name differs from the
+/// world's only in case.
 fn inside_world(directory: &Path, world: &Path) -> bool {
-    directory.starts_with(world)
+    let folded = |path: &Path| -> Vec<String> {
+        path.components()
+            .map(|component| match component {
+                Component::Normal(name) => name.to_string_lossy().to_lowercase(),
+                other => other.as_os_str().to_string_lossy().to_lowercase(),
+            })
+            .collect()
+    };
+    directory.starts_with(world) || folded(directory).starts_with(&folded(world))
 }
 
 /// Whether anything is at the target's name, a link included, as World's
-/// access finds it (on a file system that ignores case, an entry named
-/// otherwise counts too).
+/// access finds it through the target's directory handle (on a file system
+/// that ignores case, an entry named otherwise counts too).
 fn occupied(target: &Target) -> Result<bool, tilewright_source::AccessError> {
-    SourceRoot::new(&target.directory).exists(&target.name)
+    target.root.exists(&target.name)
 }
 
 /// The frame as an RGBA8 PNG with fixed settings and no metadata, so the
@@ -171,28 +226,26 @@ const fn within_budget(bytes: usize) -> bool {
     bytes <= MAXIMUM_PNG_BYTES
 }
 
-/// Writes the new file. World's access makes it with exclusive creation,
-/// not following a link at its name, syncs it and removes it again if the
-/// write fails. Its write first removes whatever is at the name, so the
-/// name is checked again just before.
+/// Writes the new file through the target's directory handle. World's
+/// writer creates it exclusively, not following a link at its name, syncs
+/// it and removes it again if writing fails; but it first removes whatever
+/// is at the name, so the name is checked again just before.
 fn create_file(target: &Target, png: &[u8]) -> Result<(), String> {
     if occupied(target).map_err(|error| error.to_string())? {
         return Err("something appeared at the output path; nothing was replaced".into());
     }
-    let directory = SourceRoot::new(&target.directory)
-        .directory("", false)
-        .map_err(|error| error.to_string())?
-        .ok_or("the output's directory is gone")?;
-    directory
+    target
+        .directory
         .write(&target.name, None, png)
         .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{file_name, inside_world, within_budget};
+    use super::{create_file, file_name, inside_world, target, within_budget};
     use std::path::Path;
     use tilewright_editor_observe::limits::MAXIMUM_PNG_BYTES;
+    use tilewright_source::SourceRoot;
 
     #[test]
     fn only_a_plain_last_name_is_a_file_name() {
@@ -220,6 +273,43 @@ mod tests {
     }
 
     #[test]
+    fn names_windows_would_alter_or_open_as_devices_are_refused_everywhere() {
+        for refused in [
+            "NUL",
+            "nul",
+            "Con.png",
+            "aux.tar.gz",
+            "PRN",
+            "com1.png",
+            "COM0",
+            "lpt9.png",
+            "COM¹.png",
+            "lpt³",
+            "NUL .png",
+            "y.png.",
+            "x.png ",
+            "a:b",
+            "image.png:stream",
+        ] {
+            assert_eq!(file_name(Path::new(refused)), None, "{refused}");
+        }
+        for allowed in [
+            "nul2.png",
+            "console.png",
+            "com10.png",
+            "lpt.png",
+            "comx.png",
+            "auxiliary.png",
+            "x.nul",
+            "my con.png",
+            ".hidden.png",
+            "a b.png",
+        ] {
+            assert_eq!(file_name(Path::new(allowed)), Some(allowed), "{allowed}");
+        }
+    }
+
+    #[test]
     fn a_file_in_the_root_or_beneath_it_is_inside() {
         let world = Path::new("/w/world");
         assert!(inside_world(Path::new("/w/world"), world));
@@ -227,6 +317,33 @@ mod tests {
         assert!(!inside_world(Path::new("/w"), world));
         assert!(!inside_world(Path::new("/w/world2"), world));
         assert!(!inside_world(Path::new("/w/other"), world));
+        // Any case of the world's components is inside: fail closed.
+        assert!(inside_world(Path::new("/w/WORLD"), world));
+        assert!(inside_world(Path::new("/W/World/Planes"), world));
+        assert!(!inside_world(Path::new("/w/WORLD2"), world));
+    }
+
+    #[test]
+    fn a_name_taken_after_the_checks_is_not_replaced() {
+        let scratch = tempfile::tempdir().unwrap();
+        let top = SourceRoot::new(scratch.path());
+        assert!(top.make_directory("world").unwrap());
+        assert!(top.make_directory("out").unwrap());
+        let world = scratch.path().join("world");
+        let checked = target(&world, &scratch.path().join("out/image.png"), true)
+            .unwrap_or_else(|outcome| panic!("{outcome:?}"));
+        // Another writer takes the name between the checks and the write.
+        let out = top.directory("out", false).unwrap().unwrap();
+        out.write("image.png", None, b"keep me").unwrap();
+        let problem = create_file(&checked, b"\x89PNG").unwrap_err();
+        assert!(problem.contains("nothing was replaced"), "{problem}");
+        assert_eq!(
+            top.read("out/image.png", 64).unwrap().as_deref(),
+            Some(&b"keep me"[..])
+        );
+        // The output directory gained nothing else.
+        let (names, _) = top.names("out", 8).unwrap().unwrap();
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["image.png"]);
     }
 
     #[test]
