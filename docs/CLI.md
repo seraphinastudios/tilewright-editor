@@ -3,7 +3,8 @@
 The `tilewright-editor` binary answers five read-only questions about a world
 without opening a window or an editing session: `overview`, `tile`,
 `catalog`, `lint` and `render` (issue #57). The MCP server's observe tools
-will return the same reports later. `render` is the only one that writes,
+([docs/MCP.md](MCP.md)) return the same reports, with their long lists
+paged, and `render`'s image in the reply. `render` is the only one that writes,
 and it writes one new file, and refuses any output path it can see is
 inside the world; the cases it cannot see are listed under
 [What it writes](#what-it-writes). They are tested on Linux and Windows in CI; macOS is
@@ -81,9 +82,11 @@ the world. In both forms they are values, never member names or structure:
 The escaped set (`node::escaped` in the observe crate) is every control
 character (C0, DEL and C1); U+2028 and U+2029; the bidirectional formatting
 characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069;
-and the invisible or format characters U+00AD, U+180E, U+200B to U+200F,
-U+2060 to U+2064, U+FEFF, U+FFF9 to U+FFFB and the tag characters U+E0000 to
-U+E007F. Variation selectors are not escaped.
+and the invisible or format characters U+00AD, U+034F, the Hangul fillers
+U+115F, U+1160, U+3164 and U+FFA0, U+17B4, U+17B5, U+180E, U+200B to U+200F,
+U+2060 to U+2064, U+FEFF, U+FFF9 to U+FFFB, the shorthand format controls
+U+1BCA0 to U+1BCA3, the musical formatting characters U+1D173 to U+1D17A and
+the tag characters U+E0000 to U+E007F. Variation selectors are not escaped.
 
 The text form is for people. It is not unambiguous, so scripts and agents
 parse `--json`:
@@ -356,8 +359,9 @@ free-text value made of characters that print as 12-byte escapes. Tests
 build a near-worst case and check it fits; the largest JSON reports there
 are a load failure (about 827 KB), `overview` (about 448 KB) and `tile`
 (about 437 KB). A report past the budget would be refused
-(`output.budget`) rather than cut. There is no paging yet: `--match` narrows
-`catalog`, and `tile` takes one tile at a time.
+(`output.budget`) rather than cut. The CLI does not page: `--match` narrows
+`catalog`, and `tile` takes one tile at a time. The MCP server pages every
+list cut here ([docs/MCP.md](MCP.md#paging)).
 
 ## Exit codes
 

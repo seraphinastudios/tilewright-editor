@@ -8,7 +8,7 @@ with a live preview of the cells a stroke will change,
 object placement from a searchable palette of granted prototypes with thumbnails, object deletion,
 a zone overlay with a legend and a zone brush, zone management (display name, parent, new zones, deleting unused ones),
 anchor and portal badges with an anchor list, anchor editing (create, move, delete anchors no portal names), portal editing one object at a time (an anchor from a list, a tile picked in the view, a typed location, or none), reviewed changes and undo/redo. Deterministic reference capture accompanies native
-window testing; an editor MCP server and a full widget system remain future work.
+window testing; a read-only MCP server observes a world for agents, while MCP editing and a full widget system remain future work.
 
 Tilewright is maintained by Seraphina Studios alongside
 [tilewright-world](https://github.com/seraphinastudios/tilewright-world), the
@@ -101,7 +101,9 @@ forms. `render` draws a region of the catalog's view (at most 4,096 tiles)
 with the CPU reference renderer and writes it as a PNG: the one new file
 `--out` names, refusing any path it can see is inside the world. See
 [the read-only commands](docs/CLI.md) for the output shapes, limits and exit
-codes.
+codes. `mcp ROOT` serves the same reports, paged, and `render`'s image to an
+MCP client over stdio, revision 2026-07-28 only; it never writes (see
+[the MCP server](docs/MCP.md)).
 
 ```sh
 cargo run --locked --package tilewright-editor -- overview crates/tilewright-editor-testkit/fixtures/prototype-neutral
@@ -109,6 +111,7 @@ cargo run --locked --package tilewright-editor -- tile --json crates/tilewright-
 cargo run --locked --package tilewright-editor -- catalog --match grass crates/tilewright-editor-testkit/fixtures/prototype-neutral
 cargo run --locked --package tilewright-editor -- lint crates/tilewright-editor-testkit/fixtures/prototype-neutral
 cargo run --locked --package tilewright-editor -- render --out /absolute/path/outside/the/world/neutral.png crates/tilewright-editor-testkit/fixtures/prototype-neutral
+cargo run --locked --package tilewright-editor -- mcp crates/tilewright-editor-testkit/fixtures/prototype-neutral
 ```
 
 `tools/validate.sh` checks formatting, Clippy-as-errors, all tests/docs,
