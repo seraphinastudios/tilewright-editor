@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "render failed: catalog.absent: The world has no editor catalog (preview.jsonc), so it has no view to render."
+      }
+    ],
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (read-only)",
+        "version": "0.0.0-test"
+      }
+    }
+  }
+}

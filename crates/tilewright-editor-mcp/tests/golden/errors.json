@@ -1,0 +1,256 @@
+[
+  {
+    "case": "unsupported version",
+    "reply": {
+      "error": {
+        "code": -32022,
+        "data": {
+          "requested": "2025-11-25",
+          "supported": [
+            "2026-07-28"
+          ]
+        },
+        "message": "Unsupported protocol version"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2025-11-25\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+  },
+  {
+    "case": "missing meta",
+    "reply": {
+      "error": {
+        "code": -32602,
+        "data": {
+          "code": "params.meta"
+        },
+        "message": "every request needs params._meta with io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}"
+  },
+  {
+    "case": "missing capabilities",
+    "reply": {
+      "error": {
+        "code": -32602,
+        "data": {
+          "code": "params.meta"
+        },
+        "message": "every request needs params._meta with io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+  },
+  {
+    "case": "unknown method",
+    "reply": {
+      "error": {
+        "code": -32601,
+        "data": {
+          "code": "method.unknown"
+        },
+        "message": "this server does not have that method"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"resources/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+  },
+  {
+    "case": "initialize",
+    "reply": {
+      "error": {
+        "code": -32601,
+        "data": {
+          "code": "method.legacy",
+          "supported": [
+            "2026-07-28"
+          ]
+        },
+        "message": "this server implements MCP revision 2026-07-28 only, which has no initialize: send each request with its protocol version in params._meta"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\"}}"
+  },
+  {
+    "case": "unknown tool",
+    "reply": {
+      "error": {
+        "code": -32602,
+        "data": {
+          "code": "tool.unknown"
+        },
+        "message": "unknown tool: tools/list names the tools of this server"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"},\"arguments\":{},\"name\":\"edit\"}}"
+  },
+  {
+    "case": "arguments not an object",
+    "reply": {
+      "error": {
+        "code": -32602,
+        "data": {
+          "code": "params.arguments"
+        },
+        "message": "params.arguments must be an object"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"},\"arguments\":[],\"name\":\"overview\"}}"
+  },
+  {
+    "case": "tools/list cursor",
+    "reply": {
+      "error": {
+        "code": -32602,
+        "data": {
+          "code": "cursor.invalid"
+        },
+        "message": "this server lists every tool on one page and issues no cursor for tools/list"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"},\"cursor\":\"x\"}}"
+  },
+  {
+    "case": "invalid JSON",
+    "reply": {
+      "error": {
+        "code": -32700,
+        "data": {
+          "code": "jsonc.unexpected_end"
+        },
+        "message": "the message is not valid JSON"
+      },
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,"
+  },
+  {
+    "case": "duplicate keys",
+    "reply": {
+      "error": {
+        "code": -32700,
+        "data": {
+          "code": "jsonc.duplicate_key"
+        },
+        "message": "the message is not valid JSON"
+      },
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"id\":2,\"method\":\"tools/list\"}"
+  },
+  {
+    "case": "duplicate argument",
+    "reply": {
+      "error": {
+        "code": -32700,
+        "data": {
+          "code": "jsonc.duplicate_key"
+        },
+        "message": "the message is not valid JSON"
+      },
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"overview\",\"arguments\":{},\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}"
+  },
+  {
+    "case": "deep nesting",
+    "reply": {
+      "error": {
+        "code": -32700,
+        "data": {
+          "code": "jsonc.depth_limit"
+        },
+        "message": "the message is not valid JSON"
+      },
+      "jsonrpc": "2.0"
+    },
+    "request": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
+  },
+  {
+    "case": "comment",
+    "reply": {
+      "error": {
+        "code": -32700,
+        "data": {
+          "code": "jsonc.too_many_comments"
+        },
+        "message": "the message is not valid JSON"
+      },
+      "jsonrpc": "2.0"
+    },
+    "request": "{} // x"
+  },
+  {
+    "case": "batch",
+    "reply": {
+      "error": {
+        "code": -32600,
+        "data": {
+          "code": "request.not_object"
+        },
+        "message": "a message must be a JSON object"
+      },
+      "jsonrpc": "2.0"
+    },
+    "request": "[{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}]"
+  },
+  {
+    "case": "null id",
+    "reply": {
+      "error": {
+        "code": -32600,
+        "data": {
+          "code": "request.id"
+        },
+        "message": "a request ID must be a string or an integer, and not null"
+      },
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\"}"
+  },
+  {
+    "case": "wrong jsonrpc",
+    "reply": {
+      "error": {
+        "code": -32600,
+        "data": {
+          "code": "request.jsonrpc"
+        },
+        "message": "jsonrpc must be \"2.0\""
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"tools/list\"}"
+  },
+  {
+    "case": "params not an object",
+    "reply": {
+      "error": {
+        "code": -32602,
+        "data": {
+          "code": "params.not_object"
+        },
+        "message": "params must be an object"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":[]}"
+  }
+]

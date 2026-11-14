@@ -1,0 +1,87 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "format": "tilewright.editor-tile/1",
+      "revision": "<revision>",
+      "tile": {
+        "plane": "main",
+        "layer": 0,
+        "x": 7,
+        "y": 3
+      },
+      "chunk": {
+        "path": "planes/main/layers/0/0_0.jsonc",
+        "at": [
+          0,
+          0
+        ]
+      },
+      "ground": [
+        {
+          "grid": "floor",
+          "value": "sand"
+        },
+        {
+          "grid": "edge",
+          "value": null
+        }
+      ],
+      "height": 0,
+      "zone": {
+        "id": "meadow",
+        "from_default": true,
+        "path": [
+          "meadow"
+        ],
+        "name": "Quiet meadow"
+      },
+      "catalog": {
+        "status": "loaded",
+        "in_view": true
+      },
+      "objects": [],
+      "objects_more": 0,
+      "objects_cursor": null,
+      "anchors": [
+        {
+          "id": "arrival",
+          "portals": 1
+        }
+      ],
+      "anchors_more": 0,
+      "anchors_cursor": null,
+      "arrivals": [
+        {
+          "uid": "gate_east",
+          "plane": "main",
+          "layer": 0,
+          "at": [
+            7,
+            0
+          ],
+          "carried": false,
+          "via": "anchor"
+        }
+      ],
+      "arrivals_more": 0,
+      "arrivals_cursor": null
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (read-only)",
+        "version": "0.0.0-test"
+      }
+    }
+  }
+}

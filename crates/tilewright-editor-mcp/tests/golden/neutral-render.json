@@ -1,0 +1,69 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      },
+      {
+        "type": "image",
+        "data": "MjU2eDE5MiByZ2JhIDE5NjYwOA==",
+        "mimeType": "image/png"
+      }
+    ],
+    "structuredContent": {
+      "format": "tilewright.editor-render/1",
+      "revision": "<revision>",
+      "catalog": {
+        "status": "loaded",
+        "view": {
+          "plane": "main",
+          "layer": 0,
+          "bounds": [
+            0,
+            0,
+            8,
+            6
+          ]
+        },
+        "presentation": "authored"
+      },
+      "image": {
+        "plane": "main",
+        "layer": 0,
+        "region": [
+          0,
+          0,
+          4,
+          3
+        ],
+        "tiles": 12,
+        "scale": 2,
+        "width": 256,
+        "height": 192
+      },
+      "diagnostics": [
+        {
+          "code": "preview.effects-neutral",
+          "message": "Preview v1 uses neutral effects and one-tile footprints; profile fields are retained without inferred rendering behavior."
+        }
+      ],
+      "diagnostics_more": 0,
+      "png": {
+        "bytes": 19,
+        "sha256": "0707070707070707070707070707070707070707070707070707070707070707"
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (read-only)",
+        "version": "0.0.0-test"
+      }
+    }
+  }
+}

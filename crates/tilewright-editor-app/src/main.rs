@@ -81,6 +81,33 @@ fn main() {
             drop(window);
             println!("window=created-and-destroyed pixels={width}x{height}");
         }
+        "mcp" => {
+            let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(2).collect();
+            let [root] = arguments.as_slice() else {
+                eprintln!("tilewright-editor: mcp takes one argument, ROOT; see docs/MCP.md");
+                std::process::exit(2);
+            };
+            if root.as_encoded_bytes().starts_with(b"--") {
+                eprintln!("tilewright-editor: mcp takes no options; ROOT may not start with --");
+                std::process::exit(2);
+            }
+            let mut server = tilewright_editor_mcp::Server::open(
+                std::path::Path::new(root),
+                env!("CARGO_PKG_VERSION"),
+                render_command::encode_with_digest,
+            );
+            let served = server.serve(
+                std::io::stdin().lock(),
+                std::io::stdout().lock(),
+                &mut std::io::stderr(),
+            );
+            match served {
+                // A client that closes the server's output is done with it.
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+                Err(error) => fail(&error),
+            }
+        }
         command
             if tilewright_editor_observe::cli::COMMANDS.contains(&command)
                 || command == tilewright_editor_observe::cli::RENDER =>
@@ -104,7 +131,7 @@ fn main() {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: tilewright-editor [version | open ROOT | headless ROOT | window | prototype (use provision helper)]\n{}",
+        "usage: tilewright-editor [version | open ROOT | headless ROOT | window | mcp ROOT | prototype (use provision helper)]\n{}",
         tilewright_editor_observe::cli::USAGE
     );
     std::process::exit(2);

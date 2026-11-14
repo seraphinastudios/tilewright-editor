@@ -1,0 +1,59 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "format": "tilewright.editor-page/1",
+      "revision": "<revision>",
+      "section": "planes",
+      "offset": 0,
+      "total": 1,
+      "items": [
+        {
+          "id": "main",
+          "title": "Authored geometric meadow",
+          "kind": "shared",
+          "chunk_size": 32,
+          "default_zone": "meadow",
+          "zones": 3,
+          "anchors": 2,
+          "stairwells": 0,
+          "chunks": 2,
+          "objects": 5,
+          "carried": 0,
+          "portals": 2,
+          "layers": [
+            {
+              "layer": 0,
+              "chunks": 2,
+              "bounds": [
+                -32,
+                0,
+                64,
+                32
+              ]
+            }
+          ],
+          "layers_more": 0
+        }
+      ],
+      "next_cursor": null,
+      "byte_budget_reached": false
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (read-only)",
+        "version": "0.0.0-test"
+      }
+    }
+  }
+}

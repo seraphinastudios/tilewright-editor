@@ -4,7 +4,7 @@
 //! `catalog`: the editor catalog's prototypes and the terrain and zone
 //! palettes, optionally filtered as the desktop Place palette filters.
 use crate::limits::{MAXIMUM_FIELDS, MAXIMUM_PROTOTYPES, MAXIMUM_TERRAIN_CHOICES, MAXIMUM_ZONES};
-use crate::node::{Map, Node};
+use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::Observed;
 use tilewright_editor_ui::{tools::palette_matches, zones};
 
@@ -13,6 +13,14 @@ pub const FORMAT: &str = "tilewright.editor-catalog/1";
 /// The catalog listing. `filter` keeps what contains it, ignoring case, as
 /// [`palette_matches`] decides: prototype ids, terrain values and zone ids.
 pub fn report(observed: &Observed, filter: Option<&str>) -> Map {
+    report_paged(observed, filter, &Bounded)
+}
+
+/// The pageable lists of the report, by their path in it.
+pub const SECTIONS: [&str; 3] = ["prototypes", "terrain_palette", "zone_palette"];
+
+/// [`report`] with its [`SECTIONS`] listed as `pager` decides.
+pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager) -> Map {
     let world = observed.world();
     let keep = |id: &str| filter.is_none_or(|filter| palette_matches(id, filter));
     let header = observed
@@ -20,13 +28,11 @@ pub fn report(observed: &Observed, filter: Option<&str>) -> Map {
         .with("catalog", observed.catalog_status(true))
         .optional_text("match", filter);
     let Some(catalog) = observed.catalog() else {
+        let none = |(): ()| Node::Null;
         return header
-            .with("prototypes", Node::List(Vec::new()))
-            .with("prototypes_more", Node::count(0))
-            .with("terrain_palette", Node::List(Vec::new()))
-            .with("terrain_palette_more", Node::count(0))
-            .with("zone_palette", Node::List(Vec::new()))
-            .with("zone_palette_more", Node::count(0));
+            .paged(pager, "prototypes", "prototypes", [], 0, none)
+            .paged(pager, "terrain_palette", "terrain_palette", [], 0, none)
+            .paged(pager, "zone_palette", "zone_palette", [], 0, none);
     };
     let editing = catalog.editing();
     let prototypes = catalog.prototypes().filter(|(proto, _, _)| keep(proto));
@@ -74,17 +80,33 @@ pub fn report(observed: &Observed, filter: Option<&str>) -> Map {
         .flat_map(|plane| plane.zones.keys().map(move |id| (plane, id.as_str())))
         .filter(|(_, id)| keep(id));
     header
-        .bounded("prototypes", prototypes, MAXIMUM_PROTOTYPES, prototype)
-        .bounded(
+        .paged(
+            pager,
+            "prototypes",
+            "prototypes",
+            prototypes,
+            MAXIMUM_PROTOTYPES,
+            prototype,
+        )
+        .paged(
+            pager,
+            "terrain_palette",
             "terrain_palette",
             terrain,
             MAXIMUM_TERRAIN_CHOICES,
             |(grid, value)| Map::new().text("grid", grid).text("value", value).into(),
         )
-        .bounded("zone_palette", zones, MAXIMUM_ZONES, |(plane, id)| {
-            Map::new()
-                .text("id", id)
-                .optional_text("name", zones::display_name(plane, id))
-                .into()
-        })
+        .paged(
+            pager,
+            "zone_palette",
+            "zone_palette",
+            zones,
+            MAXIMUM_ZONES,
+            |(plane, id)| {
+                Map::new()
+                    .text("id", id)
+                    .optional_text("name", zones::display_name(plane, id))
+                    .into()
+            },
+        )
 }

@@ -145,6 +145,52 @@ impl Map {
         self
     }
 
+    /// Adds list `key`, found at `path` in its report (`catalog.grants.fields`
+    /// says the member `fields` of `grants` of `catalog`), as `pager`
+    /// decides: [`Bounded`], as the CLI prints it, is exactly
+    /// [`Map::bounded`]; the MCP server's pager takes a window of the
+    /// items within a byte budget and adds members of its own. `item` runs
+    /// only for the items inside the window; those before it are skipped
+    /// and those after it counted, unbuilt.
+    #[must_use]
+    pub fn paged<T>(
+        mut self,
+        pager: &dyn Pager,
+        path: &'static str,
+        key: &'static str,
+        items: impl IntoIterator<Item = T>,
+        maximum: usize,
+        mut item: impl FnMut(T) -> Node,
+    ) -> Self {
+        let Window { offset, limit } = pager.window(path, maximum);
+        let mut items = items.into_iter();
+        let skipped = items.by_ref().take(offset).count();
+        let mut listed = Vec::new();
+        let mut refused = false;
+        while listed.len() < limit {
+            let Some(raw) = items.next() else { break };
+            let node = item(raw);
+            if !pager.admit(path, &node) {
+                refused = true;
+                break;
+            }
+            listed.push(node);
+        }
+        let more = items.count() + usize::from(refused);
+        let next = (more > 0).then_some(skipped + listed.len());
+        let total = skipped + listed.len() + more;
+        let members = pager.members(Listed {
+            path,
+            key,
+            items: listed,
+            more,
+            next,
+            total,
+        });
+        self.0.extend(members);
+        self
+    }
+
     /// Adds a list of identifiers, which World bounds itself.
     #[must_use]
     pub fn ids<'a>(self, key: &'static str, ids: impl IntoIterator<Item = &'a str>) -> Self {
@@ -152,6 +198,67 @@ impl Map {
             key,
             Node::List(ids.into_iter().map(|id| Node::Text(clip(id).0)).collect()),
         )
+    }
+}
+
+/// The items [`Map::paged`] lists of one list, and where the rest are.
+pub struct Listed {
+    /// Where the list is in its report.
+    pub path: &'static str,
+    /// Its member name.
+    pub key: &'static str,
+    /// The items listed.
+    pub items: Vec<Node>,
+    /// How many items follow the listed ones.
+    pub more: usize,
+    /// The index of the first item not listed, when there is one.
+    pub next: Option<usize>,
+    /// How many items the list has.
+    pub total: usize,
+}
+
+/// Which items of a list [`Map::paged`] builds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Window {
+    /// Items skipped, unbuilt, before the first one listed.
+    pub offset: usize,
+    /// Most items listed.
+    pub limit: usize,
+}
+
+/// How [`Map::paged`] lists a list: which items, within what budget, and
+/// written as which members.
+pub trait Pager {
+    /// The window of the list at `path`, whose printed bound is `maximum`.
+    fn window(&self, path: &'static str, maximum: usize) -> Window;
+    /// Whether `item`, the next item of the list at `path`, still fits;
+    /// once it does not, the list ends before it.
+    fn admit(&self, path: &'static str, item: &Node) -> bool;
+    /// The members the list adds to its map.
+    fn members(&self, listed: Listed) -> Vec<(String, Node)>;
+}
+
+/// The printed reports' pager: every list holds its first `maximum` items,
+/// followed by `<key>_more`, as [`Map::bounded`] writes it.
+pub struct Bounded;
+
+impl Pager for Bounded {
+    fn window(&self, _: &'static str, maximum: usize) -> Window {
+        Window {
+            offset: 0,
+            limit: maximum,
+        }
+    }
+
+    fn admit(&self, _: &'static str, _: &Node) -> bool {
+        true
+    }
+
+    fn members(&self, listed: Listed) -> Vec<(String, Node)> {
+        vec![
+            (listed.key.to_owned(), Node::List(listed.items)),
+            (format!("{}_more", listed.key), Node::count(listed.more)),
+        ]
     }
 }
 
@@ -163,8 +270,12 @@ impl Map {
 ///   characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to
 ///   U+2069;
 /// - and invisible or format characters a reader would not see: U+00AD
-///   (soft hyphen), U+180E, U+200B to U+200F, U+2060 to U+2064, U+FEFF,
-///   U+FFF9 to U+FFFB and the tag characters U+E0000 to U+E007F.
+///   (soft hyphen), U+034F (combining grapheme joiner), the Hangul fillers
+///   U+115F, U+1160, U+3164 and U+FFA0, the Khmer inherent vowels U+17B4
+///   and U+17B5, U+180E, U+200B to U+200F, U+2060 to U+2064, U+FEFF,
+///   U+FFF9 to U+FFFB, the shorthand format controls U+1BCA0 to U+1BCA3,
+///   the musical formatting characters U+1D173 to U+1D17A and the tag
+///   characters U+E0000 to U+E007F.
 ///
 /// Variation selectors are not escaped: they change how a character is
 /// drawn, not what text says.
@@ -173,11 +284,20 @@ pub fn escaped(character: char) -> bool {
         || matches!(
             character,
             '\u{ad}'
+                | '\u{34f}'
+                | '\u{115f}'
+                | '\u{1160}'
+                | '\u{17b4}'
+                | '\u{17b5}'
                 | '\u{180e}'
                 | '\u{200b}'..='\u{200f}'
                 | '\u{2060}'..='\u{2064}'
+                | '\u{3164}'
                 | '\u{feff}'
+                | '\u{ffa0}'
                 | '\u{fff9}'..='\u{fffb}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
                 | '\u{e0000}'..='\u{e007f}'
         )
 }
@@ -226,6 +346,43 @@ pub fn text_field(text: &str) -> String {
         },
     );
     terminal_field(&marked)
+}
+
+/// The compact JSON form, the MCP server's: the same document as
+/// [`to_json`] with no whitespace between tokens and no final newline.
+pub fn to_compact_json(root: &Map) -> String {
+    let mut output = String::new();
+    compact_json(&Node::Map(root.clone()), &mut output);
+    output
+}
+
+/// Writes `node` in the compact JSON form.
+pub fn compact_json(node: &Node, output: &mut String) {
+    match node {
+        Node::Map(map) => {
+            output.push('{');
+            for (index, (key, value)) in map.0.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                json_string(key, output);
+                output.push(':');
+                compact_json(value, output);
+            }
+            output.push('}');
+        }
+        Node::List(items) => {
+            output.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                compact_json(item, output);
+            }
+            output.push(']');
+        }
+        scalar => node_json(scalar, 0, output),
+    }
 }
 
 fn indent(depth: usize, output: &mut String) {
@@ -412,6 +569,86 @@ mod tests {
         );
         assert!(!super::escaped('\u{fe0f}'));
         assert!(super::escaped('\u{e007f}') && !super::escaped('\u{e0080}'));
+    }
+
+    #[test]
+    fn fillers_joiners_and_format_controls_are_escaped_too() {
+        for character in [
+            '\u{34f}',
+            '\u{115f}',
+            '\u{1160}',
+            '\u{17b4}',
+            '\u{17b5}',
+            '\u{3164}',
+            '\u{ffa0}',
+            '\u{1bca0}',
+            '\u{1bca3}',
+            '\u{1d173}',
+            '\u{1d17a}',
+        ] {
+            assert!(super::escaped(character), "U+{:04X}", u32::from(character));
+            let text = format!("a{character}b");
+            let json = to_json(&Map::new().text("v", &text));
+            assert!(json.is_ascii(), "{json}");
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed["v"], text);
+            assert_eq!(
+                to_text(&Map::new().text("v", &text)),
+                format!("v: a\\u{{{:x}}}b\n", u32::from(character))
+            );
+        }
+        // The neighbours of each range are not.
+        for character in [
+            '\u{34e}',
+            '\u{115e}',
+            '\u{1161}',
+            '\u{17b3}',
+            '\u{17b6}',
+            '\u{3163}',
+            '\u{3165}',
+            '\u{ff9f}',
+            '\u{ffa1}',
+            '\u{1bc9f}',
+            '\u{1bca4}',
+            '\u{1d172}',
+            '\u{1d17b}',
+        ] {
+            assert!(!super::escaped(character), "U+{:04X}", u32::from(character));
+        }
+    }
+
+    #[test]
+    fn the_compact_form_is_the_same_document() {
+        let map = Map::new()
+            .text("name", "a\u{1d173}\"")
+            .with("tile", [-2_i64, 3])
+            .with("number", Node::Number(0.5))
+            .with("nothing", Node::Null)
+            .with(
+                "items",
+                Node::List(vec![Map::new().count("n", 2).into(), Map::new().into()]),
+            );
+        let compact = super::to_compact_json(&map);
+        assert_eq!(
+            compact,
+            r#"{"name":"a\ud834\udd73\"","tile":[-2,3],"number":0.5,"nothing":null,"items":[{"n":2},{}]}"#
+        );
+        let pretty: serde_json::Value = serde_json::from_str(&to_json(&map)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&compact).unwrap();
+        assert_eq!(parsed, pretty);
+    }
+
+    #[test]
+    fn paged_with_the_printed_pager_is_bounded() {
+        let pager = super::Bounded;
+        for maximum in [0, 3, 10, 11] {
+            let through_pager =
+                Map::new().paged(&pager, "values", "values", 0..10, maximum, |value: i64| {
+                    value.into()
+                });
+            let bounded = Map::new().bounded("values", 0..10, maximum, |value: i64| value.into());
+            assert_eq!(through_pager, bounded, "{maximum}");
+        }
     }
 
     #[test]
