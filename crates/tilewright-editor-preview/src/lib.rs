@@ -211,6 +211,62 @@ impl PreparedPreview {
         })
     }
 
+    /// The World scene drawn by the CPU reference renderer, the one every
+    /// mask comes from: no cell scene, overlay or interface.
+    pub fn reference_frame(&self) -> Result<ReferenceFrame, PreviewError> {
+        let viewport = self.scene.viewport();
+        let mut renderer = tilewright_render_testkit::ReferenceRenderer::new(
+            tilewright_render_testkit::offscreen_target(viewport.width, viewport.height),
+        )
+        .map_err(|e| failure(e.to_string()))?;
+        let frame = render_scene(&mut renderer, &self.scene, self.resources.clone())
+            .map_err(|e| failure(e.to_string()))?;
+        Ok(ReferenceFrame {
+            width: frame.width,
+            height: frame.height,
+            rgba8: frame.rgba8,
+        })
+    }
+
+    /// Where the compiled World and cell scenes put their quads in this
+    /// viewport, as the renderer compiled them. The renderer drops a quad
+    /// that lies wholly outside the viewport (one that reaches into it
+    /// keeps its full corners), so [`Extent::undrawn`] counts the
+    /// identities, World objects and view cells, with no quad left.
+    pub fn extent(&self) -> Extent {
+        let mut bounds: Option<[f32; 4]> = None;
+        let mut drawn = std::collections::BTreeSet::new();
+        for (cell, quad) in self
+            .scene
+            .quads()
+            .iter()
+            .map(|quad| (false, quad))
+            .chain(self.cell_scene.quads().iter().map(|quad| (true, quad)))
+        {
+            drawn.insert((cell, quad.semantic_id));
+            for [x, y] in quad.positions {
+                let box_ = bounds.get_or_insert([x, y, x, y]);
+                *box_ = [
+                    box_[0].min(x),
+                    box_[1].min(y),
+                    box_[2].max(x),
+                    box_[3].max(y),
+                ];
+            }
+        }
+        let undrawn = self
+            .picks
+            .keys()
+            .filter(|id| !drawn.contains(&(false, **id)))
+            .chain(
+                self.cell_picks
+                    .keys()
+                    .filter(|id| !drawn.contains(&(true, **id))),
+            )
+            .count();
+        Extent { bounds, undrawn }
+    }
+
     fn check_generation(&self, generation: u64) -> Result<(), PreviewError> {
         if generation == 0 || generation != self.frame_revision {
             return Err(failure("stale preview frame"));
@@ -225,6 +281,25 @@ impl PreparedPreview {
             &self.scene
         }
     }
+}
+
+/// One frame of the CPU reference renderer: `width` × `height` RGBA8
+/// pixels, rows top to bottom.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
+}
+
+/// See [`PreparedPreview::extent`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Extent {
+    /// `[min x, min y, max x, max y]` over every corner of every quad, in
+    /// physical pixels of the viewport; `None` when there is no quad.
+    pub bounds: Option<[f32; 4]>,
+    /// Pick identities of either scene with no quad in it.
+    pub undrawn: usize,
 }
 
 /// An exact semantic mask for one prepared frame and its pick identities.

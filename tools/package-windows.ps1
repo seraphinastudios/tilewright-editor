@@ -35,6 +35,21 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "overview of the packaged sample failed" }
     & "$Stage/bin/tilewright-editor.exe" lint "$Stage/samples/prototype-neutral" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "lint of the packaged sample failed" }
+    # render writes one PNG, outside the sample and the staged package: its
+    # signature and size must be what its report says.
+    $RenderSmoke = Join-Path $StageRoot "render-smoke"
+    New-Item -ItemType Directory -Path $RenderSmoke | Out-Null
+    $Report = & "$Stage/bin/tilewright-editor.exe" render --json --out "$RenderSmoke/sample.png" "$Stage/samples/prototype-neutral" | Out-String | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw "render of the packaged sample failed" }
+    $Png = [System.IO.File]::ReadAllBytes("$RenderSmoke/sample.png")
+    $Signature = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    if ([Convert]::ToHexString([byte[]]$Png[0..7]) -ne [Convert]::ToHexString($Signature)) { throw "render did not write a PNG" }
+    $Width = [System.Buffers.Binary.BinaryPrimitives]::ReadUInt32BigEndian([byte[]]$Png[16..19])
+    $Height = [System.Buffers.Binary.BinaryPrimitives]::ReadUInt32BigEndian([byte[]]$Png[20..23])
+    if ($Width -ne 256 -or $Height -ne 192 -or $Report.image.width -ne $Width -or $Report.image.height -ne $Height -or $Report.png.bytes -ne $Png.Length) {
+        throw "the rendered sample does not match its report"
+    }
+    if ((Get-ChildItem -Force $RenderSmoke).Count -ne 1) { throw "render wrote more than its one file" }
     syft "$Stage/bin/tilewright-editor.exe" --source-name tilewright-editor --source-version $Version --output "cyclonedx-json=$Stage/sbom.cdx.json"
     $Sbom = Get-Content "$Stage/sbom.cdx.json" -Raw | ConvertFrom-Json
     if ($Sbom.components.Count -lt 10) { throw "binary SBOM is incomplete" }

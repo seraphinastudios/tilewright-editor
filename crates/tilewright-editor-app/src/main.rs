@@ -6,6 +6,7 @@
 mod font_pack;
 mod native_input;
 mod prototype;
+mod render_command;
 mod viewport;
 mod workspace_render;
 mod workspace_ui;
@@ -80,10 +81,17 @@ fn main() {
             drop(window);
             println!("window=created-and-destroyed pixels={width}x{height}");
         }
-        command if tilewright_editor_observe::cli::COMMANDS.contains(&command) => {
+        command
+            if tilewright_editor_observe::cli::COMMANDS.contains(&command)
+                || command == tilewright_editor_observe::cli::RENDER =>
+        {
             use std::io::Write as _;
             let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(2).collect();
-            let outcome = tilewright_editor_observe::cli::run(command, &arguments);
+            let outcome = if command == tilewright_editor_observe::cli::RENDER {
+                render_command::run(&arguments)
+            } else {
+                tilewright_editor_observe::cli::run(command, &arguments)
+            };
             // A closed pipe is not an error of the command.
             let _ = std::io::stdout().write_all(outcome.stdout.as_bytes());
             let _ = std::io::stdout().flush();

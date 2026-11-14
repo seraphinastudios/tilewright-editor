@@ -1,0 +1,3 @@
+width 128
+height 96
+rgba8-sha256 2d26ecdca37b484cbe4135a5bbd93b56a25041bba21da2e96aed931bd712f166

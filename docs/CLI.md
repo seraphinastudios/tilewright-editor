@@ -1,9 +1,11 @@
 # Read-only commands
 
-The `tilewright-editor` binary answers four read-only questions about a world
+The `tilewright-editor` binary answers five read-only questions about a world
 without opening a window or an editing session: `overview`, `tile`,
-`catalog` and `lint` (issue #57). The MCP server's observe tools will return
-the same reports later. They are tested on Linux and Windows in CI; macOS is
+`catalog`, `lint` and `render` (issue #57). The MCP server's observe tools
+will return the same reports later. `render` is the only one that writes,
+and it writes exactly one new file, never inside the world (see
+[render](#render)). They are tested on Linux and Windows in CI; macOS is
 expected to work, since nothing in them is platform-specific, but no CI job
 builds or tests it. Editing stays Linux-only.
 
@@ -12,16 +14,17 @@ tilewright-editor overview [--json] ROOT
 tilewright-editor tile [--json] ROOT PLANE LAYER X Y
 tilewright-editor catalog [--json] [--match TEXT] ROOT
 tilewright-editor lint [--json] ROOT
+tilewright-editor render [--json] --out FILE [--region X Y W H] [--scale N] ROOT
 ```
 
 `ROOT` is a world source root, the directory holding `world.jsonc`, given as
 a path the way `open ROOT` takes it (it need not be UTF-8). This and every
 later command spell it the same way: a positional `ROOT` right after the
-command. `--json` and `--match TEXT` may come anywhere after the command, each
-at most once; an argument starting with `--` is always an option, so a root
-cannot start with `--` and `--match` refuses a `TEXT` that starts with `--`
-(a usage error, so `catalog --match --json ROOT` is not a search for
-`--json`). `LAYER` is
+command. Options (`--json`, `--match TEXT`, `--out FILE`, `--region X Y W H`,
+`--scale N`) may come anywhere after the command, each at most once; an
+argument starting with `--` is always an option, so a root cannot start with
+`--`, and `--match` and `--out` refuse a value that starts with `--` (a usage
+error, so `catalog --match --json ROOT` is not a search for `--json`). `LAYER` is
 a spatial layer (32-bit) and `X Y` are plane tile coordinates (64-bit).
 
 ## Read-only by construction
@@ -47,10 +50,15 @@ dependency on the transaction, history or recovery crates (it reaches them
 only through the ui crate, for the functions the desktop editor draws from).
 `tools/check-architecture.sh` pins its direct dependencies and fails if its
 non-test sources name `Session`, `History`, a recovery store, the
-transaction or recovery crates, or provisioning. A test runs every command in
-both forms on a copy of the neutral sample and checks that every file, its
-bytes, its permissions and its modification time are unchanged and that no
-entry appears beside the world.
+transaction or recovery crates, or provisioning, or if they open a directory
+through World's file access, resolve a path or call a `write`. The crate
+opens no file for writing: `render` gets pixels from it, and the binary
+encodes them and writes the one file `--out` names, outside the world. A
+test runs every printing command in both forms on a copy of the neutral
+sample and checks that every file, its bytes, its permissions and its
+modification time are unchanged and that no entry appears beside the world;
+another does the same for `render`, on success (where the one new file
+outside the world is the only change) and for every refusal.
 
 ## World text is data
 
@@ -130,7 +138,15 @@ The `catalog` member reports the editor catalog: `status` is `absent` (no
   this editor wrote and a `detail` quoting the loader when there is one.
 - `tilewright.editor-load-failure/1`: `problems` and `diagnostics` (path,
   line, column, byte span, code and message), when the world does not load.
+- `tilewright.editor-render/1`: `catalog` (status, view, presentation),
+  `image` (plane, layer, `region` `[x, y, width, height]`, `tiles`, `scale`,
+  `width` and `height` in pixels), `diagnostics` (the notes the preview adds
+  when it prepares the region, each a `code` and a `message`) and `png`
+  (`bytes`, and `sha256` of the file written). The report never names the
+  output path.
 - `tilewright.editor-refusal/1` (with `--json` only): `code` and `message`.
+  A refusal's message is this editor's text, never world text. `render`'s
+  write failure (exit 5) prints one too, with code `output.write`.
 
 ## Lint findings
 
@@ -178,6 +194,85 @@ edited; the pick grid is the first grid the catalog grants terrain editing
 on, else the profile's first ground grid. A portal carried in an inventory
 is checked from the tile of the placed object that carries it.
 
+## render
+
+`render` draws a region of the editor catalog's view with the CPU reference
+renderer, the renderer every pick mask and the scripted demo's evidence come
+from, and writes it as an RGBA PNG.
+
+- **What it draws.** The World scene only: ground and placed objects of the
+  view's plane and layer, as the desktop editor draws them, on its dark clear
+  colour. No cell overlay, zone tint, marker, selection or interface. The
+  world's art is drawn as it is; the renderer draws no text.
+- **Which region.** The catalog's whole view by default, or `--region X Y W
+  H`, a tile rectangle (`W` and `H` at least 1) that must lie inside the view
+  bounds (`target.unknown` otherwise). A region of more than 4,096 tiles is
+  refused (`output.budget`) before it is compared with the view.
+- **How it is framed.** The camera is the desktop's default view camera
+  narrowed to the region: centred on it, each art pixel `--scale` screen
+  pixels (an integer from 1 to 8, default 1). The image is that camera's
+  viewport, centred on the region and sized to hold everything the region
+  draws (its ground, and objects that reach past their tile), so nothing the
+  region draws is cut. Both sides are even, at least 2, so the image is
+  exactly the middle of what the desktop shows of the same region; a test
+  compares the whole view with the desktop's own 1280 × 800 frame. Because
+  the frame is centred, art that reaches far to one side leaves an empty
+  margin on the other.
+- **Regions and the whole view.** A region draws only the objects and ground
+  of its own tiles. In the neutral sample, where nothing reaches past its
+  tile, a region's image is exactly that part of the whole view's (a test
+  checks it). In general it is not: art of a tile outside the region that
+  reaches into it (a tall object, raised ground, an isometric neighbour) is
+  not drawn.
+- **Bounds.** The image is at most 8,192 pixels a side and 16,777,216 pixels
+  in all, the reference renderer's own target limits; past them `render` is
+  refused (`output.budget`). The region is first compiled in an 8,192 × 8,192
+  viewport to find what it draws; if any object or tile of the region has no
+  art in that viewport, it is refused the same way. The PNG may be at most
+  68,165,632 bytes, a backstop checked after encoding: storing an image of
+  the most pixels uncompressed would take about 67.1 MB.
+- **Determinism.** The same world and arguments give the same pixels on
+  every platform (the goldens, digests of the decoded pixels, are checked on
+  Linux and Windows in CI), and the same build gives the same PNG bytes:
+  the encoder is pure Rust with fixed settings (8-bit RGBA, balanced
+  compression, adaptive filtering) and writes no time or text chunks. A
+  different version of the encoder may compress differently.
+
+### What it writes
+
+`render` writes exactly one file, never inside the world: the new file
+`--out FILE` names. It replaces nothing and creates no directory.
+
+- `FILE`'s directory must exist and be a directory (`output.directory`).
+- `FILE`'s last component must be a file name World's file access can make:
+  UTF-8, at most 255 bytes, without `\`, `:` or NUL, not `.` or `..`, and
+  with no separator after it (`output.name`). The directories before it need
+  not be UTF-8.
+- `FILE` must be outside the world root: its directory, with every link
+  resolved, may be neither the root, with every link resolved, nor beneath
+  it (`output.inside-world`). A link to the world, or to a directory in it,
+  is therefore inside. Aliases that resolving links cannot see, such as a
+  bind mount of the world elsewhere, are not detected.
+- Nothing may be at `FILE`'s name: no file, directory or link, not even a
+  dangling link (`output.exists`). An existing file is never replaced and a
+  link at the name is never followed. On a file system that ignores case, an
+  entry whose name differs only in case counts.
+- The image is drawn and encoded in memory before the file is made. The file
+  is made through World's confined file access (`tilewright_source`), as the
+  scripted demo writes its evidence: created new, not through a link, synced,
+  and removed again if writing it fails, so a failed `render` leaves no file.
+  A failure to write (exit 5, `output.write`) prints the path as given, escaped,
+  and the system's reason on stderr.
+- The checks and the write are separate steps. The name is checked again
+  just before the file is made, but a local process changing these paths at
+  the same moment can still defeat them, as with any command that writes
+  where it is told.
+
+The output paths are checked after the world loads and before anything is
+drawn; the world tree, the files beside it and the output directory are
+otherwise left exactly as they were, which the tests check for success and
+for every refusal.
+
 ## Limits
 
 Every list is bounded; a bounded list `name` is followed by `name_more`, the
@@ -200,6 +295,11 @@ followed by `name_clipped: true`. The numbers live in
 | `catalog`: `--match` | 64 bytes |
 | `lint`: findings listed (all are counted) | 256 |
 | Load failure: diagnostics listed (`problems` counts all, at most 256) | 128 |
+| `render`: tiles in the region | 4,096 |
+| `render`: image side; image pixels | 8,192; 16,777,216 |
+| `render`: `--scale` | 1 to 8 |
+| `render`: PNG bytes | 68,165,632 |
+| `render`: diagnostics listed | 16 |
 
 Beyond loading the world, each command does work proportional to the world's
 size at most. The bounds are computed so that every report fits the output
@@ -219,7 +319,8 @@ are a load failure (about 827 KB), `overview` (about 448 KB) and `tile`
 | 1 | `lint` only: at least one finding is an error. |
 | 2 | Usage error: nothing is printed on stdout and the usage goes to stderr. |
 | 3 | The world does not load: the load failure is the output. |
-| 4 | Refused: `target.unknown` (the tile's plane does not exist) or `output.budget`. |
+| 4 | Refused, with a stable code: `target.unknown` (the tile's plane does not exist, or the region is not inside the view), `output.budget` (a report, region or image past its bound), and for `render` `catalog.absent`, `catalog.invalid`, `preview.unprepared` (no view to draw; lint says why), `render.failed` (the reference renderer failed), `output.directory`, `output.name`, `output.inside-world` or `output.exists`. |
+| 5 | `render` only: the image could not be written (`output.write`); no file is left. |
 
 `lint` follows the world CLI's `diff` convention (0 clean, 1 findings, 2
 usage) and adds 3 for a world that does not load, which every command shares.
