@@ -35,6 +35,8 @@ updates:
           - patch
         patterns:
           - "*"
+    assignees:
+      - zoeyrose
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -49,3 +51,5 @@ updates:
           - patch
         patterns:
           - "*"
+    assignees:
+      - zoeyrose
