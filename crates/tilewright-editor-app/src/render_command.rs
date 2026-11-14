@@ -135,9 +135,11 @@ fn target(root: &Path, out: &Path, json: bool) -> Result<Target, Outcome> {
     Ok(target)
 }
 
-/// The output's file name, if it has one World's confined access can make:
-/// a last component that is a plain UTF-8 name (no `\`, `:` or NUL, at most
-/// 255 bytes), and no separator after it.
+/// The output's file name, if it is one every platform makes as written, by
+/// one rule on every platform: a last component that is UTF-8, at most 255
+/// bytes, without control characters (U+0000 to U+001F, DEL) or any of
+/// `\ : < > " | ? *`, not `.` or `..`, not ending in a dot or a space, not a
+/// Windows device name ([`device_name`]), and with no separator after it.
 fn file_name(out: &Path) -> Option<&str> {
     // `Path` drops a trailing `.` and separators from its components, so
     // the name must also be what the path's text ends with.
@@ -349,6 +351,7 @@ mod tests {
             ("/m/κοσμος", "/m/ΚΟΣΜΟΣ"),
             ("/m/ﬁle", "/m/FILE"),
             ("/m/tıles", "/m/tiles"),
+            ("/m/ẞ", "/m/ss"),
         ] {
             assert!(
                 inside_world(Path::new(spelled), Path::new(world)),

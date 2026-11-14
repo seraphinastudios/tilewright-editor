@@ -10,7 +10,9 @@
 //!
 //! Read-only by construction: this crate opens no file for writing and
 //! creates none. `render` returns pixels; the binary encodes them and
-//! writes the one file its `--out` names, outside the world. A world is
+//! writes the one new file its `--out` names, refusing any output path it
+//! can see is inside the world (`docs/CLI.md` lists what it cannot see). A
+//! world is
 //! opened with
 //! `WorldDocument::open`, its catalog with the preview loader, and nothing
 //! here holds a session, a recovery store, a transaction or any other write

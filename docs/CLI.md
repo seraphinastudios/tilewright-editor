@@ -51,10 +51,13 @@ dependency on the transaction, history or recovery crates (it reaches them
 only through the ui crate, for the functions the desktop editor draws from).
 `tools/check-architecture.sh` pins its direct dependencies and fails if its
 non-test sources name `Session`, `History`, a recovery store, the
-transaction or recovery crates, or provisioning, or if they open a directory
-through World's file access, resolve a path or call a `write`. The crate
+transaction or recovery crates, or provisioning, or if they name a World
+root, directory or lock, resolve a path, or call a method or function that
+opens a directory, writes, locks, renames or removes. The crate
 opens no file for writing: `render` gets pixels from it, and the binary
-encodes them and writes the one file `--out` names, outside the world. A
+encodes them and writes the one new file `--out` names, refusing any output
+path it can see is inside the world (see [What it writes](#what-it-writes)
+for the cases it cannot see). A
 test runs every printing command in both forms on a copy of the neutral
 sample and checks that every file, its bytes, its permissions and its
 modification time are unchanged and that no entry appears beside the world;
