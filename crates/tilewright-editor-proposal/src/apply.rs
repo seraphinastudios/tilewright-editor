@@ -19,11 +19,11 @@
 //! 3. The person accepts or cancels it through the session, as any change.
 //!    [`Progress::settle`] (called by `prepare_step` too) then reads the
 //!    outcome: applied when the session is at the step's result revision
-//!    with exactly the prepared transaction on top of its undo stack;
-//!    stopped when it is back at the step's base with its undo and redo
-//!    stacks as they were (a Cancel); not applied, retryable, when it is
-//!    back at the base otherwise (an Accept then Undo); refused, retryable,
-//!    otherwise.
+//!    with exactly the prepared transaction on top of its undo stack; not
+//!    applied, retryable, when it is back at the step's base with exactly
+//!    that transaction on top of its redo stack (an Accept then Undo);
+//!    stopped when it is back at the base otherwise (a Cancel); refused,
+//!    retryable, otherwise.
 //!
 //! Applied steps stay applied and are normal undo entries and recovery
 //! records. A refusal never leaves anything pending that this prepared,
@@ -55,11 +55,13 @@ pub enum Settled {
     Pending { step: usize },
     /// The person accepted the step.
     Applied { step: usize },
-    /// The person cancelled the step: the proposal is stopped.
+    /// The session is back at the step's base without the step on top of
+    /// its redo stack: the person cancelled it. The proposal is stopped.
     Stopped { step: usize },
-    /// The step was accepted and undone again (or otherwise left the world
-    /// at its base with other stacks): not applied; it can be prepared
-    /// again.
+    /// The session is back at the step's base with exactly the prepared
+    /// transaction on top of its redo stack: the person accepted and undid
+    /// it. Not applied; it can be prepared again (or redone, after which
+    /// `next()` is behind the world until [`Progress::resume`]).
     NotApplied { step: usize },
     /// A change is pending that is not the prepared step: the person's
     /// own. The step is not pending; settle again once that change is
@@ -67,13 +69,11 @@ pub enum Settled {
     OtherPending { step: usize },
 }
 
-/// The prepared step: its index, the exact transaction it prepared and
-/// the session's undo and redo depths when it did.
+/// The prepared step: its index and the exact transaction it prepared.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Prepared {
     step: usize,
     sealed: String,
-    depths: (usize, usize),
 }
 
 /// How far a proposal has been applied to one session.
@@ -279,7 +279,6 @@ impl Progress {
         self.prepared = Some(Prepared {
             step: index,
             sealed: prepared,
-            depths: session.history().depths(),
         });
         Ok(index)
     }
@@ -294,6 +293,12 @@ impl Progress {
     /// stopped: once the session is at the step's result with the step on
     /// top again (the person undid their edit), `settle` reports it
     /// applied.
+    ///
+    /// A `Progress` belongs to one session: it reads that session's undo
+    /// and redo stacks. After the session is reopened (a new session has
+    /// empty stacks), make a new `Progress` with [`Progress::resume`]. An
+    /// old one would read an accepted step as `proposal.base_stale` for
+    /// good, and a lost pending step as `Stopped`.
     pub fn settle(
         &mut self,
         proposal: &Proposal,
@@ -313,14 +318,15 @@ impl Progress {
         }
         let step = &proposal.steps()[index];
         let current = revision(session);
-        let on_top = on_top(session.applied_steps().last(), step, &prepared.sealed);
-        if current == step.after() && on_top {
+        let applied = on_top(session.applied_steps().last(), step, &prepared.sealed);
+        if current == step.after() && applied {
             self.prepared = None;
             self.next = index + 1;
             Ok(Settled::Applied { step: index })
         } else if current == step.before() {
-            // A Cancel changes neither stack; an Accept then Undo does.
-            let cancelled = session.history().depths() == prepared.depths;
+            // An Accept then Undo leaves this very change on top of the redo
+            // stack; anything else at the base is a Cancel.
+            let cancelled = !on_top(session.undone_step(), step, &prepared.sealed);
             self.prepared = None;
             if cancelled {
                 self.stopped = true;
@@ -345,8 +351,8 @@ impl Progress {
     }
 }
 
-/// Whether `applied`, the top of the undo stack, is the very change this
-/// prepared for `step`, as the person accepted it.
+/// Whether `applied`, the top of the undo (or redo) stack, is the very
+/// change this prepared for `step`, as the person accepted it.
 fn on_top(applied: Option<AppliedStep<'_>>, step: &crate::ProposalStep, sealed: &str) -> bool {
     applied.is_some_and(|applied| {
         applied.before == step.before()

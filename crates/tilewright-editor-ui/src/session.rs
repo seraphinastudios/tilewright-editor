@@ -417,6 +417,17 @@ impl Session {
                 after: step.after,
             })
     }
+    /// The step a Redo would replay, the top of History's redo stack, with
+    /// its origin when this session prepared it; `None` when nothing can
+    /// be redone.
+    pub fn undone_step(&self) -> Option<AppliedStep<'_>> {
+        self.history.undone_top().map(|step| AppliedStep {
+            origin: self.undone.last().and_then(Option::as_ref),
+            transaction: step.forward,
+            before: step.before,
+            after: step.after,
+        })
+    }
     pub fn catalog(&self) -> &PreviewCatalog {
         &self.catalog
     }

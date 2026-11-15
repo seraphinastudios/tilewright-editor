@@ -561,14 +561,17 @@ fn reaching_the_steps_result_by_other_edits_is_not_accepting_the_step() {
     // Refused, not stopped.
     assert!(!progress.stopped());
     assert_eq!((progress.next(), progress.prepared()), (0, Some(0)));
-    // Back at the base by undoing both: not applied, and it applies.
+    // Back at the base by undoing both: the person's own move, not the
+    // step, is on the redo stack, so the step was cancelled. Resume
+    // continues if the person wants it after all.
     for _ in 0..2 {
         accept(&mut person, Action::Undo, &mut records);
     }
     assert_eq!(
         progress.settle(&proposal, &person).unwrap(),
-        Settled::NotApplied { step: 0 }
+        Settled::Stopped { step: 0 }
     );
+    let (mut progress, _) = Progress::resume(&proposal, &person).unwrap();
     apply_all(&proposal, &mut progress, &mut person);
     assert_eq!(revision(&person), proposal.result());
 }
@@ -788,4 +791,164 @@ fn a_chain_that_returns_to_its_base_cannot_be_resumed_there() {
     assert!(!error.message().contains("marker"), "{error}");
     // Beginning, at the strict base, is still possible.
     assert!(Progress::begin(&proposal, &person).is_ok());
+}
+
+/// An edit of the person's own: a new label for `marker_1`.
+fn own(person: &Session, label: &str) -> Action {
+    Action::SetField {
+        uid: "marker_1".into(),
+        field: "label".into(),
+        value: json!(label),
+        expected: revision(person),
+    }
+}
+
+#[test]
+fn accept_then_undo_is_told_from_cancel_by_the_redo_stacks_top_entry() {
+    // Accept then Undo with one entry of the person's own already on the
+    // redo stack: the step is on top of it, so it is not applied.
+    let (agent, proposal, person_world) = short(3, |_| {});
+    let mut records = Records::default();
+    let mut person = open(person_world.path(), PERSON);
+    let mine = own(&person, "Mine");
+    accept(&mut person, mine, &mut records);
+    accept(&mut person, Action::Undo, &mut records);
+    assert_eq!(person.history().depths(), (0, 1));
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    accept(&mut person, Action::Undo, &mut records);
+    assert_eq!(person.history().depths(), (0, 1));
+    assert_eq!(
+        progress.settle(&proposal, &person).unwrap(),
+        Settled::NotApplied { step: 0 }
+    );
+    apply_all(&proposal, &mut progress, &mut person);
+    assert_eq!(files(person_world.path()), files(agent.path()));
+
+    // Cancel, then an edit of the person's own accepted and undone: their
+    // edit, not the step, is on the redo stack, so it was a Cancel.
+    let root = world(|_| {});
+    let mut person = open(root.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Cancel, &mut records).unwrap();
+    let mine = own(&person, "Mine");
+    accept(&mut person, mine, &mut records);
+    accept(&mut person, Action::Undo, &mut records);
+    assert_eq!(
+        progress.settle(&proposal, &person).unwrap(),
+        Settled::Stopped { step: 0 }
+    );
+    assert_eq!(
+        progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_err()
+            .code(),
+        RefusalCode::ProposalClosed
+    );
+    // The person changes their mind: resume continues from the base.
+    let (mut progress, _) = Progress::resume(&proposal, &person).unwrap();
+    assert_eq!(progress.next(), 0);
+    apply_all(&proposal, &mut progress, &mut person);
+    assert_eq!(revision(&person), proposal.result());
+}
+
+#[test]
+fn not_applied_then_redo_leaves_next_behind_until_resume() {
+    let (agent, proposal, person_world) = short(3, |_| {});
+    let mut records = Records::default();
+    let mut person = open(person_world.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    accept(&mut person, Action::Undo, &mut records);
+    assert_eq!(
+        progress.settle(&proposal, &person).unwrap(),
+        Settled::NotApplied { step: 0 }
+    );
+    accept(&mut person, Action::Redo, &mut records);
+    assert_eq!(revision(&person), proposal.steps()[0].after());
+    let untouched = Untouched::of(&person, person_world.path());
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(
+        (error.code(), progress.next()),
+        (RefusalCode::ProposalBaseStale, 0)
+    );
+    untouched.check(&person, person_world.path(), "redone");
+    let (mut progress, _) = Progress::resume(&proposal, &person).unwrap();
+    assert_eq!(progress.next(), 1);
+    apply_all(&proposal, &mut progress, &mut person);
+    assert_eq!(files(person_world.path()), files(agent.path()));
+}
+
+#[test]
+fn a_progress_kept_across_a_reopen_needs_resume() {
+    // Accepted before the reopen: the new session's undo stack is empty, so
+    // the kept progress reads it as stale, for good.
+    let (agent, proposal, person_world) = short(3, |_| {});
+    let mut records = Records::default();
+    let mut person = open(person_world.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    drop(person);
+    let mut person = open(person_world.path(), PERSON);
+    for _ in 0..2 {
+        let error = progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(error.code(), RefusalCode::ProposalBaseStale);
+    }
+    assert!(!progress.stopped());
+    let (mut fresh, _) = Progress::resume(&proposal, &person).unwrap();
+    assert_eq!(fresh.next(), 1);
+    apply_all(&proposal, &mut fresh, &mut person);
+    assert_eq!(files(person_world.path()), files(agent.path()));
+    // Pending when the session was lost: the kept progress reads Stopped;
+    // resume starts again from the base.
+    let root = world(|_| {});
+    let mut person = open(root.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    drop(person);
+    let person = open(root.path(), PERSON);
+    assert_eq!(
+        progress.settle(&proposal, &person).unwrap(),
+        Settled::Stopped { step: 0 }
+    );
+    let (fresh, _) = Progress::resume(&proposal, &person).unwrap();
+    assert_eq!(fresh.next(), 0);
+}
+
+#[test]
+fn resume_reports_a_differing_catalog_too() {
+    let (_agent, proposal, person_world) = short(2, |root| {
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["terrain"][0]["values"] = json!(["grass", "sand"]);
+            catalog["editing"]["anchors"]["edit"] = json!(false);
+        });
+    });
+    let person = open(person_world.path(), PERSON);
+    assert_ne!(person.catalog().revision(), proposal.catalog());
+    let (_, notices) = Progress::resume(&proposal, &person).unwrap();
+    assert_eq!(
+        notices,
+        [Notice::CatalogDiffers {
+            proposal: proposal.catalog(),
+            session: person.catalog().revision()
+        }]
+    );
 }

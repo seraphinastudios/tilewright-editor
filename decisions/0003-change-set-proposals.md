@@ -47,7 +47,8 @@ library code):
   checked against the person's own grants anyway.
 - A refused step (stale base, diverged, refused by the engine) leaves
   nothing pending and can be tried again; only the person's Cancel stops a
-  proposal, including a stale outcome found when a step is settled.
+  proposal; a stale outcome found when a step is settled does not stop it
+  either.
 - A proposal applied part-way can be resumed from the one position of its
   chain the world is at (2026-11-15, coordinator decision, easy to
   revisit); `begin` stays strict-base. Resuming widens nothing, because

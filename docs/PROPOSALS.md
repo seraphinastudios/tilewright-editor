@@ -213,10 +213,12 @@ person's session:
     which a front end must not label as the step;
   - `Applied`: the session is at the step's `after` revision with exactly
     the prepared transaction on top of its undo stack;
-  - `Stopped`: the session is back at the step's base with its undo and
-    redo stacks as they were, a Cancel; `proposal.closed` from then on;
-  - `NotApplied`: back at the base otherwise, as after an Accept followed
-    by an Undo; the step can be prepared again;
+  - `NotApplied`: back at the step's base with exactly the prepared
+    transaction on top of the redo stack, as after an Accept followed by
+    an Undo; the step can be prepared again;
+  - `Stopped`: back at the base otherwise, which is a Cancel (also when
+    the person then accepted and undid an edit of their own: that edit, not
+    the step, is on the redo stack); `proposal.closed` from then on;
   - `proposal.base_stale` otherwise, for example when the person accepted
     an edit of their own after the step: nothing is stopped, and once the
     session is at the step's result with the step on top again (the person
@@ -228,9 +230,24 @@ stack as they were, and can be tried again; only the person's Cancel of a
 prepared step stops a proposal. `pending.exists` and `session.blocked` are
 given when the session cannot prepare a change at all, and
 `proposal.invalid` when a `Progress` is used with another proposal than
-the one it began. `next()` counts the steps settled as applied: when the
-person later undoes a settled step, it is ahead of the world, and
-preparing is `proposal.base_stale` until a Redo (or `resume`).
+the one it began.
+
+What a front end does in each case:
+
+- `next()` counts the steps settled as applied. When the person later
+  undoes a settled step, it is ahead of the world and preparing is
+  `proposal.base_stale`: a Redo of that step, or `resume` on a new
+  `Progress`, continues.
+- After `NotApplied`, preparing the step again offers it for review. If the
+  person instead Redoes it, `next()` is behind the world and preparing is
+  `proposal.base_stale`: `resume` on a new `Progress` continues after it.
+- A `Progress` belongs to one session, whose undo and redo stacks it reads.
+  After the session is reopened, make a new `Progress` with `resume`. A
+  `Progress` kept across a reopen reads a step accepted before it as
+  `proposal.base_stale` for good (the new session's undo stack is empty)
+  and a pending step lost with the old session as `Stopped`.
+- After a `Stopped`, `resume` on a new `Progress` continues if the person
+  wants to after all: it is the same strict base check and review.
 
 Every applied step carries the person's actor and is a normal undo entry
 and recovery record. `Progress::proposal` gives the proposal's body digest
