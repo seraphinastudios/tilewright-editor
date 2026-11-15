@@ -117,6 +117,24 @@ refusal_codes! {
     ProposalChain => "proposal.chain",
     /// A proposal would have no steps.
     ProposalEmpty => "proposal.empty",
+    /// The world is not at the revision the next proposal step starts
+    /// from: it moved on, the proposal was already applied, or it was made
+    /// from another world.
+    ProposalBaseStale => "proposal.base_stale",
+    /// A proposal step, prepared again, gave a different transaction than
+    /// it recorded; it was cancelled.
+    ProposalStepDiverged => "proposal.step_diverged",
+    /// The engine refused to prepare a proposal step again; the engine's
+    /// own code is reported beside this one.
+    ProposalStepRefused => "proposal.step_refused",
+    /// The proposal was stopped, or every step is applied.
+    ProposalClosed => "proposal.closed",
+    /// The proposal store could not retain or read a proposal file.
+    ProposalStore => "proposal.store",
+    /// The world is at more than one position of a proposal's chain (the
+    /// chain returns to a revision it passed), so where to resume is not
+    /// known.
+    ProposalResumeAmbiguous => "proposal.resume_ambiguous",
     /// An unexpected internal failure: a bug, not a property of the input.
     Internal => "internal.unexpected",
 }

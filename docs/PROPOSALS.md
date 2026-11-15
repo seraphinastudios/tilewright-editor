@@ -4,11 +4,12 @@ An agent edits only in its own provisioned sandbox, where it may prepare
 and accept steps; what it hands over is a proposal. Only a person applies
 a proposal to their world, one step at a time, through the normal Review
 and Accept (issue #57, [ADR 0003](../decisions/0003-change-set-proposals.md)).
-This page describes the format, its bounds and its checks, as the
-`tilewright-editor-proposal` crate implements them. Applying a proposal,
-the proposal store, making sandboxes, submitting from an agent and opening
-a proposal in the desktop are later work; nothing described here lets an
-agent publish to a person's world, or publishes anything at all.
+This page describes the format, its bounds and checks, and how a proposal
+is applied, as the `tilewright-editor-proposal` crate implements them.
+Making sandboxes, submitting from an agent and opening a proposal in the
+desktop (what the person sees for each step: PR 6d) are later work;
+nothing described here lets an agent publish to a person's world, and
+nothing publishes except the person's own Accept.
 
 ## The document
 
@@ -111,6 +112,8 @@ U+0020, and numbers as `serde_json` writes them (for example `1e+16`,
 `-0.0`). Tests pin these exact bytes, so a dependency change that alters
 them is noticed.
 
+A store keeps a proposal as `proposal-<body_sha256>.json`.
+
 ## Bounds
 
 All in `tilewright_editor_proposal::limits`:
@@ -167,17 +170,112 @@ Action prepares. Only
 dispatching the Action again when the proposal is applied, and comparing
 what it prepares with the recorded transaction, establishes that.
 
-## Applying (next)
+## Applying
 
-Applying is the next part of this work and is not in the crate yet. As the
-owner decided, it will dispatch each step's Action again through the
-engine on the person's session, under the person's catalog grants and
-with the person's actor (a placement with the uid it recorded, through
-`Session::dispatch_placing`); require the transaction it prepares to equal
-the recorded one in everything but the actor; leave each equal step
-pending for the person's normal Review and Accept, one at a time; and
-apply a proposal only to the exact revision it was made from (the strict
-base), never rebasing it.
+`Progress` is plain data (the proposal's body digest, the next step, the
+prepared step and whether it is stopped) that a front end drives on the
+person's session:
+
+- `Progress::begin` requires the session to be at the proposal's `base` with
+  nothing pending (`proposal.base_stale` otherwise: another world, a world
+  that moved on, or a proposal already applied). This is the strict base:
+  a proposal applies only to the exact revision it was made from, and is
+  never rebased. If the person's catalog revision differs from the
+  proposal's, it says so (`Notice::CatalogDiffers`) and goes on: every step
+  is dispatched under the person's grants anyway.
+- `Progress::resume` continues a proposal applied part-way (after the
+  editor closed, a lost `Progress` or a stop). The session must have
+  nothing pending and be at exactly one position of the proposal's chain:
+  its base or one step's `after`; the next step is the one after it. A
+  revision at no position is `proposal.base_stale`; one at several
+  positions (a chain that returns to a revision it passed) is
+  `proposal.resume_ambiguous`. Resuming widens nothing, since every
+  remaining step is dispatched under the person's grants and reviewed, but
+  the steps before count as applied only because the world is at their
+  result revision: nothing records who applied them.
+- `Progress::prepare_step` dispatches the next step's Action through
+  `Session::dispatch` (a `place` through `Session::dispatch_placing` with
+  its recorded uid), with the person's actor and catalog. An engine refusal
+  is `proposal.step_refused` with the engine's own code beside it (for
+  example grant.missing when the person's catalog does not grant what the
+  sandbox's did, uid.unavailable when the uid is taken). The transaction it
+  prepares must equal the recorded one in everything but the actor;
+  otherwise the change is cancelled and the step is refused with
+  `proposal.step_diverged`, naming the step and which members differ, with
+  no world text. An equal step is pending for the person's normal Review
+  and Accept. The review shows the pending diff of that freshly prepared
+  change, never the recorded transaction text (the desktop's review is PR
+  6d).
+- `Progress::settle` (which `prepare_step` calls first) reads what the
+  person did with the prepared step:
+  - `Pending`: exactly the prepared change is still pending;
+    `OtherPending`: something else is pending, the person's own change,
+    which a front end must not label as the step;
+  - `Applied`: the session is at the step's `after` revision with exactly
+    the prepared transaction on top of its undo stack;
+  - `NotApplied`: back at the step's base with exactly the prepared
+    transaction on top of the redo stack, as after an Accept followed by
+    an Undo; the step can be prepared again;
+  - `Stopped`: back at the base otherwise, which is a Cancel (also when
+    the person then accepted and undid an edit of their own: that edit, not
+    the step, is on the redo stack); `proposal.closed` from then on;
+  - `proposal.base_stale` otherwise, for example when the person accepted
+    an edit of their own after the step: nothing is stopped, and once the
+    session is at the step's result with the step on top again (the person
+    undid their edit) `settle` reports it applied.
+
+A refused step (`proposal.base_stale`, `proposal.step_refused`,
+`proposal.step_diverged`) leaves nothing pending, the world and its undo
+stack as they were, and can be tried again; only the person's Cancel of a
+prepared step stops a proposal. `pending.exists` and `session.blocked` are
+given when the session cannot prepare a change at all, and
+`proposal.invalid` when a `Progress` is used with another proposal than
+the one it began.
+
+What a front end does in each case:
+
+- `next()` counts the steps settled as applied. When the person later
+  undoes a settled step, it is ahead of the world and preparing is
+  `proposal.base_stale`: a Redo of that step, or `resume` on a new
+  `Progress`, continues.
+- After `NotApplied`, preparing the step again offers it for review. If the
+  person instead Redoes it, `next()` is behind the world and preparing is
+  `proposal.base_stale`: `resume` on a new `Progress` continues after it.
+- A `Progress` belongs to one session, whose undo and redo stacks it reads.
+  After the session is reopened, make a new `Progress` with `resume`. A
+  `Progress` kept across a reopen reads a step accepted before it as
+  `proposal.base_stale` for good (the new session's undo stack is empty)
+  and a pending step lost with the old session as `Stopped`.
+- After a `Stopped`, `resume` on a new `Progress` continues if the person
+  wants to after all: it is the same strict base check and review.
+
+Every applied step carries the person's actor and is a normal undo entry
+and recovery record. `Progress::proposal` gives the proposal's body digest
+so a front end can record which proposal each step came from; the desktop
+records it in its evidence (PR 6d). Nothing in this crate records it.
+
+A proposal recorded by another editor build may diverge when it is
+applied: a different title, member order or number spelling in the
+prepared transaction is a difference. That fails safe
+(`proposal.step_diverged`, nothing changed); the `editor` member tells a
+person why. In practice a proposal applies where the person's editor
+prepares identical transaction text, which is the same engine version.
+
+### Equal but for the actor
+
+The recorded transaction carries the sandbox's actor and the one prepared
+again carries the person's. The actor is a top-level member of the
+transaction text that nothing else depends on: `base` and `result` are
+digests of file bytes, and files never hold the actor. Two transactions are
+the same step when every other top-level member is the same value, in the
+same order: format, title, every operation with every precondition
+(`test`, `expect`) and value, and the digests of every file consulted and
+written. Values are compared in the strict reader's canonical form, so
+whitespace and comments do not matter, while member order does, and a
+member on one side only is a difference. Both sides must have a string
+actor. A recorded transaction with a member World's transaction format
+does not have is already refused when the proposal is read
+(`proposal.invalid`).
 
 ## What the digests protect
 
@@ -189,10 +287,39 @@ only what it says. Safety comes from three things instead: every step is
 dispatched again through the engine under the person's own catalog grants;
 the strict base, so a proposal applies only to the exact world it was made
 from and cannot be replayed; and the person's Review and Accept of every
-step. Nothing in the crate publishes.
+step. Nothing in the crate publishes on its own.
 
-## Files
+## The store
 
-A proposal file is named `proposal-<body_sha256>.json`
-(`Proposal::file_name`). The store that writes and reads these files in a
-sandbox's `proposals/` directory comes with applying.
+`ProposalStore::open(root)` takes a directory the caller already opened (in
+a sandbox, the `proposals/` directory the provisioner will pass): the
+current user's alone (mode 0700, no access control list) on a checked
+local file system, locked for as long as the store is held. Linux only:
+elsewhere it is refused with `proposal.store`, as recovery is.
+
+`ProposalStore::retain` writes `proposal-<body digest>.json` with the
+recovery store's sequence: stage beside it, verify the bytes and the
+private 0600 access, check the name is still free, rename, sync the
+directory (a sync that is not durable fails), verify again. The same bytes
+already there are success and write nothing; other bytes, a link, a
+directory or a leftover stage at the name are refused and left in place.
+The lock keeps cooperating writers apart; like the recovery store's, it
+does not stop a process of the same user that ignores it.
+
+Precisely, with the World crates at 0.2.0: the store never writes to the
+final name. `SourceDirectory::write` removes whatever is at the name it
+writes before creating it, so the store writes only the stage
+(`<name>.stage`), after checking nothing is there, and refuses (and keeps)
+a leftover stage. `SourceDirectory::rename` replaces its target, so the
+store renames only after checking the final name is free. Between that
+check and the rename, and between the stage check and the stage write, a
+process that ignores the lock can create an entry that the store then
+replaces: a window of a few system calls, which only a same-user process
+can use. A create-only write (`SourceDirectory::create`, expected in World
+0.2.2 and not used here) would close the stage window; the final-name
+window needs a rename that does not replace, which 0.2.0 does not offer.
+
+`read_proposal(root, name)` reads a store's name only, at most 16 MiB
+(larger is refused before it is read), refuses a link or anything but a
+regular file, decodes and verifies it, and requires the name to carry the
+body's digest.

@@ -139,6 +139,12 @@ Messages are for people and may be reworded; codes are stable.
 | `proposal.digest` | A proposal's body digest or a step's transaction digest does not match its bytes. |
 | `proposal.chain` | A proposal's revisions do not link from its base through every step to its result, or to the session it is built from. |
 | `proposal.empty` | A proposal would have no steps. |
+| `proposal.base_stale` | The world is not at the revision the next proposal step starts from. |
+| `proposal.step_diverged` | A proposal step, prepared again, gave another transaction than it recorded; it was cancelled. |
+| `proposal.step_refused` | The engine refused to prepare a proposal step again; its own code is reported beside this one. |
+| `proposal.closed` | The proposal was stopped by a Cancel, or every step is applied. |
+| `proposal.store` | The proposal store could not retain or read a proposal file. |
+| `proposal.resume_ambiguous` | The world is at more than one position of a proposal's chain, so where to resume it is not known. |
 | `internal.unexpected` | An unexpected internal failure: a bug, not a property of the input. |
 
 A test checks that every code is listed here exactly once. The

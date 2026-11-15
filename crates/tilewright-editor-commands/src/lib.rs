@@ -185,6 +185,17 @@ impl History {
         })
     }
 
+    /// The most recently undone step, the one a Redo would replay: the top
+    /// of the redo stack, read-only. `None` when nothing can be redone.
+    #[must_use]
+    pub fn undone_top(&self) -> Option<AppliedStep<'_>> {
+        self.redo.last().map(|entry| AppliedStep {
+            forward: &entry.forward,
+            before: entry.before,
+            after: entry.after,
+        })
+    }
+
     /// Memory charged to retained forward and inverse transaction records.
     #[must_use]
     pub fn retained_bytes(&self) -> usize {
@@ -544,7 +555,16 @@ mod tests {
             after: [after; 32],
         };
         history.undo = vec![entry("first", 1, 2), entry("second", 2, 3)];
-        history.redo = vec![entry("undone", 3, 4)];
+        assert_eq!(history.undone_top(), None);
+        history.redo = vec![entry("undone first", 4, 5), entry("undone", 3, 4)];
+        assert_eq!(
+            history.undone_top(),
+            Some(super::AppliedStep {
+                forward: "undone",
+                before: [3; 32],
+                after: [4; 32]
+            })
+        );
         let applied: Vec<_> = history.applied().collect();
         assert_eq!(
             applied,

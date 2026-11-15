@@ -11,13 +11,13 @@
 //!   its typed [`Action`](tilewright_editor_ui::Action) and the sealed
 //!   transaction it was accepted as; [`Proposal::decode`] reads one back
 //!   and verifies everything that can be checked without a world.
-//! - [`encode_action`] and [`decode_action`] are the typed JSON form of
-//!   the edit Actions.
-//!
-//! Applying a proposal to a person's world (each Action dispatched again
-//! under the person's grants, required to prepare the transaction it
-//! recorded, and reviewed and accepted by the person step by step) and
-//! the proposal store come next.
+//! - [`Progress`] applies a verified proposal to a person's session step
+//!   by step: each Action is dispatched again through the engine, under
+//!   the person's catalog grants, and must prepare the transaction it
+//!   recorded (all but its actor). The person reviews and accepts every
+//!   step through the normal Review and Accept.
+//! - [`ProposalStore`] writes proposal files durably into a directory the
+//!   caller opened, and [`read_proposal`] reads one back, bounded.
 //!
 //! **What the digests protect.** The body digest and the digest of each
 //! step's transaction detect corruption and accidental edits. They do not
@@ -26,27 +26,34 @@
 //! elsewhere: every step is dispatched again under the person's grants, a
 //! proposal applies only to the exact revision it was made from (the
 //! strict base), and the person reviews and accepts every step. Nothing
-//! here publishes anything.
+//! here publishes anything on its own: only the person's Accept does.
 //!
 //! See `docs/PROPOSALS.md` for the format.
 
 mod action;
+mod apply;
+mod compare;
 mod document;
+mod store;
 
 pub use action::{decode_action, encode_action};
+pub use apply::{Notice, Progress, Settled};
+pub use compare::{Divergence, compare_transactions};
 pub use document::{FORMAT, Proposal, ProposalStep};
+pub use store::{ProposalStore, StoredProposal, read_proposal};
 
 use std::fmt;
 use tilewright_editor_ui::RefusalCode;
 
 /// Every bound of a proposal, in one place.
 pub mod limits {
-    /// Most steps in one proposal. History keeps up to 1,024 steps; a
-    /// session with more applied steps than this cannot be recorded in one
-    /// proposal.
+    /// Most steps in one proposal. History keeps up to
+    /// [`tilewright_editor_commands::MAX_HISTORY`] steps; a session with
+    /// more applied steps than this cannot be recorded in one proposal.
     pub const STEPS: usize = 256;
-    /// Most bytes of a proposal file. History may retain up to 64 MiB; a
-    /// proposal is smaller.
+    /// Most bytes of a proposal file. History may retain up to
+    /// [`tilewright_editor_commands::MAX_HISTORY_BYTES`]; a proposal is
+    /// smaller.
     pub const BYTES: usize = 16 << 20;
     /// Most bytes of one step's sealed transaction.
     pub const TRANSACTION_BYTES: usize = 1 << 20;
@@ -88,11 +95,13 @@ pub mod limits {
 
 /// A refusal of a proposal: a stable [`RefusalCode`] (one of the
 /// `proposal.*` codes, or `pending.exists` and `session.blocked` from the
-/// engine), the step it concerns, and a message written here. Messages
-/// never quote world or proposal text.
+/// engine), the engine's own code when the engine refused a step, the
+/// step it concerns, and a message written here. Messages never quote
+/// world or proposal text.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProposalError {
     code: RefusalCode,
+    engine: Option<RefusalCode>,
     step: Option<usize>,
     message: String,
 }
@@ -101,6 +110,7 @@ impl ProposalError {
     pub(crate) fn new(code: RefusalCode, message: impl Into<String>) -> Self {
         Self {
             code,
+            engine: None,
             step: None,
             message: message.into(),
         }
@@ -109,10 +119,19 @@ impl ProposalError {
         self.step = Some(step);
         self
     }
+    pub(crate) fn engine(mut self, code: RefusalCode) -> Self {
+        self.engine = Some(code);
+        self
+    }
 
     #[must_use]
     pub const fn code(&self) -> RefusalCode {
         self.code
+    }
+    /// The engine's code, for [`RefusalCode::ProposalStepRefused`].
+    #[must_use]
+    pub const fn engine_code(&self) -> Option<RefusalCode> {
+        self.engine
     }
     /// The index of the step concerned, counting from 0.
     #[must_use]
