@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! The proposal document: building it from a session, its one canonical
+//! The proposal document: building it from a session, the one form it is
 //! encoding, and reading it back with every check that needs no world.
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -73,7 +73,9 @@ pub struct Proposal {
 
 impl Proposal {
     /// Records the applied steps of `session` (its undo stack: undone
-    /// steps are not in it) as a proposal. `receipt` is the digest of the
+    /// steps are not in it) as a proposal. `editor` is the version the
+    /// calling application was built as (1 to [`limits::EDITOR_BYTES`]
+    /// printable ASCII characters, no space); `receipt` the digest of the
     /// sandbox's provisioning receipt; `client` an untrusted label, such
     /// as the name an MCP client gave itself.
     ///
@@ -81,11 +83,12 @@ impl Proposal {
     /// Refuses with `pending.exists` while a change is pending, with
     /// `session.blocked` in a blocked session, with `proposal.empty` when
     /// no step is applied, with `proposal.invalid` when a step was not
-    /// prepared by this session or the label is not a valid label, with
+    /// prepared by this session or the editor version is not valid, with
     /// `proposal.chain` when the steps do not link to the session's
     /// revision, and with `proposal.budget` over a bound.
     pub fn from_session(
         session: &Session,
+        editor: &str,
         receipt: [u8; 32],
         client: Option<&str>,
     ) -> Result<Self, ProposalError> {
@@ -114,6 +117,8 @@ impl Proposal {
                 limits::STEPS
             )));
         }
+        // Kept although History makes it unreachable: a proposal must end
+        // where the session is, whatever History does in future.
         if last.after != session.history().document().revision() {
             return Err(ProposalError::new(
                 RefusalCode::ProposalChain,
@@ -135,7 +140,7 @@ impl Proposal {
             });
         }
         let body = encode_body(&Fields {
-            editor: env!("CARGO_PKG_VERSION"),
+            editor: editor_version(editor)?,
             base: first.before,
             result: last.after,
             catalog: session.catalog().revision(),
@@ -149,15 +154,16 @@ impl Proposal {
         Self::decode(bytes.as_bytes())
     }
 
-    /// Reads and verifies a proposal document: its format, bounds and
-    /// canonical encoding, the body digest and every step's transaction
+    /// Reads and verifies a proposal document: strict JSON with exactly the
+    /// documented members, types and bounds, the body digest and every
+    /// step's transaction
     /// digest, the chain of revisions from base through every step to
     /// result, and each step's agreement with its action and the actor.
     ///
     /// # Errors
     /// Refuses with `proposal.budget` over a bound (a document larger than
     /// [`limits::BYTES`] before reading it), `proposal.invalid` for a
-    /// malformed or non-canonical document, `proposal.empty` for one
+    /// malformed document, `proposal.empty` for one
     /// without steps, `proposal.digest` for a digest that does not match,
     /// and `proposal.chain` for revisions that do not link.
     #[allow(clippy::too_many_lines)]
@@ -175,6 +181,12 @@ impl Proposal {
                 | ValueLimit => budget,
                 _ => invalid,
             };
+            if error.code == ValueLimit {
+                return budget(format!(
+                    "the proposal has more than {} JSON values",
+                    limits::VALUES
+                ));
+            }
             refuse(format!(
                 "the proposal is not strict JSON within its bounds ({})",
                 error.code.as_str()
@@ -193,10 +205,7 @@ impl Proposal {
                 "editor", "base", "result", "catalog", "actor", "client", "receipt", "steps",
             ],
         )?;
-        let editor = body.text("editor", limits::EDITOR_BYTES)?;
-        if editor.is_empty() || !editor.bytes().all(|byte| byte.is_ascii_graphic()) {
-            return Err(invalid("the editor version is printable ASCII"));
-        }
+        let editor = editor_version(body.text("editor", limits::EDITOR_BYTES)?)?;
         let actor =
             Actor::new(body.text("actor", tilewright_editor_ui::Actor::MAXIMUM_CHARACTERS)?)
                 .map_err(|_| invalid("the actor is not a valid actor"))?;
@@ -235,13 +244,9 @@ impl Proposal {
             receipt: digest(body.get("receipt"), "receipt")?,
             steps: &steps,
         };
-        // One encoding only: comments, whitespace, member order, escapes
-        // and number spellings other than the writer's are refused.
-        let body_text = document.text(members.get("body").span());
-        if encode_body(&fields)? != body_text || frame(body_text, &recorded_body)? != text {
-            return Err(invalid("the proposal is not in its canonical encoding"));
-        }
-        let body_sha256 = sha256(body_text);
+        // The digest covers the body's exact bytes, as the reader found
+        // them; any layout the strict reader accepts is read.
+        let body_sha256 = sha256(document.text(members.get("body").span()));
         if body_sha256 != recorded_body {
             return Err(ProposalError::new(
                 RefusalCode::ProposalDigest,
@@ -272,7 +277,8 @@ impl Proposal {
         })
     }
 
-    /// The canonical bytes of the document.
+    /// The bytes of the document: as read, or as written by
+    /// [`Proposal::from_session`].
     pub fn bytes(&self) -> &[u8] {
         self.bytes.as_bytes()
     }
@@ -336,8 +342,9 @@ struct Fields<'a> {
     steps: &'a [ProposalStep],
 }
 
-/// The one canonical encoding of the body: minified JSON, members in
-/// sorted order, `serde_json`'s escapes and number spellings.
+/// The form the writer emits for the body: minified JSON, members in
+/// sorted order, `serde_json`'s escapes and number spellings. Readers do
+/// not require it.
 fn encode_body(fields: &Fields<'_>) -> Result<String, ProposalError> {
     if fields
         .client
@@ -393,17 +400,39 @@ fn frame(body: &str, digest: &[u8; 32]) -> Result<String, ProposalError> {
 
 /// The strict reader's limits for a proposal: its size and the deepest
 /// nesting a field value can reach inside it.
+/// Every cap follows from a documented bound, so no proposal within the
+/// bounds meets a reader default first.
 fn reader_limits() -> jsonc::Limits {
     jsonc::Limits {
         max_input_bytes: limits::BYTES,
+        // The document, body, steps, step and action levels, then a field
+        // value nested at most its own bound deep below its member.
         max_depth: 8 + limits::FIELD_VALUE_DEPTH,
-        max_array_items: limits::CELLS.max(limits::STEPS),
+        max_values: limits::VALUES,
+        max_array_items: limits::CELLS
+            .max(limits::STEPS)
+            .max(limits::FIELD_VALUE_ENTRIES),
+        max_object_keys: limits::OBJECT_KEYS,
         max_string_bytes: limits::TRANSACTION_BYTES,
         max_comments: 0,
-        max_lines: 1,
+        max_lines: limits::BYTES,
         max_line_bytes: limits::BYTES,
         ..jsonc::Limits::default()
     }
+}
+
+/// A valid editor version: 1 to [`limits::EDITOR_BYTES`] printable ASCII
+/// characters, no space.
+fn editor_version(editor: &str) -> Result<&str, ProposalError> {
+    if editor.len() > limits::EDITOR_BYTES {
+        return Err(budget("the editor version is too long"));
+    }
+    if editor.is_empty() || !editor.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(invalid(
+            "the editor version is printable ASCII without spaces",
+        ));
+    }
+    Ok(editor)
 }
 
 fn step(value: &jsonc::Value) -> Result<ProposalStep, ProposalError> {
@@ -465,7 +494,7 @@ fn verify(fields: &Fields<'_>) -> Result<(), ProposalError> {
 
 /// A step's transaction is a sealed World transaction by `actor` that
 /// changes between 1 and [`limits::CHANGED_FILES`] files, and a placement
-/// inserts exactly the uid it records.
+/// inserts one object with the uid it records and no inventory.
 fn verify_transaction(step: &ProposalStep, actor: &Actor) -> Result<(), ProposalError> {
     let transaction =
         tilewright_edit::Transaction::parse("proposal step", step.transaction.as_str())
@@ -495,20 +524,20 @@ fn verify_transaction(step: &ProposalStep, actor: &Actor) -> Result<(), Proposal
     if root.get("actor").and_then(jsonc::Value::as_str) != Some(actor.as_str()) {
         return Err(invalid("the transaction's actor is not the proposal's"));
     }
-    let insert = root
+    let inserted = root
         .get("operations")
         .and_then(jsonc::Value::as_array)
         .and_then(|operations| match operations {
             [operation]
                 if operation.get("op").and_then(jsonc::Value::as_str) == Some("object.insert") =>
             {
-                operation
-                    .get("object")
-                    .and_then(|object| object.get("uid"))
-                    .and_then(jsonc::Value::as_str)
+                operation.get("object")
             }
             _ => None,
         });
+    let insert = inserted
+        .and_then(|object| object.get("uid"))
+        .and_then(jsonc::Value::as_str);
     match (&step.action, step.placed.as_deref()) {
         (Action::Place { .. }, Some(uid)) => {
             if uid_material(uid).is_none() {
@@ -518,6 +547,12 @@ fn verify_transaction(step: &ProposalStep, actor: &Actor) -> Result<(), Proposal
                 return Err(invalid(
                     "the placement's transaction does not insert its uid",
                 ));
+            }
+            // The engine's Place writes uid, prototype, layer and fields,
+            // never an inventory, whose objects would carry uids of their
+            // own.
+            if inserted.is_some_and(|object| object.get("inventory").is_some()) {
+                return Err(invalid("a placement inserts no inventory"));
             }
         }
         (Action::Place { .. }, None) => {

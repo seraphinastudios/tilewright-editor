@@ -52,9 +52,9 @@ if grep -RnE --include='*.rs' \
   exit 1
 fi
 if grep -RnE --include='*.rs' \
-  '\b(Session|History|DurableRecovery|RecoveryStore)\b|tilewright_edit::|tilewright_editor_(commands|recovery)|provision' \
+  '\b(Session|History|DurableRecovery|RecoveryStore|Proposal)\b|tilewright_edit::|tilewright_editor_(commands|proposal|recovery)|provision' \
   "${read_only[@]}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
-  echo "the read-only observe crate or MCP server reaches editing, history, recovery or provisioning" >&2
+  echo "the read-only observe crate or MCP server reaches editing, history, recovery, proposals or provisioning" >&2
   exit 1
 fi
 # Nor do they name the standard library's file, network or process

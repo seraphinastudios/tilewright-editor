@@ -82,6 +82,18 @@ fn proposal_body(steps: &[Value]) -> Value {
 /// `count` copies of one step with made-up revisions that link: nothing
 /// that needs no world can tell them from real ones.
 fn chained(prepared: &Prepared, count: usize) -> Value {
+    chained_of(prepared, count, |expected| {
+        let mut action = prepared.action.clone();
+        if let Action::Paint { expected: at, .. } = &mut action {
+            *at = expected;
+        }
+        action
+    })
+}
+
+/// As [`chained`], each step with the action `make` gives for its base:
+/// verification does not compare an action with its transaction.
+fn chained_of(prepared: &Prepared, count: usize, make: impl Fn([u8; 32]) -> Action) -> Value {
     let revision = |index: usize| -> [u8; 32] {
         let mut revision = [0xab; 32];
         revision[..8].copy_from_slice(&(index as u64).to_be_bytes());
@@ -89,10 +101,7 @@ fn chained(prepared: &Prepared, count: usize) -> Value {
     };
     let steps = (0..count)
         .map(|index| {
-            let mut action = prepared.action.clone();
-            if let Action::Paint { expected, .. } = &mut action {
-                *expected = revision(index);
-            }
+            let action = make(revision(index));
             step(&Prepared {
                 action,
                 transaction: prepared.transaction.clone(),
@@ -191,6 +200,78 @@ fn the_step_and_size_bounds_hold_exactly_at_their_limits() {
             assert_eq!(result.unwrap_err(), RefusalCode::ProposalBudget);
         }
     }
+}
+
+#[test]
+fn no_reader_cap_refuses_what_the_documented_bounds_allow() {
+    let paint = prepare(2);
+    let stroke = |expected| Action::PaintStroke {
+        plane: "main".into(),
+        layer: 0,
+        grid: "floor".into(),
+        cells: (0..i64::try_from(limits::CELLS).unwrap())
+            .map(|x| [x, -x])
+            .collect(),
+        proto: "sand".into(),
+        expected,
+    };
+    // 82 strokes of the most cells met a hidden 1,000,000-value default;
+    // the most steps of them are within the bounds too.
+    for count in [82, limits::STEPS] {
+        let bytes = document(&chained_of(&paint, count, stroke));
+        assert!(bytes.len() <= limits::BYTES);
+        assert_eq!(code(&bytes).map(|p| p.steps().len()), Ok(count));
+    }
+    // Field values at their bounds: the deepest nesting, the most entries,
+    // the most members.
+    let mut deepest = json!(1);
+    for _ in 0..limits::FIELD_VALUE_DEPTH {
+        deepest = json!([deepest]);
+    }
+    for value in [
+        deepest,
+        json!(vec![0; limits::FIELD_VALUE_ENTRIES - 1]),
+        Value::Object(
+            (0..limits::OBJECT_KEYS)
+                .map(|key| (key.to_string(), json!(0)))
+                .collect(),
+        ),
+    ] {
+        let set = |expected| Action::SetField {
+            uid: "marker_1".into(),
+            field: "label".into(),
+            value: value.clone(),
+            expected,
+        };
+        assert!(code(&document(&chained_of(&paint, limits::STEPS, set))).is_ok());
+    }
+    // More values than the bound: refused before anything else, by name.
+    let mut body = chained(&paint, 1);
+    let filler = vec![vec![0; limits::CELLS]; limits::VALUES / limits::CELLS + 1];
+    body["filler"] = json!(filler);
+    let error = Proposal::decode(&document(&body)).unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalBudget);
+    assert!(
+        error.message().contains(&limits::VALUES.to_string()),
+        "{error}"
+    );
+    // One level deeper than a field value may be: refused.
+    let mut deeper = json!(1);
+    for _ in 0..=limits::FIELD_VALUE_DEPTH {
+        deeper = json!([deeper]);
+    }
+    let set = |expected| Action::SetField {
+        uid: "marker_1".into(),
+        field: "label".into(),
+        value: json!(1),
+        expected,
+    };
+    let mut body = chained_of(&paint, 1, set);
+    body["steps"][0]["action"]["value"] = deeper;
+    assert_eq!(
+        code(&document(&body)).unwrap_err(),
+        RefusalCode::ProposalBudget
+    );
 }
 
 #[test]
@@ -343,6 +424,19 @@ fn every_check_that_needs_no_world_refuses_with_its_code() {
             Box::new(|b| b["steps"][0]["placed"] = json!("marker_1")),
         ),
         (
+            "an inventory",
+            Box::new(|b| {
+                let text = b["steps"][0]["transaction"].as_str().unwrap();
+                let edited = text.replacen(
+                    "\"layer\":\"item\"",
+                    "\"layer\":\"item\",\"inventory\":[{\"uid\":\"smuggled_1\",\"proto\":\"marker\"}]",
+                    1,
+                );
+                assert_ne!(edited, text);
+                b["steps"][0]["transaction"] = json!(edited);
+            }),
+        ),
+        (
             "not generated, in its transaction too",
             Box::new(|b| {
                 let assigned = b["steps"][0]["placed"].as_str().unwrap().to_owned();
@@ -449,7 +543,7 @@ fn prepare_no_op() -> Prepared {
 }
 
 #[test]
-fn digests_and_the_one_canonical_encoding_are_enforced() {
+fn digests_are_enforced_and_any_strict_layout_reads() {
     let paint = prepare(2);
     let bytes = document(&proposal_body(&[step(&paint)]));
     let text = String::from_utf8(bytes.clone()).unwrap();
@@ -471,16 +565,14 @@ fn digests_and_the_one_canonical_encoding_are_enforced() {
         code(edited.as_bytes()).unwrap_err(),
         RefusalCode::ProposalDigest
     );
+    let canonical = Proposal::decode(&bytes).unwrap();
     let wrong_tag = text.replace(FORMAT, "tilewright.editor-proposal/2");
-    let not_canonical = [
+    // Any layout the strict reader accepts reads: the digest covers the
+    // body's bytes as they are, whatever another writer made them.
+    let other_layouts = [
         format!("{text}\n"),
-        format!(" {text}"),
-        format!("\u{feff}{text}"),
-        text.replacen("{\"body\":", "{ \"body\":", 1),
-        text.replacen("{\"body\":", "{/**/\"body\":", 1),
-        text.replacen("\"editor\":\"0.1.0\"", "\"editor\":\"0.1.\\u0030\"", 1),
-        text.replacen("\"layer\":0", "\"layer\":-0", 1),
-        text.replacen("\"layer\":0", "\"layer\":0e0", 1),
+        format!(" \r\n\t{text}"),
+        text.replacen("{\"body\":", "{ \"body\" :\n", 1),
         // Members in another order.
         text.replacen(&format!(",\"format\":\"{FORMAT}\"}}"), "}", 1)
             .replacen(
@@ -488,15 +580,55 @@ fn digests_and_the_one_canonical_encoding_are_enforced() {
                 &format!("{{\"format\":\"{FORMAT}\",\"body\":"),
                 1,
             ),
-        // A duplicate key.
+        with_body(&text, |body| {
+            body.replacen("\"editor\":\"0.1.0\"", "\"editor\" : \"0.1.\\u0030\"", 1)
+        }),
+        with_body(&text, |body| {
+            body.replacen("\"layer\":0", "\"layer\":-0", 1)
+        }),
+        with_body(&text, |body| {
+            body.replacen("{\"action\":", "{\n  \"action\":", 1)
+        }),
+    ];
+    for (index, other) in other_layouts.iter().enumerate() {
+        assert_ne!(other, &text, "case {index}");
+        let read = Proposal::decode(other.as_bytes())
+            .unwrap_or_else(|error| panic!("case {index}: {} {error}", error.code()));
+        assert_eq!(read.bytes(), other.as_bytes(), "case {index}");
+        assert_eq!(read.steps(), canonical.steps(), "case {index}");
+        assert_eq!(
+            (read.base(), read.result(), read.actor(), read.editor()),
+            (
+                canonical.base(),
+                canonical.result(),
+                canonical.actor(),
+                canonical.editor()
+            ),
+            "case {index}"
+        );
+    }
+    // What the strict reader refuses stays refused.
+    let refused = [
+        format!("\u{feff}{text}"),
+        text.replacen("{\"body\":", "{/**/\"body\":", 1),
+        text.replacen("{\"body\":", "{// line\n\"body\":", 1),
+        with_body(&text, |body| {
+            body.replacen("\"layer\":0", "\"layer\":0e0", 1)
+        }),
+        with_body(&text, |body| {
+            body.replacen("\"layer\":0", "\"layer\":0.0", 1)
+        }),
+        // Duplicate keys.
         text.replacen("{\"body\":", "{\"format\":1,\"body\":", 1),
-        text.replacen("\"editor\":", "\"editor\":\"0.1.0\",\"editor\":", 1),
+        with_body(&text, |body| {
+            body.replacen("\"editor\":", "\"editor\":\"0.1.0\",\"editor\":", 1)
+        }),
         wrong_tag,
         String::from_utf8_lossy(&[0xff, 0xfe]).into_owned(),
         "[]".into(),
         String::new(),
     ];
-    for (index, other) in not_canonical.iter().enumerate() {
+    for (index, other) in refused.iter().enumerate() {
         assert_ne!(other, &text, "case {index}");
         assert_eq!(
             code(other.as_bytes()).unwrap_err(),
@@ -509,6 +641,28 @@ fn digests_and_the_one_canonical_encoding_are_enforced() {
         code(&[0xff, 0xfe, b'{']).unwrap_err(),
         RefusalCode::ProposalInvalid
     );
+}
+
+/// `text` with its body changed by `edit` and the body digest made to
+/// match the new body bytes.
+fn with_body(text: &str, edit: impl FnOnce(&str) -> String) -> String {
+    let document =
+        tilewright_jsonc::Document::parse(text, &tilewright_jsonc::Limits::default()).unwrap();
+    let span = document.root().get("body").unwrap().span();
+    let recorded = document
+        .root()
+        .get("body_sha256")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let body = edit(&text[span.start..span.end]);
+    assert_ne!(body, text[span.start..span.end]);
+    format!("{}{body}{}", &text[..span.start], &text[span.end..]).replacen(
+        &recorded,
+        &hex(&sha256(&body)),
+        1,
+    )
 }
 
 /// `SplitMix64`, for reproducible hostile documents.

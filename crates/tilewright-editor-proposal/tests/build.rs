@@ -8,7 +8,7 @@
 mod common;
 
 use common::{
-    AGENT, KINDS, RECEIPT, Records, accept, body, document, edit, revision, sandbox, world,
+    AGENT, EDITOR, KINDS, RECEIPT, Records, accept, body, document, edit, revision, sandbox, world,
 };
 use serde_json::json;
 use std::path::Path;
@@ -43,7 +43,8 @@ fn recorded(root: &Path) -> (Session, Proposal) {
     accept(&mut session, undone, &mut records);
     accept(&mut session, Action::Undo, &mut records);
     assert_eq!(session.history().depths(), (KINDS, 1));
-    let proposal = Proposal::from_session(&session, RECEIPT, Some("client\u{1b}[31m")).unwrap();
+    let proposal =
+        Proposal::from_session(&session, EDITOR, RECEIPT, Some("client\u{1b}[31m")).unwrap();
     (session, proposal)
 }
 
@@ -74,7 +75,7 @@ fn a_proposal_records_the_undo_stack_of_every_edit_kind() {
     assert_eq!(proposal.result(), revision(&session));
     assert_eq!(proposal.catalog(), session.catalog().revision());
     assert_eq!(proposal.actor().as_str(), AGENT);
-    assert_eq!(proposal.editor(), env!("CARGO_PKG_VERSION"));
+    assert_eq!(proposal.editor(), EDITOR);
     assert_eq!(proposal.client(), Some("client\u{1b}[31m"));
     assert!(!proposal.client_display().unwrap().contains('\u{1b}'));
     assert_eq!(proposal.receipt(), RECEIPT);
@@ -95,22 +96,23 @@ fn building_refuses_a_pending_change_and_an_empty_history() {
     let root = world(|_| {});
     let mut session = sandbox(root.path());
     let mut records = Records::default();
-    let error = Proposal::from_session(&session, RECEIPT, None).unwrap_err();
+    let error = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalEmpty);
     let expected = revision(&session);
     accept(&mut session, edit(0, expected), &mut records);
-    assert!(Proposal::from_session(&session, RECEIPT, None).is_ok());
+    assert!(Proposal::from_session(&session, EDITOR, RECEIPT, None).is_ok());
     let expected = revision(&session);
     session.dispatch(edit(1, expected), &mut records).unwrap();
-    let error = Proposal::from_session(&session, RECEIPT, None).unwrap_err();
+    let error = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap_err();
     assert_eq!(error.code(), RefusalCode::PendingExists);
     session.dispatch(Action::Cancel, &mut records).unwrap();
     // A label over its bound.
-    let error = Proposal::from_session(&session, RECEIPT, Some(&"x".repeat(257))).unwrap_err();
+    let error =
+        Proposal::from_session(&session, EDITOR, RECEIPT, Some(&"x".repeat(257))).unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalBudget);
     // An undone step leaves nothing to record.
     accept(&mut session, Action::Undo, &mut records);
-    let error = Proposal::from_session(&session, RECEIPT, None).unwrap_err();
+    let error = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalEmpty);
 }
 
@@ -123,7 +125,7 @@ fn a_removed_or_reordered_step_breaks_the_chain() {
         let expected = revision(&session);
         accept(&mut session, edit(kind, expected), &mut records);
     }
-    let proposal = Proposal::from_session(&session, RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
     let mut removed = body(proposal.bytes());
     removed["steps"].as_array_mut().unwrap().remove(1);
     let mut reordered = body(proposal.bytes());
@@ -179,7 +181,7 @@ fn a_step_the_session_did_not_prepare_is_refused() {
     .unwrap();
     let mut session = Session::new(history, catalog, resources, Actor::new(AGENT).unwrap());
     assert!(session.applied_steps().next().unwrap().origin.is_none());
-    let error = Proposal::from_session(&session, RECEIPT, None).unwrap_err();
+    let error = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap_err();
     assert_eq!(
         (error.code(), error.step()),
         (RefusalCode::ProposalInvalid, Some(0))
@@ -188,9 +190,51 @@ fn a_step_the_session_did_not_prepare_is_refused() {
     let expected = revision(&session);
     accept(&mut session, edit(0, expected), &mut Records::default());
     assert_eq!(session.applied_steps().len(), 2);
-    let error = Proposal::from_session(&session, RECEIPT, None).unwrap_err();
+    let error = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap_err();
     assert_eq!(
         (error.code(), error.step()),
         (RefusalCode::ProposalInvalid, Some(0))
     );
+}
+
+#[test]
+fn the_editor_version_is_the_callers_and_is_checked() {
+    let root = world(|_| {});
+    let mut session = sandbox(root.path());
+    let expected = revision(&session);
+    accept(&mut session, edit(0, expected), &mut Records::default());
+    let long = "1".repeat(tilewright_editor_proposal::limits::EDITOR_BYTES + 1);
+    for (editor, code) in [
+        ("", RefusalCode::ProposalInvalid),
+        ("1.2 beta", RefusalCode::ProposalInvalid),
+        ("1.2.\u{e9}", RefusalCode::ProposalInvalid),
+        (long.as_str(), RefusalCode::ProposalBudget),
+    ] {
+        let error = Proposal::from_session(&session, editor, RECEIPT, None).unwrap_err();
+        assert_eq!(error.code(), code, "{editor:?}");
+    }
+    let longest = "1".repeat(tilewright_editor_proposal::limits::EDITOR_BYTES);
+    let proposal = Proposal::from_session(&session, &longest, RECEIPT, None).unwrap();
+    assert_eq!(proposal.editor(), longest);
+}
+
+/// The writer's exact bytes for a whole document: member order, framing
+/// and escapes, so that a change of the JSON library's output is noticed.
+#[test]
+fn the_writer_emits_this_exact_document() {
+    let root = world(|_| {});
+    let mut session = sandbox(root.path());
+    let expected = revision(&session);
+    accept(&mut session, edit(0, expected), &mut Records::default());
+    let proposal = Proposal::from_session(
+        &session,
+        EDITOR,
+        RECEIPT,
+        Some("tab\t \u{1} \u{1f600} \"q\""),
+    )
+    .unwrap();
+    let text = String::from_utf8(proposal.bytes().to_vec()).unwrap();
+    // Written once from this writer; a change is a format change.
+    assert_eq!(text, include_str!("golden/proposal-move.json"));
+    assert_eq!(Proposal::decode(text.as_bytes()).unwrap(), proposal);
 }

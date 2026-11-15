@@ -50,7 +50,13 @@ bypass anything the desktop app enforces. See
   input.invalid for anything else, and with uid.unavailable when the
   World already has it), for one dispatch only; the session's own uid
   source is restored after it. [Proposals](PROPOSALS.md) are built on
-  both.
+  both. The kept origins add memory that History's 64 MiB byte budget
+  does not count: one Action per undo and redo entry, so at most
+  `MAX_HISTORY` (1,024, the bound on undo and redo together) times the
+  largest Action. That is a stroke of 4,096 cells (about 64 KiB) or a
+  field value within the engine's 64 KiB encoded budget (a few times that
+  in memory): roughly 64 MiB for maximal strokes and a few hundred MiB at
+  worst for maximal field values.
 - **Summaries.** `Session::pending_summary` gives a bounded structured view
   of the pending change for callers that do not draw it: base and result
   revisions, at most 32 changed files with their change kind and sizes (and
@@ -128,7 +134,7 @@ Messages are for people and may be reworded; codes are stable.
 | `publish.unverified` | Publication was applied, but the reopened source differs or does not reopen. |
 | `reopen.blocked` | Reopen found differing source or an uncertain publication. |
 | `uid.unavailable` | No unused uid could be drawn for a new object. |
-| `proposal.invalid` | A proposal is malformed or not in its canonical encoding, records a non-edit action, or a step disagrees with its action or actor. |
+| `proposal.invalid` | A proposal is malformed, records a non-edit action, or a step disagrees with its action or actor. |
 | `proposal.budget` | A proposal exceeds a step, size or length bound. |
 | `proposal.digest` | A proposal's body digest or a step's transaction digest does not match its bytes. |
 | `proposal.chain` | A proposal's revisions do not link from its base through every step to its result, or to the session it is built from. |

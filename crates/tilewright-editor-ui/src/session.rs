@@ -976,9 +976,13 @@ impl Session {
                     let origin = self.undone.pop().flatten();
                     self.steps.push(origin);
                 }
+                // Unreachable with today's History; kept so a change there
+                // drops the pairing rather than misattribute a step.
                 _ => self.forget_origins(),
             }
         }
+        // Unreachable with today's History, as above: a length mismatch
+        // means the pairing can no longer be trusted.
         if (self.steps.len(), self.undone.len()) != after {
             self.forget_origins();
         }

@@ -72,7 +72,7 @@ fn every_edit_kind_round_trips_exactly_with_edge_values() {
         Action::PaintZones {
             plane: "p".into(),
             layer: 0,
-            cells: Vec::new(),
+            cells: vec![[-1, 5], [0, -7], [0, -6]],
             zone: None,
             expected: revision,
         },
@@ -136,6 +136,7 @@ fn actions_that_are_not_edits_have_no_form() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn values_outside_the_bounds_are_refused_when_writing() {
     let revision = [1; 32];
     let moved = |x| Action::Move {
@@ -154,7 +155,7 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         plane: "p".into(),
         layer: 0,
         grid: "g".into(),
-        cells: vec![[0, 0]; cells],
+        cells: (0..i64::try_from(cells).unwrap()).map(|x| [x, 0]).collect(),
         proto: "t".into(),
         expected: revision,
     };
@@ -171,6 +172,39 @@ fn values_outside_the_bounds_are_refused_when_writing() {
             RefusalCode::ProposalInvalid,
         ),
         (field(json!({"nul \u{0}": 1})), RefusalCode::ProposalInvalid),
+        (
+            field(json!(vec![0; limits::FIELD_VALUE_ENTRIES])),
+            RefusalCode::ProposalBudget,
+        ),
+        (
+            field(Value::Object(
+                (0..=limits::OBJECT_KEYS)
+                    .map(|key| (key.to_string(), json!(0)))
+                    .collect(),
+            )),
+            RefusalCode::ProposalBudget,
+        ),
+        (stroke(0), RefusalCode::ProposalInvalid),
+        (
+            Action::PaintZones {
+                plane: "p".into(),
+                layer: 0,
+                cells: vec![[1, 0], [0, 0]],
+                zone: None,
+                expected: revision,
+            },
+            RefusalCode::ProposalInvalid,
+        ),
+        (
+            Action::PaintZones {
+                plane: "p".into(),
+                layer: 0,
+                cells: vec![[1, 0], [1, 0]],
+                zone: None,
+                expected: revision,
+            },
+            RefusalCode::ProposalInvalid,
+        ),
         (
             Action::Remove {
                 uid: "nul \u{0}".into(),
@@ -214,6 +248,43 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         deepest = json!([deepest]);
     }
     round_trip(&field(deepest));
+    // The value and its 4,095 entries are the engine's 4,096.
+    round_trip(&field(json!(vec![0; limits::FIELD_VALUE_ENTRIES - 1])));
+    round_trip(&field(Value::Object(
+        (0..limits::OBJECT_KEYS)
+            .map(|key| (key.to_string(), json!(0)))
+            .collect(),
+    )));
+}
+
+/// The writer's exact bytes, so that a change of the JSON library's
+/// number or string formatting, or of its member order, is noticed.
+#[test]
+fn the_writer_emits_these_exact_bytes() {
+    let action = Action::SetField {
+        uid: "u".into(),
+        field: "f".into(),
+        value: json!({
+            "z": [1e16, 1e-7, -0.0, 0.5, 1.797_693_134_862_315_7e308, -3, 0],
+            "a": "ctl \u{1} tab \t nl \n del \u{7f} ls \u{2028} bmp \u{e9} astral \u{1f600} quote \" slash \\ /",
+            "M": null,
+            "b": true,
+        }),
+        expected: [0xa5; 32],
+    };
+    let text = encode_action(&action).unwrap().to_string();
+    // Members sorted, no whitespace; only quote, backslash and control
+    // characters below U+0020 escaped (DEL, U+2028 and non-ASCII raw);
+    // shortest round-trip floats with a signed exponent.
+    let golden = concat!(
+        "{\"expected\":\"a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5\",",
+        "\"field\":\"f\",\"kind\":\"set_field\",\"uid\":\"u\",\"value\":{\"M\":null,",
+        "\"a\":\"ctl \\u0001 tab \\t nl \\n del \u{7f} ls \u{2028} bmp \u{e9} astral \u{1f600}",
+        " quote \\\" slash \\\\ /\",\"b\":true,",
+        "\"z\":[1e+16,1e-7,-0.0,0.5,1.7976931348623157e+308,-3,0]}}",
+    );
+    assert_eq!(text, golden);
+    assert_eq!(read(&text), Ok(action));
 }
 
 #[test]
@@ -271,6 +342,10 @@ fn reading_refuses_every_other_form() {
         with(&paint, "cells", json!([["1", 2]])),
         with(&paint, "cells", json!([[1.5, 2]])),
         with(&paint, "cells", json!({"0": [1, 2]})),
+        with(&paint, "cells", json!([])),
+        with(&paint, "cells", json!([[1, 1], [0, 0]])),
+        with(&paint, "cells", json!([[0, 0], [0, 0]])),
+        with(&paint, "cells", json!([[0, 1], [0, 0]])),
         with(&place, "x", json!(2.0)),
         with(&place, "x", json!(null)),
         without(&field, "value"),
