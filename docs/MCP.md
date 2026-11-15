@@ -300,7 +300,7 @@ names or calls. They are text searches, not a proof:
 - `SourceRoot`, `SourceDirectory`, `SourceLock`, `canonicalize`,
   `make_directory`, a method call `.directory(` or `.lock(`, or a call
   (`.f(` or `::f(`) of `rename`, `remove_file`, `remove_directory`,
-  `set_own_access`, `make_directory` or `write`;
+  `set_own_access`, `make_directory`, `write` or `create`;
 - the standard library's `fs`, `net` or `process` modules however they are
   imported: each file is searched with its lines joined (a file that
   cannot be read fails the check), and inside a `use ...;` statement a bare

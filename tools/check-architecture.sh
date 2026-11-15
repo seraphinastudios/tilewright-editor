@@ -78,7 +78,8 @@ while IFS= read -r -d '' file; do
 done < <(find "${read_only[@]}" -name '*.rs' -print0 | sort -z)
 # Nor do they write: `render` returns pixels, the binary writes the one
 # file `--out` names, and the MCP server returns the image in its reply. World's confined access writes only through a
-# directory it opens, and its lock creates a file in the root on Windows;
+# directory it opens (`write`, or `create` for a file only made new), and
+# its lock creates a file in the root on Windows;
 # the observe crate names no root, directory or lock type, resolves no path,
 # and calls no method or function (`.f(` or `path::f(`) that opens a
 # directory, writes, locks, renames or removes. To allow a lock the crate
@@ -86,7 +87,7 @@ done < <(find "${read_only[@]}" -name '*.rs' -print0 | sort -z)
 # an anchored pattern such as `sed -E 's/\bstate\.lock\(\)//g'`, rather
 # than loosening the pattern below.
 if grep -RnE --include='*.rs' \
-  '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory)\b|\.(directory|lock)[[:space:]]*\(|(\.|::)(rename|remove_file|remove_directory|set_own_access|make_directory|write)[[:space:]]*\(' \
+  '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory)\b|\.(directory|lock)[[:space:]]*\(|(\.|::)(rename|remove_file|remove_directory|set_own_access|make_directory|write|create)[[:space:]]*\(' \
   "${read_only[@]}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
   echo "the read-only observe crate or MCP server opens a root or directory, locks, resolves a path or writes" >&2
   exit 1

@@ -587,3 +587,28 @@ fn a_write_failure_names_the_path_escaped_and_exits_5() {
         assert!(!outcome.stdout.contains("31m") && !outcome.stdout.contains("denied"));
     }
 }
+
+#[test]
+fn a_write_failure_that_may_leave_its_file_says_so() {
+    for json in [false, true] {
+        let outcome =
+            cli::write_failed_leaving_file(Path::new("out\u{1b}[31m.png"), "full\u{7}", json);
+        assert_eq!(outcome.code, cli::EXIT_WRITE_FAILED);
+        assert!(!outcome.stderr.contains('\u{1b}') && !outcome.stderr.contains('\u{7}'));
+        assert!(
+            outcome
+                .stderr
+                .starts_with(r"tilewright-editor: output.write: the image could not be written to out\u{1b}[31m.png: "),
+            "{}",
+            outcome.stderr
+        );
+        assert!(
+            outcome
+                .stderr
+                .ends_with("; the file this command made may be left there, partly written\n")
+        );
+        assert_eq!(outcome.stdout.contains("\"output.write\""), json);
+        assert_eq!(outcome.stdout.contains("partly written"), json);
+        assert!(!outcome.stdout.contains("left no file") && !outcome.stdout.contains("full"));
+    }
+}

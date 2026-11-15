@@ -247,14 +247,39 @@ pub fn render_request(arguments: &[OsString]) -> Result<crate::render::Request, 
 /// `problem` is the operating system's reason; both print escaped, on
 /// stderr only.
 pub fn write_failed(out: &Path, problem: &str, json: bool) -> Outcome {
-    let mut outcome = refused(
-        "output.write",
+    write_failure(
+        out,
+        problem,
         "The image could not be written; this command left no file of its own.",
+        "",
         json,
-    );
+    )
+}
+
+/// [`write_failed`] for a write that failed after it made its file and did
+/// not remove it, as World's create-only write never does on Windows: the
+/// file, partly written, may be left at `out`.
+pub fn write_failed_leaving_file(out: &Path, problem: &str, json: bool) -> Outcome {
+    write_failure(
+        out,
+        problem,
+        "The image could not be written; the file this command made may be left at the output path, partly written.",
+        "; the file this command made may be left there, partly written",
+        json,
+    )
+}
+
+fn write_failure(
+    out: &Path,
+    problem: &str,
+    message: &'static str,
+    left: &'static str,
+    json: bool,
+) -> Outcome {
+    let mut outcome = refused("output.write", message, json);
     outcome.code = EXIT_WRITE_FAILED;
     outcome.stderr = format!(
-        "tilewright-editor: output.write: the image could not be written to {}: {}\n",
+        "tilewright-editor: output.write: the image could not be written to {}: {}{left}\n",
         terminal_field(&out.to_string_lossy()),
         terminal_field(problem)
     );

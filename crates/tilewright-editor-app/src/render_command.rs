@@ -20,26 +20,30 @@
 //! - nothing may be at the file's name, a link included;
 //! - the image is drawn and encoded completely before the file is made.
 //!
-//! World's writer creates the file exclusively and does not follow a link
-//! at its name, but it first removes whatever is at the name. The name is
-//! therefore checked just before the write. On Unix the directory is
-//! opened once, after its path is resolved and compared with the world's,
-//! and the name checks and the write all go through that handle; a
-//! directory swapped in between resolving and opening is not detected, and
-//! on Windows, where World opens by path each time, neither is one swapped
-//! later. Something put at the name between the last check and the write is
-//! removed and replaced; and if the write fails, World removes what is at
-//! the name by name. A writer that
-//! only creates needs World to offer one: no editor crate may open files
-//! with the standard library (`tools/check-architecture.sh`).
+//! The file is made with World's create-only write
+//! (`SourceDirectory::create`), which makes it by an exclusive create that
+//! follows no link and never removes or replaces anything that was at the
+//! name before the call, on success or failure. Something put at the name
+//! after the checks is therefore refused as `output.exists` and left as it
+//! is. If the write fails after the file was made, on Unix World removes
+//! its own file only while the name is still that file (a window of about a
+//! microsecond remains, in which a file renamed over the name would be
+//! removed); on Windows it never removes it, so a partly written file may be
+//! left, and the failure says so. On Unix the directory is opened once,
+//! after its path is resolved and compared with the world's, and the name
+//! check and the write go through that handle; a directory swapped in
+//! between resolving and opening is not detected, and on Windows, where
+//! World opens by path each time, neither is one swapped later. No editor
+//! crate may open files with the standard library
+//! (`tools/check-architecture.sh`).
 use std::ffi::OsString;
 use std::path::{Component, Path};
 use tilewright_editor_observe::cli::{
-    EXIT_REFUSED, Outcome, refused, render_request, write_failed,
+    EXIT_REFUSED, Outcome, refused, render_request, write_failed, write_failed_leaving_file,
 };
 use tilewright_editor_observe::limits::MAXIMUM_PNG_BYTES;
 use tilewright_editor_observe::render;
-use tilewright_source::{SourceDirectory, SourceRoot};
+use tilewright_source::{AccessError, SourceDirectory, SourceRoot};
 
 /// Where the image goes: an existing directory, resolved and opened once,
 /// and a new file name in it.
@@ -71,7 +75,7 @@ fn run_checked(arguments: &[OsString]) -> Result<Outcome, Outcome> {
     })?;
     let digest: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(&png).into();
     create_file(&target, &png)
-        .map_err(|problem| write_failed(Path::new(&request.out), &problem, json))?;
+        .map_err(|error| write_refusal(Path::new(&request.out), &error, json))?;
     Ok(rendered.finish(png.len(), &digest))
 }
 
@@ -247,171 +251,38 @@ const fn within_budget(bytes: usize) -> bool {
     bytes <= MAXIMUM_PNG_BYTES
 }
 
-/// Writes the new file through the target's directory handle. World's
-/// writer creates it exclusively, not following a link at its name, syncs
-/// it and removes it again if writing fails; but it first removes whatever
-/// is at the name, so the name is checked again just before.
-fn create_file(target: &Target, png: &[u8]) -> Result<(), String> {
-    if occupied(target).map_err(|error| error.to_string())? {
-        return Err("something appeared at the output path; nothing was replaced".into());
+/// Writes the new file through the target's directory handle with World's
+/// create-only write: an exclusive create that follows no link, syncs the
+/// file, and never removes or replaces what was at the name. The name was
+/// checked in [`target`] for an early refusal; something put there since is
+/// refused by the create itself.
+fn create_file(target: &Target, png: &[u8]) -> Result<(), AccessError> {
+    target.directory.create(&target.name, None, png)
+}
+
+/// What a failed [`create_file`] means for the command.
+fn write_refusal(out: &Path, error: &AccessError, json: bool) -> Outcome {
+    write_outcome(
+        out,
+        error.already_exists(),
+        error.may_be_left(),
+        &error.to_string(),
+        json,
+    )
+}
+
+/// A name taken since the checks is `output.exists` (exit 4): nothing was
+/// touched. Any other failure is `output.write` (exit 5), saying so when
+/// the file the write made may be left at the name.
+fn write_outcome(out: &Path, taken: bool, left: bool, problem: &str, json: bool) -> Outcome {
+    if taken {
+        output_refused("output.exists", json)
+    } else if left {
+        write_failed_leaving_file(out, problem, json)
+    } else {
+        write_failed(out, problem, json)
     }
-    target
-        .directory
-        .write(&target.name, None, png)
-        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{create_file, file_name, inside_world, target, within_budget};
-    use std::path::Path;
-    use tilewright_editor_observe::limits::MAXIMUM_PNG_BYTES;
-    use tilewright_source::SourceRoot;
-
-    #[test]
-    fn only_a_plain_last_name_is_a_file_name() {
-        assert_eq!(file_name(Path::new("out.png")), Some("out.png"));
-        assert_eq!(file_name(Path::new("a/b/out.png")), Some("out.png"));
-        for refused in [
-            "out/",
-            "out.png/",
-            "a/..",
-            "a/.",
-            "out.png/.",
-            ".",
-            "..",
-            "/",
-            "",
-            "a:b.png",
-        ] {
-            assert_eq!(file_name(Path::new(refused)), None, "{refused}");
-        }
-        // A backslash separates on Windows and is refused in a name elsewhere.
-        let expected = cfg!(windows).then_some("b.png");
-        assert_eq!(file_name(Path::new("a\\b.png")), expected);
-        assert_eq!(file_name(Path::new(&"x".repeat(256))), None);
-        assert!(file_name(Path::new(&"x".repeat(255))).is_some());
-    }
-
-    #[test]
-    fn names_windows_would_alter_or_open_as_devices_are_refused_everywhere() {
-        for refused in [
-            "NUL",
-            "nul",
-            "Con.png",
-            "aux.tar.gz",
-            "PRN",
-            "com1.png",
-            "COM0",
-            "lpt9.png",
-            "COM¹.png",
-            "lpt³",
-            "NUL .png",
-            "y.png.",
-            "x.png ",
-            "a:b",
-            "image.png:stream",
-            "a<b",
-            "a>b",
-            "a\"b",
-            "a|b",
-            "a?b",
-            "a*b",
-            "tab\there",
-            "esc\u{1b}[31m",
-            "bell\u{7}",
-            "nul\u{0}byte",
-            "del\u{7f}",
-        ] {
-            assert_eq!(file_name(Path::new(refused)), None, "{refused}");
-        }
-        for allowed in [
-            "nul2.png",
-            "console.png",
-            "com10.png",
-            "lpt.png",
-            "comx.png",
-            "auxiliary.png",
-            "x.nul",
-            "my con.png",
-            ".hidden.png",
-            "a b.png",
-        ] {
-            assert_eq!(file_name(Path::new(allowed)), Some(allowed), "{allowed}");
-        }
-    }
-
-    #[test]
-    fn a_file_in_the_root_or_beneath_it_is_inside() {
-        let world = Path::new("/w/world");
-        assert!(inside_world(Path::new("/w/world"), world));
-        assert!(inside_world(Path::new("/w/world/planes"), world));
-        assert!(!inside_world(Path::new("/w"), world));
-        assert!(!inside_world(Path::new("/w/world2"), world));
-        assert!(!inside_world(Path::new("/w/other"), world));
-        // Any case of the world's components is inside: fail closed.
-        assert!(inside_world(Path::new("/w/WORLD"), world));
-        assert!(inside_world(Path::new("/W/World/Planes"), world));
-        assert!(!inside_world(Path::new("/w/WORLD2"), world));
-        // Spellings that file systems which fold case treat as one name.
-        for (spelled, world) in [
-            ("/m/aſſets", "/m/assets"),
-            ("/m/STRASSE", "/m/Straße"),
-            ("/m/ΚΟΣΜΟΣ", "/m/κοσμοσ"),
-            ("/m/κοσμος", "/m/ΚΟΣΜΟΣ"),
-            ("/m/ﬁle", "/m/FILE"),
-            ("/m/tıles", "/m/tiles"),
-            ("/m/ẞ", "/m/ss"),
-        ] {
-            assert!(
-                inside_world(Path::new(spelled), Path::new(world)),
-                "{spelled} {world}"
-            );
-            assert!(
-                inside_world(Path::new(world), Path::new(spelled)),
-                "{world} {spelled}"
-            );
-        }
-        assert!(!inside_world(
-            Path::new("/m/assets2"),
-            Path::new("/m/aſſets")
-        ));
-    }
-
-    #[test]
-    fn a_name_taken_after_the_checks_is_not_replaced() {
-        let scratch = tempfile::tempdir().unwrap();
-        let top = SourceRoot::new(scratch.path());
-        assert!(top.make_directory("world").unwrap());
-        assert!(top.make_directory("out").unwrap());
-        let world = scratch.path().join("world");
-        let checked = target(&world, &scratch.path().join("out/image.png"), true)
-            .unwrap_or_else(|outcome| panic!("{outcome:?}"));
-        // Another writer takes the name between the checks and the write.
-        let out = top.directory("out", false).unwrap().unwrap();
-        out.write("image.png", None, b"keep me").unwrap();
-        let problem = create_file(&checked, b"\x89PNG").unwrap_err();
-        assert!(problem.contains("nothing was replaced"), "{problem}");
-        assert_eq!(
-            top.read("out/image.png", 64).unwrap().as_deref(),
-            Some(&b"keep me"[..])
-        );
-        // The output directory gained nothing else.
-        let (names, _) = top.names("out", 8).unwrap().unwrap();
-        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["image.png"]);
-    }
-
-    #[test]
-    fn the_image_bounds_are_the_reference_renderers_target_limits() {
-        use tilewright_editor_observe::limits::{MAXIMUM_RENDER_PIXELS, MAXIMUM_RENDER_SIDE};
-        let target = tilewright_render_api::TargetLimits::default();
-        assert_eq!(target.maximum_dimension, MAXIMUM_RENDER_SIDE);
-        assert_eq!(target.maximum_pixels, MAXIMUM_RENDER_PIXELS);
-    }
-
-    #[test]
-    fn the_png_budget_is_inclusive() {
-        assert!(within_budget(MAXIMUM_PNG_BYTES));
-        assert!(!within_budget(MAXIMUM_PNG_BYTES + 1));
-    }
-}
+mod tests;

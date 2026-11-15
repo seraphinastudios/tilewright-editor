@@ -265,10 +265,11 @@ from, and writes it as an RGBA PNG.
 ### What it writes
 
 `render` writes one new file, the one `--out FILE` names, and refuses any
-output path it can see is inside the world; the cases it cannot see, and a
-race, are listed below. It creates no directory and, apart from that race,
-replaces nothing. On a refusal or a failed write it leaves no file of its
-own.
+output path it can see is inside the world; the cases it cannot see are
+listed below. It creates no directory, and it never removes or replaces
+anything that was at the name. On a refusal it leaves no file of its own;
+after a failed write it leaves none either, except as the last item below
+says.
 
 - `FILE`'s directory must exist and be a directory that can be searched
   (`output.directory`).
@@ -305,20 +306,34 @@ own.
 - The image is drawn and encoded in memory before the file is made. The file
   is made through World's confined file access (`tilewright_source`), as the
   scripted demo writes its evidence; the editor's crates may not open files
-  with the standard library. World's writer creates the file exclusively,
-  not through a link, syncs it, and removes what is at the name again if
-  writing fails, so a failed write leaves no file of this command's.
-  A failure to write (exit 5, `output.write`) prints the path as given,
-  escaped, and the system's reason on stderr.
-- The race: World's writer first removes whatever is at the name, then
-  creates the file. The name is checked again just before, through the
-  directory that was checked (on Unix one directory handle, opened after the
-  path was resolved and compared; on Windows the resolved path, reopened).
-  A file another process creates at the name between that last check and
-  the write is deleted and replaced, and one swapped in after a failed write
-  can be removed by its cleanup. A directory swapped in for the resolved path
-  before it is opened (on Windows, at any time) is not detected. A writer
-  that only creates needs a create-only write in World.
+  with the standard library. It is made with World's create-only write
+  (`SourceDirectory::create`): an exclusive create (`O_CREAT | O_EXCL` on
+  Unix, `CREATE_NEW` on Windows) that fails if anything is at the name, a
+  link or a dangling link included, follows no link, writes all of the PNG
+  and syncs the file. Nothing that was at the name before the write is
+  removed, replaced or written through, on success or on any error. The
+  name is checked before anything is drawn, through the directory that was
+  checked (on Unix one directory handle, opened after the path was resolved
+  and compared; on Windows the resolved path, reopened); something another
+  process puts at the name after that check is refused by the create itself,
+  as `output.exists` (exit 4), and left as it is.
+- A failure to write (exit 5, `output.write`) prints the path as given,
+  escaped, and the system's reason on stderr. If the write fails after
+  making its file (a full disk, say): on Unix World removes the file only
+  while the entry at the name is still that file (same device and inode,
+  read without following a link); between that check and the removal, a
+  window of the order of a microsecond, a file another process renames over
+  the name would be removed instead, and POSIX offers no way to close it.
+  On Windows the file is never removed, so a partly written file may be
+  left at the name. Whenever World did not remove its file, the refusal's
+  message and stderr say that the file this command made may be left there,
+  partly written; removing it is up to you.
+- Not detected either: a directory swapped in for the resolved path before
+  it is opened, or, on Windows, where every step goes by path, at any time;
+  and on Unix, a process that can change an ancestor of the output
+  directory can move or replace it, and the file is then made where the
+  opened directory now is. In both cases the create still never replaces an
+  entry.
 
 The order is: the arguments (exit 2), the world loads (exit 3: its root must
 resolve before the output is compared with it), the output path (the
@@ -378,7 +393,7 @@ list cut here ([docs/MCP.md](MCP.md#paging)).
 | 2 | Usage error: nothing is printed on stdout and the usage goes to stderr. |
 | 3 | The world does not load: the load failure is the output. |
 | 4 | Refused, with a stable code: `target.unknown` (the tile's plane does not exist, or the region is not inside the view), `output.budget` (a report, region, image or scene past its bound), and for `render` `catalog.absent`, `catalog.invalid`, `preview.unprepared` (no view to draw; lint says why), `render.failed` (the reference renderer failed), `output.directory`, `output.name`, `output.inside-world` or `output.exists`. |
-| 5 | `render` only: the image could not be written (`output.write`); this command leaves no file of its own (see the race under [render](#render)). |
+| 5 | `render` only: the image could not be written (`output.write`); nothing that was at the name is touched, and this command leaves no file of its own unless the message says its partly written file may be left (on Windows, or on Unix where the name had stopped being its file; see [What it writes](#what-it-writes)). A name taken between the check and the write is `output.exists` (exit 4) instead. |
 
 `lint` follows the world CLI's `diff` convention (0 clean, 1 findings, 2
 usage) and adds 3 for a world that does not load, which every command shares.
