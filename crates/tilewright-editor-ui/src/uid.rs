@@ -72,6 +72,57 @@ impl UidSource for SeededUidSource {
     }
 }
 
+/// A one-shot source that yields the material of one given generated uid,
+/// then fails: preparing a recorded placement again assigns exactly the
+/// uid it recorded, or nothing (when the uid is taken, a second draw is
+/// refused and so is the placement).
+#[derive(Clone, Copy, Debug)]
+pub struct FixedUidSource {
+    bytes: Option<[u8; 16]>,
+}
+impl FixedUidSource {
+    /// # Errors
+    /// Refuses a `uid` that [`format_uid`] cannot write: anything but `o.`
+    /// and 26 lowercase base32 characters whose last two bits are zero.
+    pub fn new(uid: &str) -> Result<Self, UidError> {
+        uid_material(uid)
+            .map(|bytes| Self { bytes: Some(bytes) })
+            .ok_or_else(|| UidError("not a generated uid".into()))
+    }
+}
+impl UidSource for FixedUidSource {
+    fn fill(&mut self, bytes: &mut [u8; 16]) -> Result<(), UidError> {
+        *bytes = self
+            .bytes
+            .take()
+            .ok_or_else(|| UidError("the recorded uid is already used".into()))?;
+        Ok(())
+    }
+}
+
+/// The 128 bits [`format_uid`] wrote `uid` from, or `None` when it did
+/// not write it.
+pub fn uid_material(uid: &str) -> Option<[u8; 16]> {
+    let characters = uid.strip_prefix(UID_PREFIX)?.as_bytes();
+    if characters.len() != UID_CHARACTERS {
+        return None;
+    }
+    let mut value: u128 = 0;
+    for (index, character) in characters.iter().enumerate() {
+        let group = u128::try_from(ALPHABET.iter().position(|a| a == character)?).ok()?;
+        if index + 1 < UID_CHARACTERS {
+            value = (value << 5) | group;
+        } else {
+            // The last character holds the final 3 bits and two zeros.
+            if group & 3 != 0 {
+                return None;
+            }
+            value = (value << 3) | (group >> 2);
+        }
+    }
+    Some(value.to_be_bytes())
+}
+
 /// `o.` and the 128 bits in lowercase base32, most significant bits first;
 /// the last character carries the final 3 bits and two zero bits.
 pub fn format_uid(bytes: [u8; 16]) -> String {
@@ -116,6 +167,36 @@ pub fn unused_uid(
 #[cfg(test)]
 mod tests {
     use super::{UID_CHARACTERS, format_uid};
+
+    #[test]
+    fn uid_material_inverts_format_uid_and_refuses_anything_else() {
+        use super::{FixedUidSource, UidSource, uid_material};
+        for bytes in [[0; 16], [0xff; 16], [0x5a; 16], *b"0123456789abcdef"] {
+            assert_eq!(uid_material(&format_uid(bytes)), Some(bytes));
+        }
+        let generated = format_uid([0x5a; 16]);
+        for (index, other) in [
+            String::new(),
+            generated.replacen("o.", "x.", 1),
+            generated[..generated.len() - 1].to_owned(),
+            format!("{generated}a"),
+            generated.to_uppercase(),
+            // The last character's two low bits must be zero.
+            format!("{}b", &generated[..generated.len() - 1]),
+            format!("{}1", &generated[..generated.len() - 1]),
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(uid_material(other), None, "case {index}");
+            assert!(FixedUidSource::new(other).is_err(), "case {index}");
+        }
+        let mut source = FixedUidSource::new(&generated).unwrap();
+        let mut bytes = [0; 16];
+        source.fill(&mut bytes).unwrap();
+        assert_eq!(format_uid(bytes), generated);
+        assert!(source.fill(&mut bytes).is_err());
+    }
 
     #[test]
     fn base32_places_every_bit_most_significant_first() {

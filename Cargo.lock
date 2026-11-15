@@ -1540,6 +1540,21 @@ name = "tilewright-editor-project"
 version = "0.1.0"
 
 [[package]]
+name = "tilewright-editor-proposal"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "tilewright-edit",
+ "tilewright-editor-commands",
+ "tilewright-editor-document",
+ "tilewright-editor-preview",
+ "tilewright-editor-testkit",
+ "tilewright-editor-ui",
+ "tilewright-jsonc",
+]
+
+[[package]]
 name = "tilewright-editor-recovery"
 version = "0.1.0"
 dependencies = [

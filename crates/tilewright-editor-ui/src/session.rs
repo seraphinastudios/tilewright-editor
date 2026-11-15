@@ -12,7 +12,7 @@ use tilewright_source::{FieldValue, World};
 
 use crate::Actor;
 use crate::review::{PendingSummary, REVIEW_LIMIT_MESSAGE, Review};
-use crate::uid::{OsUidSource, UidSource};
+use crate::uid::{FixedUidSource, OsUidSource, UidSource};
 
 mod anchor_edit;
 mod portal_edit;
@@ -46,7 +46,7 @@ pub enum PortalTarget {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Select {
         generation: u64,
@@ -282,6 +282,50 @@ impl CoordinateGuards {
     }
 }
 
+/// Where an applied step came from: the edit [`Action`] that prepared it,
+/// the actor in force, and, for a placement, the uid it assigned.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepOrigin {
+    action: Action,
+    actor: Actor,
+    placed: Option<String>,
+}
+impl StepOrigin {
+    /// The edit action, exactly as it was dispatched.
+    pub fn action(&self) -> &Action {
+        &self.action
+    }
+    /// The actor of the session that prepared the step.
+    pub fn actor(&self) -> &Actor {
+        &self.actor
+    }
+    /// The uid an [`Action::Place`] assigned; `None` for other actions.
+    pub fn placed(&self) -> Option<&str> {
+        self.placed.as_deref()
+    }
+}
+
+/// One applied step, read-only: History's undo stack entry and, when this
+/// session prepared it, its origin.
+#[derive(Clone, Copy, Debug)]
+pub struct AppliedStep<'s> {
+    /// `None` for a step that was already in the History the session was
+    /// constructed with.
+    pub origin: Option<&'s StepOrigin>,
+    /// The sealed forward transaction exactly as accepted.
+    pub transaction: &'s str,
+    pub before: [u8; 32],
+    pub after: [u8; 32],
+}
+
+/// What the pending change will do to the undo stack when accepted.
+#[derive(Clone, Debug)]
+enum Preparing {
+    Edit(StepOrigin),
+    Undo,
+    Redo,
+}
+
 /// One cell a `terrain.set` changes and the value it holds before.
 type TerrainChange<'w> = ([i64; 2], Option<&'w str>);
 
@@ -303,6 +347,13 @@ pub struct Session {
     uids: Box<dyn UidSource>,
     /// The uid a pending placement adds; selected when it is accepted.
     placing: Option<String>,
+    /// The origin of every undo stack entry, in the same order; `None`
+    /// for entries the History already had when the session was built.
+    steps: Vec<Option<StepOrigin>>,
+    /// The origin of every redo stack entry, in the same order.
+    undone: Vec<Option<StepOrigin>>,
+    /// The pending change's effect on the stacks, if it was prepared here.
+    preparing: Option<Preparing>,
 }
 impl Session {
     /// A session whose transactions all carry `actor`.
@@ -312,7 +363,11 @@ impl Session {
         resources: ReadyResources,
         actor: Actor,
     ) -> Self {
+        let (undo, redo) = history.depths();
         let mut session = Self {
+            steps: vec![None; undo],
+            undone: vec![None; redo],
+            preparing: None,
             history,
             catalog,
             resources,
@@ -346,6 +401,21 @@ impl Session {
     }
     pub fn history(&self) -> &History {
         &self.history
+    }
+    /// The applied steps, oldest first: History's undo stack, each paired
+    /// with the [`Action`] that prepared it. An undone step is absent; a
+    /// redone step returns with its original Action. Undo and redo
+    /// transactions are never steps.
+    pub fn applied_steps(&self) -> impl ExactSizeIterator<Item = AppliedStep<'_>> + '_ {
+        self.history
+            .applied()
+            .enumerate()
+            .map(|(index, step)| AppliedStep {
+                origin: self.steps.get(index).and_then(Option::as_ref),
+                transaction: step.forward,
+                before: step.before,
+                after: step.after,
+            })
     }
     pub fn catalog(&self) -> &PreviewCatalog {
         &self.catalog
@@ -820,12 +890,48 @@ impl Session {
         self.status.message = "Pending World diff; Accept publishes, Cancel writes nothing".into();
         self.invalidate_frame()
     }
+    /// Dispatch an [`Action::Place`] that assigns exactly `uid`, as when a
+    /// recorded placement is prepared again: the session's uid source is
+    /// replaced for this one dispatch and then restored. A `uid` that is
+    /// not a generated uid is refused with [`RefusalCode::InputInvalid`];
+    /// one already in the World with [`RefusalCode::UidUnavailable`].
+    pub fn dispatch_placing(
+        &mut self,
+        action: Action,
+        uid: &str,
+        recovery: &mut impl RecoveryStore,
+    ) -> Result<(), SessionError> {
+        if !matches!(action, Action::Place { .. }) {
+            return Err(refuse(
+                RefusalCode::InputInvalid,
+                "a fixed uid applies to a placement only",
+            ));
+        }
+        let fixed = FixedUidSource::new(uid)
+            .map_err(|error| SessionError::new(RefusalCode::InputInvalid, error.to_string()))?;
+        let previous = std::mem::replace(&mut self.uids, Box::new(fixed));
+        let result = self.dispatch(action, recovery);
+        self.uids = previous;
+        result
+    }
     pub fn dispatch(
         &mut self,
         action: Action,
         recovery: &mut impl RecoveryStore,
     ) -> Result<(), SessionError> {
+        let preparing = match &action {
+            Action::Undo => Some(Preparing::Undo),
+            Action::Redo => Some(Preparing::Redo),
+            action if is_edit(action) => Some(Preparing::Edit(StepOrigin {
+                action: action.clone(),
+                actor: self.actor.clone(),
+                placed: None,
+            })),
+            _ => None,
+        };
+        let depths = self.history.depths();
         let result = self.dispatch_inner(action, recovery);
+        self.track_steps(depths, preparing, result.is_ok());
         self.refresh_review();
         if self.history.pending().is_none() {
             self.placing = None;
@@ -843,6 +949,57 @@ impl Session {
             }
         }
         result
+    }
+    /// Keep [`Session::applied_steps`] paired with History's stacks:
+    /// `before` are the depths before the dispatch, `preparing` what the
+    /// dispatched action would prepare. A commit moves exactly one entry;
+    /// anything else (which History never does), or stacks of other
+    /// lengths than History's, drops the pairing of every entry rather than
+    /// guess.
+    fn track_steps(&mut self, before: (usize, usize), preparing: Option<Preparing>, ok: bool) {
+        let after = self.history.depths();
+        if after != before {
+            match self.preparing.take() {
+                Some(Preparing::Edit(origin)) if after == (before.0 + 1, 0) => {
+                    self.steps.push(Some(origin));
+                    self.undone.clear();
+                }
+                Some(Preparing::Undo)
+                    if Some(after) == before.0.checked_sub(1).map(|undo| (undo, before.1 + 1)) =>
+                {
+                    let origin = self.steps.pop().flatten();
+                    self.undone.push(origin);
+                }
+                Some(Preparing::Redo)
+                    if Some(after) == before.1.checked_sub(1).map(|redo| (before.0 + 1, redo)) =>
+                {
+                    let origin = self.undone.pop().flatten();
+                    self.steps.push(origin);
+                }
+                // Unreachable with today's History; kept so a change there
+                // drops the pairing rather than misattribute a step.
+                _ => self.forget_origins(),
+            }
+        }
+        // Unreachable with today's History, as above: a length mismatch
+        // means the pairing can no longer be trusted.
+        if (self.steps.len(), self.undone.len()) != after {
+            self.forget_origins();
+        }
+        if self.history.pending().is_none() {
+            self.preparing = None;
+        } else if ok && let Some(mut preparing) = preparing {
+            if let Preparing::Edit(origin) = &mut preparing {
+                origin.placed.clone_from(&self.placing);
+            }
+            self.preparing = Some(preparing);
+        }
+    }
+    /// Drop the pairing of every stack entry with its origin.
+    fn forget_origins(&mut self) {
+        let (undo, redo) = self.history.depths();
+        self.steps = vec![None; undo];
+        self.undone = vec![None; redo];
     }
     /// Recompute the notes, warnings and review of the pending transaction.
     /// Only dispatch changes the pending transaction, so this runs after it.
@@ -1345,6 +1502,35 @@ impl Session {
         Ok(())
     }
 }
+/// Whether `action` is an edit: one that prepares a new World change, as
+/// opposed to selection, review, history and reopen actions.
+fn is_edit(action: &Action) -> bool {
+    match action {
+        Action::Move { .. }
+        | Action::SetField { .. }
+        | Action::Paint { .. }
+        | Action::PaintStroke { .. }
+        | Action::PaintZones { .. }
+        | Action::Remove { .. }
+        | Action::Place { .. }
+        | Action::RenameZone { .. }
+        | Action::SetZoneParent { .. }
+        | Action::CreateZone { .. }
+        | Action::DeleteZone { .. }
+        | Action::CreateAnchor { .. }
+        | Action::MoveAnchor { .. }
+        | Action::DeleteAnchor { .. }
+        | Action::SetPortal { .. } => true,
+        Action::Select { .. }
+        | Action::ClearSelection
+        | Action::Accept
+        | Action::Cancel
+        | Action::Undo
+        | Action::Redo
+        | Action::Reopen => false,
+    }
+}
+
 /// A stroke's cells: at least one, at most the stroke cap, distinct and in
 /// order.
 fn stroke_cells(cells: &[[i64; 2]]) -> Result<(), SessionError> {

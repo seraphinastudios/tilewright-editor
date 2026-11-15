@@ -32,8 +32,31 @@ bypass anything the desktop app enforces. See
   `editor:prototype` (the desktop app), `human:<login>` or `agent:<client>`.
   A redo replays the accepted edit with its actor. An undo replays World's
   inverse of it, which records no actor. Transaction text alone therefore
-  does not attribute every step: later work on proposals must record the
-  actor of each step itself.
+  does not attribute every step: the applied steps below record the actor
+  of each step themselves.
+- **Applied steps.** `Session::applied_steps` reads History's undo stack,
+  oldest first (`History::applied` is the same list without the engine's
+  part): for each accepted edit its sealed forward transaction, exactly as
+  accepted, the revisions before and after it, and, when this session
+  prepared it, its origin: the edit `Action` as dispatched, the actor in
+  force and, for `Place`, the uid it assigned. An undone step leaves the
+  list (it moves to the redo stack with its origin); a redone one returns
+  with its original Action; an edit that changes nothing, a cancelled one
+  and undo and redo transactions themselves are never steps. Steps of a
+  History the session was built with have no origin. Reading them changes
+  nothing: what is published, the recovery records and every other
+  behaviour stay as they were. `Session::dispatch_placing` dispatches a
+  `Place` that assigns a given generated uid (refused with the code
+  input.invalid for anything else, and with uid.unavailable when the
+  World already has it), for one dispatch only; the session's own uid
+  source is restored after it. [Proposals](PROPOSALS.md) are built on
+  both. The kept origins add memory that History's 64 MiB byte budget
+  does not count: one Action per undo and redo entry, so at most
+  `MAX_HISTORY` (1,024, the bound on undo and redo together) times the
+  largest Action. That is a stroke of 4,096 cells (about 64 KiB) or a
+  field value within the engine's 64 KiB encoded budget (a few times that
+  in memory): roughly 64 MiB for maximal strokes and a few hundred MiB at
+  worst for maximal field values.
 - **Summaries.** `Session::pending_summary` gives a bounded structured view
   of the pending change for callers that do not draw it: base and result
   revisions, at most 32 changed files with their change kind and sizes (and
@@ -111,6 +134,13 @@ Messages are for people and may be reworded; codes are stable.
 | `publish.unverified` | Publication was applied, but the reopened source differs or does not reopen. |
 | `reopen.blocked` | Reopen found differing source or an uncertain publication. |
 | `uid.unavailable` | No unused uid could be drawn for a new object. |
+| `proposal.invalid` | A proposal is malformed, records a non-edit action, or a step disagrees with its action or actor. |
+| `proposal.budget` | A proposal exceeds a step, size or length bound. |
+| `proposal.digest` | A proposal's body digest or a step's transaction digest does not match its bytes. |
+| `proposal.chain` | A proposal's revisions do not link from its base through every step to its result, or to the session it is built from. |
+| `proposal.empty` | A proposal would have no steps. |
 | `internal.unexpected` | An unexpected internal failure: a bug, not a property of the input. |
 
-A test checks that every code is listed here exactly once.
+A test checks that every code is listed here exactly once. The
+`proposal.*` codes are those of the `tilewright-editor-proposal` crate's
+refusals; [docs/PROPOSALS.md](PROPOSALS.md) says when each is given.

@@ -102,6 +102,21 @@ refusal_codes! {
     ReopenBlocked => "reopen.blocked",
     /// No unused uid could be drawn for a new object.
     UidUnavailable => "uid.unavailable",
+    /// A proposal document is malformed: wrong format tag, unknown or
+    /// missing member, wrong type, a non-canonical encoding, an action
+    /// that cannot be recorded, or a step whose transaction does not agree
+    /// with its action or actor.
+    ProposalInvalid => "proposal.invalid",
+    /// A proposal exceeds a step, size or length bound.
+    ProposalBudget => "proposal.budget",
+    /// A proposal's body digest or a step's transaction digest does not
+    /// match its bytes.
+    ProposalDigest => "proposal.digest",
+    /// A proposal's revisions do not link: from its base through every
+    /// step to its result, or to the session it is built from.
+    ProposalChain => "proposal.chain",
+    /// A proposal would have no steps.
+    ProposalEmpty => "proposal.empty",
     /// An unexpected internal failure: a bug, not a property of the input.
     Internal => "internal.unexpected",
 }
