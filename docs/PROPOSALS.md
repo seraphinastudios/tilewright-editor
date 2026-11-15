@@ -306,7 +306,7 @@ directory or a leftover stage at the name are refused and left in place.
 The lock keeps cooperating writers apart; like the recovery store's, it
 does not stop a process of the same user that ignores it.
 
-Precisely, with the World crates at 0.2.0: the store never writes to the
+Precisely, with the World crates at 0.2.2: the store never writes to the
 final name. `SourceDirectory::write` removes whatever is at the name it
 writes before creating it, so the store writes only the stage
 (`<name>.stage`), after checking nothing is there, and refuses (and keeps)
@@ -315,9 +315,10 @@ store renames only after checking the final name is free. Between that
 check and the rename, and between the stage check and the stage write, a
 process that ignores the lock can create an entry that the store then
 replaces: a window of a few system calls, which only a same-user process
-can use. A create-only write (`SourceDirectory::create`, expected in World
-0.2.2 and not used here) would close the stage window; the final-name
-window needs a rename that does not replace, which 0.2.0 does not offer.
+can use. World 0.2.2 offers a create-only write (`SourceDirectory::create`),
+which would close the stage window; the store does not use it yet, and
+adopting it is a follow-up. The final-name window needs a rename that does
+not replace, which 0.2.2 does not offer.
 
 `read_proposal(root, name)` reads a store's name only, at most 16 MiB
 (larger is refused before it is read), refuses a link or anything but a

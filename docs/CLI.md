@@ -268,8 +268,8 @@ from, and writes it as an RGBA PNG.
 output path it can see is inside the world; the cases it cannot see are
 listed below. It creates no directory, and it never removes or replaces
 anything that was at the name. On a refusal it leaves no file of its own;
-after a failed write it leaves none either, except as the last item below
-says.
+after a failed write it leaves none either, except as the item on a failure
+to write says.
 
 - `FILE`'s directory must exist and be a directory that can be searched
   (`output.directory`).
@@ -324,10 +324,13 @@ says.
   read without following a link); between that check and the removal, a
   window of the order of a microsecond, a file another process renames over
   the name would be removed instead, and POSIX offers no way to close it.
-  On Windows the file is never removed, so a partly written file may be
-  left at the name. Whenever World did not remove its file, the refusal's
-  message and stderr say that the file this command made may be left there,
-  partly written; removing it is up to you.
+  World also keeps the file when it cannot confirm the entry is its file
+  and remove it (the check or the removal fails). On Windows the file is
+  never removed, so a partly written file may be left at the name. Whenever
+  World did not remove its file, the refusal's message and stderr say that
+  the file this command made may be left there, partly written, and stderr
+  gives the failure's kind rather than World's text; removing the file is up
+  to you.
 - Not detected either: a directory swapped in for the resolved path before
   it is opened, or, on Windows, where every step goes by path, at any time;
   and on Unix, a process that can change an ancestor of the output
@@ -341,9 +344,10 @@ resolve before the output is compared with it), the output path (the
 `target.unknown`, `preview.unprepared`, `output.budget`, `render.failed`).
 A bad output path is therefore refused before anything is drawn, even for a
 world whose view cannot be drawn. The world tree, the files beside it and
-the output directory are left exactly as they were on every refusal and
-apart from the one new file on success, which the tests check for each
-refusal code except `render.failed`, which no test world can trigger.
+the output directory are left exactly as they were on every refusal (for
+`output.write`, unless its message says its file may be left) and apart from
+the one new file on success, which the tests check for each refusal code
+except `render.failed`, which no test world can trigger.
 
 ## Limits
 
@@ -393,7 +397,7 @@ list cut here ([docs/MCP.md](MCP.md#paging)).
 | 2 | Usage error: nothing is printed on stdout and the usage goes to stderr. |
 | 3 | The world does not load: the load failure is the output. |
 | 4 | Refused, with a stable code: `target.unknown` (the tile's plane does not exist, or the region is not inside the view), `output.budget` (a report, region, image or scene past its bound), and for `render` `catalog.absent`, `catalog.invalid`, `preview.unprepared` (no view to draw; lint says why), `render.failed` (the reference renderer failed), `output.directory`, `output.name`, `output.inside-world` or `output.exists`. |
-| 5 | `render` only: the image could not be written (`output.write`); nothing that was at the name is touched, and this command leaves no file of its own unless the message says its partly written file may be left (on Windows, or on Unix where the name had stopped being its file; see [What it writes](#what-it-writes)). A name taken between the check and the write is `output.exists` (exit 4) instead. |
+| 5 | `render` only: the image could not be written (`output.write`); nothing that was at the name is touched, and this command leaves no file of its own unless the message says its partly written file may be left (on Windows, or on Unix where World could not confirm the entry is its file and remove it; see [What it writes](#what-it-writes)). A name taken between the check and the write is `output.exists` (exit 4) instead. |
 
 `lint` follows the world CLI's `diff` convention (0 clean, 1 findings, 2
 usage) and adds 3 for a world that does not load, which every command shares.

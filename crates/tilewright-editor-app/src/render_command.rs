@@ -260,13 +260,19 @@ fn create_file(target: &Target, png: &[u8]) -> Result<(), AccessError> {
     target.directory.create(&target.name, None, png)
 }
 
-/// What a failed [`create_file`] means for the command.
+/// What a failed [`create_file`] means for the command. When the file may
+/// be left, World's message says so too; only the failure's kind is kept
+/// from it, so the editor's own wording says it once.
 fn write_refusal(out: &Path, error: &AccessError, json: bool) -> Outcome {
+    let problem = match error {
+        AccessError::Io(_, reason) if error.may_be_left() => reason.kind().to_string(),
+        _ => error.to_string(),
+    };
     write_outcome(
         out,
         error.already_exists(),
         error.may_be_left(),
-        &error.to_string(),
+        &problem,
         json,
     )
 }
