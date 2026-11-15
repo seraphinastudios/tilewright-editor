@@ -131,6 +131,10 @@ refusal_codes! {
     ProposalClosed => "proposal.closed",
     /// The proposal store could not retain or read a proposal file.
     ProposalStore => "proposal.store",
+    /// The world is at more than one position of a proposal's chain (the
+    /// chain returns to a revision it passed), so where to resume is not
+    /// known.
+    ProposalResumeAmbiguous => "proposal.resume_ambiguous",
     /// An unexpected internal failure: a bug, not a property of the input.
     Internal => "internal.unexpected",
 }

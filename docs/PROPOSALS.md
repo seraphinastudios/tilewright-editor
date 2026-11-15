@@ -172,8 +172,9 @@ what it prepares with the recorded transaction, establishes that.
 
 ## Applying
 
-`Progress` is plain data (the next step, the prepared one, whether it is
-stopped) that a front end drives on the person's session:
+`Progress` is plain data (the proposal's body digest, the next step, the
+prepared step and whether it is stopped) that a front end drives on the
+person's session:
 
 - `Progress::begin` requires the session to be at the proposal's `base` with
   nothing pending (`proposal.base_stale` otherwise: another world, a world
@@ -182,6 +183,16 @@ stopped) that a front end drives on the person's session:
   never rebased. If the person's catalog revision differs from the
   proposal's, it says so (`Notice::CatalogDiffers`) and goes on: every step
   is dispatched under the person's grants anyway.
+- `Progress::resume` continues a proposal applied part-way (after the
+  editor closed, a lost `Progress` or a stop). The session must have
+  nothing pending and be at exactly one position of the proposal's chain:
+  its base or one step's `after`; the next step is the one after it. A
+  revision at no position is `proposal.base_stale`; one at several
+  positions (a chain that returns to a revision it passed) is
+  `proposal.resume_ambiguous`. Resuming widens nothing, since every
+  remaining step is dispatched under the person's grants and reviewed, but
+  the steps before count as applied only because the world is at their
+  result revision: nothing records who applied them.
 - `Progress::prepare_step` dispatches the next step's Action through
   `Session::dispatch` (a `place` through `Session::dispatch_placing` with
   its recorded uid), with the person's actor and catalog. An engine refusal
@@ -192,13 +203,24 @@ stopped) that a front end drives on the person's session:
   otherwise the change is cancelled and the step is refused with
   `proposal.step_diverged`, naming the step and which members differ, with
   no world text. An equal step is pending for the person's normal Review
-  and Accept.
-- After the person accepts, the session must be at the step's `after`
-  revision with that step on top of its undo stack before the next step is
-  prepared (`Progress::settle`, which `prepare_step` calls first). If the
-  person cancels, the proposal stops (`proposal.closed` from then on);
-  applied steps stay applied, as normal undo entries and recovery records.
-  A world that moved in between is `proposal.base_stale`.
+  and Accept. The review shows the pending diff of that freshly prepared
+  change, never the recorded transaction text (the desktop's review is PR
+  6d).
+- `Progress::settle` (which `prepare_step` calls first) reads what the
+  person did with the prepared step:
+  - `Pending`: exactly the prepared change is still pending;
+    `OtherPending`: something else is pending, the person's own change,
+    which a front end must not label as the step;
+  - `Applied`: the session is at the step's `after` revision with exactly
+    the prepared transaction on top of its undo stack;
+  - `Stopped`: the session is back at the step's base with its undo and
+    redo stacks as they were, a Cancel; `proposal.closed` from then on;
+  - `NotApplied`: back at the base otherwise, as after an Accept followed
+    by an Undo; the step can be prepared again;
+  - `proposal.base_stale` otherwise, for example when the person accepted
+    an edit of their own after the step: nothing is stopped, and once the
+    session is at the step's result with the step on top again (the person
+    undid their edit) `settle` reports it applied.
 
 A refused step (`proposal.base_stale`, `proposal.step_refused`,
 `proposal.step_diverged`) leaves nothing pending, the world and its undo
@@ -206,8 +228,21 @@ stack as they were, and can be tried again; only the person's Cancel of a
 prepared step stops a proposal. `pending.exists` and `session.blocked` are
 given when the session cannot prepare a change at all, and
 `proposal.invalid` when a `Progress` is used with another proposal than
-the one it began. Every applied step carries the person's actor; the
-proposal's body digest maps them to the proposal.
+the one it began. `next()` counts the steps settled as applied: when the
+person later undoes a settled step, it is ahead of the world, and
+preparing is `proposal.base_stale` until a Redo (or `resume`).
+
+Every applied step carries the person's actor and is a normal undo entry
+and recovery record. `Progress::proposal` gives the proposal's body digest
+so a front end can record which proposal each step came from; the desktop
+records it in its evidence (PR 6d). Nothing in this crate records it.
+
+A proposal recorded by another editor build may diverge when it is
+applied: a different title, member order or number spelling in the
+prepared transaction is a difference. That fails safe
+(`proposal.step_diverged`, nothing changed); the `editor` member tells a
+person why. In practice a proposal applies where the person's editor
+prepares identical transaction text, which is the same engine version.
 
 ### Equal but for the actor
 

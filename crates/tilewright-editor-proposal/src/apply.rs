@@ -7,7 +7,9 @@
 //! A front end (the desktop, a headless runner) drives it:
 //!
 //! 1. [`Progress::begin`] checks the strict base: the session is at the
-//!    proposal's base revision with nothing pending.
+//!    proposal's base revision with nothing pending. [`Progress::resume`]
+//!    continues a proposal applied part-way, from the one position of its
+//!    chain the session is at.
 //! 2. [`Progress::prepare_step`] dispatches the next step's Action through
 //!    [`Session::dispatch`], under the person's catalog grants and with the
 //!    person's actor (a placement with the uid it recorded), and requires
@@ -16,14 +18,18 @@
 //!    for the person's normal Review and Accept.
 //! 3. The person accepts or cancels it through the session, as any change.
 //!    [`Progress::settle`] (called by `prepare_step` too) then reads the
-//!    outcome: accepted when the session is at the step's result revision
-//!    with this step on top of its undo stack, stopped when it is back at
-//!    the step's base (Cancel), and refused otherwise.
+//!    outcome: applied when the session is at the step's result revision
+//!    with exactly the prepared transaction on top of its undo stack;
+//!    stopped when it is back at the step's base with its undo and redo
+//!    stacks as they were (a Cancel); not applied, retryable, when it is
+//!    back at the base otherwise (an Accept then Undo); refused, retryable,
+//!    otherwise.
 //!
 //! Applied steps stay applied and are normal undo entries and recovery
-//! records. A refusal never leaves anything pending that this prepared.
+//! records. A refusal never leaves anything pending that this prepared,
+//! and only a Cancel stops a proposal.
 use tilewright_editor_commands::RecoveryStore;
-use tilewright_editor_ui::{Action, RefusalCode, Session};
+use tilewright_editor_ui::{Action, AppliedStep, RefusalCode, Session};
 
 use crate::{Proposal, ProposalError, compare::compare_transactions, hex};
 
@@ -51,6 +57,23 @@ pub enum Settled {
     Applied { step: usize },
     /// The person cancelled the step: the proposal is stopped.
     Stopped { step: usize },
+    /// The step was accepted and undone again (or otherwise left the world
+    /// at its base with other stacks): not applied; it can be prepared
+    /// again.
+    NotApplied { step: usize },
+    /// A change is pending that is not the prepared step: the person's
+    /// own. The step is not pending; settle again once that change is
+    /// accepted or cancelled.
+    OtherPending { step: usize },
+}
+
+/// The prepared step: its index, the exact transaction it prepared and
+/// the session's undo and redo depths when it did.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Prepared {
+    step: usize,
+    sealed: String,
+    depths: (usize, usize),
 }
 
 /// How far a proposal has been applied to one session.
@@ -59,7 +82,7 @@ pub struct Progress {
     /// The body digest of the proposal this applies.
     proposal: [u8; 32],
     next: usize,
-    prepared: Option<usize>,
+    prepared: Option<Prepared>,
     stopped: bool,
 }
 
@@ -79,6 +102,49 @@ impl Progress {
         if revision(session) != proposal.base() {
             return Err(stale("the world is not at the proposal's base revision"));
         }
+        Ok(Self::at(proposal, session, 0))
+    }
+
+    /// Continues applying `proposal` to `session` after an interruption: a
+    /// lost `Progress`, a closed editor, a stop. The session must be at
+    /// exactly one position of the proposal's chain (its base or a step's
+    /// result revision) with nothing pending; the next step is the one
+    /// after that position. Every remaining step is still dispatched under
+    /// the person's grants and reviewed, so resuming widens nothing. Steps
+    /// before it count as applied only because the world is at their
+    /// result revision: nothing records who applied them.
+    ///
+    /// # Errors
+    /// Refuses as [`Progress::begin`] does when the session cannot prepare,
+    /// with `proposal.base_stale` when its revision is at no position of
+    /// the chain, and with `proposal.resume_ambiguous` when it is at more
+    /// than one (a chain that returns to a revision it passed).
+    pub fn resume(
+        proposal: &Proposal,
+        session: &Session,
+    ) -> Result<(Self, Vec<Notice>), ProposalError> {
+        ready(session)?;
+        let current = revision(session);
+        let positions: Vec<usize> = std::iter::once(proposal.base())
+            .chain(proposal.steps().iter().map(crate::ProposalStep::after))
+            .enumerate()
+            .filter(|(_, at)| *at == current)
+            .map(|(index, _)| index)
+            .collect();
+        match positions.as_slice() {
+            [next] => Ok(Self::at(proposal, session, *next)),
+            [] => Err(stale("the world is at no revision of the proposal's chain")),
+            _ => Err(ProposalError::new(
+                RefusalCode::ProposalResumeAmbiguous,
+                format!(
+                    "the world's revision is at {} positions of the proposal's chain",
+                    positions.len()
+                ),
+            )),
+        }
+    }
+
+    fn at(proposal: &Proposal, session: &Session, next: usize) -> (Self, Vec<Notice>) {
         let mut notices = Vec::new();
         let catalog = session.catalog().revision();
         if catalog != proposal.catalog() {
@@ -87,28 +153,36 @@ impl Progress {
                 session: catalog,
             });
         }
-        Ok((
+        (
             Self {
                 proposal: proposal.body_sha256(),
-                next: 0,
+                next,
                 prepared: None,
                 stopped: false,
             },
             notices,
-        ))
+        )
     }
 
-    /// The index of the next step to prepare, which is also how many
-    /// steps are applied.
+    /// The body digest of the proposal this applies, for the front end to
+    /// record beside each applied step (the desktop's evidence does, PR
+    /// 6d).
+    pub fn proposal(&self) -> [u8; 32] {
+        self.proposal
+    }
+
+    /// The index of the next step to prepare: how many steps were settled
+    /// as applied. A settled step the person later undoes leaves this ahead
+    /// of the world; preparing is then refused with `proposal.base_stale`
+    /// until a Redo (or [`Progress::resume`]).
     pub fn next(&self) -> usize {
         self.next
     }
-    /// The step prepared and pending review, if any.
+    /// The step prepared for review and not yet settled, if any.
     pub fn prepared(&self) -> Option<usize> {
-        self.prepared
+        self.prepared.as_ref().map(|prepared| prepared.step)
     }
-    /// Whether the person stopped the proposal by cancelling a step, or a
-    /// step's outcome could not be read.
+    /// Whether the person stopped the proposal by cancelling a step.
     pub fn stopped(&self) -> bool {
         self.stopped
     }
@@ -136,8 +210,19 @@ impl Progress {
         recovery: &mut impl RecoveryStore,
     ) -> Result<usize, ProposalError> {
         self.check(proposal)?;
-        if let Settled::Stopped { .. } = self.settle(proposal, session)? {
-            return Err(closed("the proposal was stopped"));
+        match self.settle(proposal, session)? {
+            Settled::Stopped { .. } => return Err(closed("the proposal was stopped")),
+            Settled::Pending { step } => {
+                return Err(ProposalError::new(
+                    RefusalCode::PendingExists,
+                    "the prepared step is pending: Accept or Cancel it first",
+                )
+                .at(step));
+            }
+            Settled::OtherPending { .. }
+            | Settled::Idle
+            | Settled::Applied { .. }
+            | Settled::NotApplied { .. } => {}
         }
         if self.stopped {
             return Err(closed("the proposal was stopped"));
@@ -156,11 +241,23 @@ impl Progress {
             _ => session.dispatch(action, recovery),
         };
         if let Err(error) = dispatched {
-            // A refused preparation leaves nothing pending.
-            debug_assert!(session.history().pending().is_none());
+            // The engine leaves nothing pending when it refuses; should that
+            // ever change, cancel what this dispatch left (nothing was
+            // pending before it). Defensive: no engine path reaches it today.
+            let left = session.history().pending().is_some();
+            if left {
+                let _ = session.dispatch(Action::Cancel, &mut NoRecovery);
+            }
             return Err(ProposalError::new(
                 RefusalCode::ProposalStepRefused,
-                format!("the engine refused the step ({})", error.code()),
+                if left {
+                    format!(
+                        "the engine refused the step ({}) and its change was cancelled",
+                        error.code()
+                    )
+                } else {
+                    format!("the engine refused the step ({})", error.code())
+                },
             )
             .engine(error.code())
             .at(index));
@@ -179,44 +276,59 @@ impl Progress {
             )
             .at(index));
         }
-        self.prepared = Some(index);
+        self.prepared = Some(Prepared {
+            step: index,
+            sealed: prepared,
+            depths: session.history().depths(),
+        });
         Ok(index)
     }
 
     /// Reads the outcome of the prepared step from the session.
     ///
     /// # Errors
-    /// Refuses with `proposal.base_stale`, and stops the proposal, when the
-    /// session is neither at the step's result with the step on top of its
-    /// undo stack nor back at its base with nothing pending.
+    /// Refuses with `proposal.base_stale` when the session is neither at
+    /// the step's result with exactly the prepared transaction on top of
+    /// its undo stack nor back at the step's base (for example the person
+    /// accepted the step and then an edit of their own). Nothing is
+    /// stopped: once the session is at the step's result with the step on
+    /// top again (the person undid their edit), `settle` reports it
+    /// applied.
     pub fn settle(
         &mut self,
         proposal: &Proposal,
         session: &Session,
     ) -> Result<Settled, ProposalError> {
         self.check(proposal)?;
-        let Some(index) = self.prepared else {
+        let Some(prepared) = &self.prepared else {
             return Ok(Settled::Idle);
         };
-        if session.history().pending().is_some() {
-            return Ok(Settled::Pending { step: index });
+        let index = prepared.step;
+        if let Some(pending) = session.history().pending() {
+            return Ok(if pending.sealed() == prepared.sealed {
+                Settled::Pending { step: index }
+            } else {
+                Settled::OtherPending { step: index }
+            });
         }
-        self.prepared = None;
         let step = &proposal.steps()[index];
         let current = revision(session);
-        let on_top = session.applied_steps().last().is_some_and(|applied| {
-            applied.before == step.before()
-                && applied.after == step.after()
-                && compare_transactions(step.transaction(), applied.transaction).is_ok()
-        });
+        let on_top = on_top(session.applied_steps().last(), step, &prepared.sealed);
         if current == step.after() && on_top {
+            self.prepared = None;
             self.next = index + 1;
             Ok(Settled::Applied { step: index })
         } else if current == step.before() {
-            self.stopped = true;
-            Ok(Settled::Stopped { step: index })
+            // A Cancel changes neither stack; an Accept then Undo does.
+            let cancelled = session.history().depths() == prepared.depths;
+            self.prepared = None;
+            if cancelled {
+                self.stopped = true;
+                Ok(Settled::Stopped { step: index })
+            } else {
+                Ok(Settled::NotApplied { step: index })
+            }
         } else {
-            self.stopped = true;
             Err(stale(format!(
                 "after the step the world is at revision {} rather than its result",
                 hex(&current)
@@ -231,6 +343,16 @@ impl Progress {
         }
         Ok(())
     }
+}
+
+/// Whether `applied`, the top of the undo stack, is the very change this
+/// prepared for `step`, as the person accepted it.
+fn on_top(applied: Option<AppliedStep<'_>>, step: &crate::ProposalStep, sealed: &str) -> bool {
+    applied.is_some_and(|applied| {
+        applied.before == step.before()
+            && applied.after == step.after()
+            && applied.transaction == sealed
+    })
 }
 
 fn ready(session: &Session) -> Result<(), ProposalError> {
@@ -265,3 +387,6 @@ impl RecoveryStore for NoRecovery {
         Err("cancelling retains nothing".into())
     }
 }
+
+#[cfg(test)]
+mod tests;

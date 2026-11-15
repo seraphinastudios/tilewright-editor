@@ -47,7 +47,11 @@ library code):
   checked against the person's own grants anyway.
 - A refused step (stale base, diverged, refused by the engine) leaves
   nothing pending and can be tried again; only the person's Cancel stops a
-  proposal.
+  proposal, including a stale outcome found when a step is settled.
+- A proposal applied part-way can be resumed from the one position of its
+  chain the world is at (2026-11-15, coordinator decision, easy to
+  revisit); `begin` stays strict-base. Resuming widens nothing, because
+  every remaining step is dispatched again and reviewed.
 - The store writes `proposal-<body digest>.json` with the recovery store's
   durable sequence. It never writes to the final name and refuses a
   different file there; same bytes are success. With World 0.2.0 a
