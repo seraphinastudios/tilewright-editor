@@ -9,8 +9,8 @@
 mod common;
 
 use common::{
-    AGENT, KINDS, PERSON, RECEIPT, Records, accept, body, document, edit, fix_digests, open,
-    revision, sandbox, world,
+    AGENT, EDITOR, KINDS, PERSON, RECEIPT, Records, accept, body, document, edit, fix_digests,
+    open, revision, sandbox, world,
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, path::Path};
@@ -48,7 +48,8 @@ fn recorded(root: &Path) -> (Session, Proposal) {
     accept(&mut session, undone, &mut records);
     accept(&mut session, Action::Undo, &mut records);
     assert_eq!(session.history().depths(), (KINDS, 1));
-    let proposal = Proposal::from_session(&session, RECEIPT, Some("client\u{1b}[31m")).unwrap();
+    let proposal =
+        Proposal::from_session(&session, EDITOR, RECEIPT, Some("client\u{1b}[31m")).unwrap();
     (session, proposal)
 }
 
@@ -147,7 +148,7 @@ fn short(
         let expected = revision(&session);
         accept(&mut session, edit(kind, expected), &mut records);
     }
-    let proposal = Proposal::from_session(&session, RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
     (agent_world, proposal, world(person))
 }
 
@@ -356,7 +357,7 @@ fn a_placement_whose_uid_the_world_already_has_is_refused() {
     let mut records = Records::default();
     let expected = revision(&session);
     accept(&mut session, edit(6, expected), &mut records);
-    let proposal = Proposal::from_session(&session, RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
     let placed = proposal.steps()[0].placed().unwrap().to_owned();
     let forged = forged(&proposal, |body| {
         let text = body["steps"][0]["transaction"]

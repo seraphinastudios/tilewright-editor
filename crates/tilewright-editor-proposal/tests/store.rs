@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{RECEIPT, Records, accept, edit, revision, sandbox, world};
+use common::{EDITOR, RECEIPT, Records, accept, edit, revision, sandbox, world};
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
@@ -38,7 +38,7 @@ fn proposal(kinds: usize) -> Proposal {
         let expected = revision(&session);
         accept(&mut session, edit(kind, expected), &mut records);
     }
-    Proposal::from_session(&session, RECEIPT, None).unwrap()
+    Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap()
 }
 
 fn mode(path: &Path) -> u32 {

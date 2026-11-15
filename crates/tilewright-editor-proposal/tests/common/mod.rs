@@ -17,6 +17,8 @@ use tilewright_editor_ui::{Action, Actor, PortalTarget, Session};
 pub const AGENT: &str = "agent:sandbox \"test\"";
 pub const PERSON: &str = "human:tester";
 pub const RECEIPT: [u8; 32] = [7; 32];
+/// The version a calling application gives.
+pub const EDITOR: &str = "1.2.3-test+build.4";
 
 pub fn copy_tree(source: &Path, destination: &Path) {
     fs::create_dir_all(destination).unwrap();

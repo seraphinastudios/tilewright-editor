@@ -395,10 +395,9 @@ impl<'v> Fields<'v> {
             .get(key)
             .as_array()
             .ok_or_else(|| invalid(format!("action member {key} is an array of cells")))?;
-        if items.len() > limits::CELLS {
-            return Err(budget("a stroke has too many cells"));
-        }
-        items.iter().map(cell).collect()
+        let cells = items.iter().map(cell).collect::<Result<Vec<_>, _>>()?;
+        stroke_cells(&cells)?;
+        Ok(cells)
     }
 }
 
@@ -438,10 +437,25 @@ fn integer(value: i64) -> Result<i64, ProposalError> {
     }
     Ok(value)
 }
-fn encode_cells(cells: &[[i64; 2]]) -> Result<Value, ProposalError> {
+/// The engine's rule for a stroke's cells (`stroke_cells` in the ui
+/// crate's session): at least one, at most [`limits::CELLS`], distinct
+/// and in increasing order.
+fn stroke_cells(cells: &[[i64; 2]]) -> Result<(), ProposalError> {
     if cells.len() > limits::CELLS {
         return Err(budget("a stroke has too many cells"));
     }
+    if cells.is_empty() {
+        return Err(invalid("a stroke has at least one cell"));
+    }
+    if !cells.windows(2).all(|pair| pair[0] < pair[1]) {
+        return Err(invalid(
+            "a stroke's cells are distinct and in increasing order",
+        ));
+    }
+    Ok(())
+}
+fn encode_cells(cells: &[[i64; 2]]) -> Result<Value, ProposalError> {
+    stroke_cells(cells)?;
     cells
         .iter()
         .map(|&[x, y]| Ok(json!([integer(x)?, integer(y)?])))
@@ -450,7 +464,8 @@ fn encode_cells(cells: &[[i64; 2]]) -> Result<Value, ProposalError> {
 }
 
 /// A field value within the engine's budget and the World format's
-/// numbers: at most [`limits::FIELD_VALUE_DEPTH`] levels of nesting and
+/// numbers: at most [`limits::FIELD_VALUE_DEPTH`] levels of nesting,
+/// [`limits::FIELD_VALUE_ENTRIES`] values and
 /// [`limits::FIELD_VALUE_BYTES`] encoded, every integer within
 /// [`limits::INTEGER`].
 fn field_value(value: &Value) -> Result<(), ProposalError> {
@@ -472,6 +487,9 @@ fn field_value(value: &Value) -> Result<(), ProposalError> {
                 }
             }
             Value::Object(members) => {
+                if members.len() > limits::OBJECT_KEYS {
+                    return Err(budget("a field value object has too many members"));
+                }
                 for (key, member) in members {
                     no_nul(key)?;
                     walk(member, depth + 1)?;
@@ -483,10 +501,22 @@ fn field_value(value: &Value) -> Result<(), ProposalError> {
         Ok(())
     }
     walk(value, 0)?;
+    if entries(value) > limits::FIELD_VALUE_ENTRIES {
+        return Err(budget("a field value holds too many entries"));
+    }
     if value.to_string().len() > limits::FIELD_VALUE_BYTES {
         return Err(budget("a field value is too large"));
     }
     Ok(())
+}
+
+/// How many values `value` holds, itself included, as the engine counts.
+fn entries(value: &Value) -> usize {
+    1 + match value {
+        Value::Array(items) => items.iter().map(entries).sum(),
+        Value::Object(members) => members.values().map(entries).sum(),
+        _ => 0,
+    }
 }
 
 /// The serde form of a JSON value read by the strict reader. Depth is

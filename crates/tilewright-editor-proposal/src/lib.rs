@@ -69,6 +69,21 @@ pub mod limits {
     /// engine's own field budget.
     pub const FIELD_VALUE_BYTES: usize = 64 << 10;
     pub const FIELD_VALUE_DEPTH: usize = 8;
+    /// Most JSON values (each an entry of the engine's own count) in one
+    /// field value, as the engine counts them: the value itself and every
+    /// value nested in it.
+    pub const FIELD_VALUE_ENTRIES: usize = 4096;
+    /// Most members of one object in a field value: what the World format's
+    /// reader allows, so a transaction carrying more could never have been
+    /// accepted.
+    pub const OBJECT_KEYS: usize = 256;
+    /// Most JSON values the reader takes in one proposal, keys included.
+    /// It follows from the other bounds: a step holds at most one action of
+    /// [`CELLS`] cells (3 values each) or a field value of
+    /// [`FIELD_VALUE_ENTRIES`] values, and fewer than 64 values more, and
+    /// the document around the steps fewer than 64. No proposal within the
+    /// other bounds reaches it.
+    pub const VALUES: usize = STEPS * (3 * CELLS + 64) + 64;
     /// Most bytes of the untrusted client label.
     pub const CLIENT_BYTES: usize = 256;
     /// Most bytes of the editor version.
