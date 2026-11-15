@@ -71,6 +71,32 @@ fn a_proposal_is_written_once_privately_and_read_back() {
 }
 
 #[test]
+fn retaining_a_proposal_read_from_a_resaved_file_is_idempotent() {
+    let dir = directory();
+    let proposal = proposal(1);
+    let mut store = ProposalStore::open(SourceRoot::new(dir.path())).unwrap();
+    assert!(!store.retain(&proposal).unwrap().existed);
+    // The same proposal, re-saved by an editor that adds a newline and
+    // moves the format first.
+    let text = String::from_utf8(proposal.bytes().to_vec()).unwrap();
+    let body_end = text.find(",\"body_sha256\"").unwrap();
+    let resaved = format!(
+        "{{\"format\": \"tilewright.editor-proposal/1\",\n \"body\": {},\n \"body_sha256\": \"{}\"}}\n",
+        &text["{\"body\":".len()..body_end],
+        tilewright_editor_proposal::hex(&proposal.body_sha256())
+    );
+    let read = Proposal::decode(resaved.as_bytes()).unwrap();
+    assert_eq!(read, proposal);
+    let stored = store.retain(&read).unwrap();
+    assert!(stored.existed);
+    assert_eq!(
+        fs::read(dir.path().join(&stored.name)).unwrap(),
+        proposal.bytes()
+    );
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn other_bytes_a_link_or_a_stage_at_the_name_are_refused_and_kept() {
     let proposal = proposal(1);
     let name = proposal.file_name();
