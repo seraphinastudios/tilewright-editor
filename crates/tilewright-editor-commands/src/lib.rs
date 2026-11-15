@@ -105,6 +105,17 @@ pub trait RecoveryStore {
     fn retain(&mut self, inverse: &str) -> Result<(), String>;
 }
 
+/// One applied step: an accepted edit on the undo stack, read-only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AppliedStep<'h> {
+    /// The sealed forward transaction exactly as it was accepted.
+    pub forward: &'h str,
+    /// The World revision the step was accepted on.
+    pub before: [u8; 32],
+    /// The World revision it published.
+    pub after: [u8; 32],
+}
+
 #[derive(Clone, Debug)]
 struct Entry {
     forward: String,
@@ -161,6 +172,17 @@ impl History {
     #[must_use]
     pub fn depths(&self) -> (usize, usize) {
         (self.undo.len(), self.redo.len())
+    }
+
+    /// The applied steps, oldest first: the undo stack. An undone step
+    /// leaves it (for the redo stack) and a redone step returns to its
+    /// end. Undo and redo transactions themselves are never entries.
+    pub fn applied(&self) -> impl ExactSizeIterator<Item = AppliedStep<'_>> + '_ {
+        self.undo.iter().map(|entry| AppliedStep {
+            forward: &entry.forward,
+            before: entry.before,
+            after: entry.after,
+        })
     }
 
     /// Memory charged to retained forward and inverse transaction records.
@@ -508,6 +530,37 @@ mod tests {
             Err(Error::HistoryFull)
         ));
         assert!(history.pending().is_none());
+    }
+
+    #[test]
+    fn applied_reads_the_undo_stack_oldest_first_and_never_the_redo_stack() {
+        let document = WorldDocument::open(&fixture_world("meadow")).unwrap();
+        let mut history = super::History::new(document);
+        assert_eq!(history.applied().len(), 0);
+        let entry = |forward: &str, before: u8, after: u8| super::Entry {
+            forward: forward.into(),
+            inverse: format!("inverse of {forward}"),
+            before: [before; 32],
+            after: [after; 32],
+        };
+        history.undo = vec![entry("first", 1, 2), entry("second", 2, 3)];
+        history.redo = vec![entry("undone", 3, 4)];
+        let applied: Vec<_> = history.applied().collect();
+        assert_eq!(
+            applied,
+            [
+                super::AppliedStep {
+                    forward: "first",
+                    before: [1; 32],
+                    after: [2; 32]
+                },
+                super::AppliedStep {
+                    forward: "second",
+                    before: [2; 32],
+                    after: [3; 32]
+                },
+            ]
+        );
     }
 
     #[test]

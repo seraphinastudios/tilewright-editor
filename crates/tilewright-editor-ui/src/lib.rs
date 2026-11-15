@@ -141,7 +141,8 @@ pub mod review;
 mod session;
 pub use actor::Actor;
 pub use session::{
-    Action, PortalTarget, RefusalCode, Session, SessionError, SessionPhase, SessionStatus,
+    Action, AppliedStep, PortalTarget, RefusalCode, Session, SessionError, SessionPhase,
+    SessionStatus, StepOrigin,
 };
 pub use tilewright_editor_preview::SelectionKey;
 
