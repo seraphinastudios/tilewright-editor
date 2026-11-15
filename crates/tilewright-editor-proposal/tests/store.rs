@@ -183,3 +183,26 @@ fn a_store_needs_a_private_directory() {
     assert!(store.retain(&proposal(1)).is_err());
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn the_store_writes_through_the_directory_it_opened_not_its_path() {
+    let parent = directory();
+    let original = parent.path().join("proposals");
+    let moved = parent.path().join("moved");
+    let other = parent.path().join("other");
+    for path in [&original, &other] {
+        fs::create_dir(path).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut store = ProposalStore::open(SourceRoot::new(&original)).unwrap();
+    // The path now names another directory, through a link.
+    fs::rename(&original, &moved).unwrap();
+    symlink(&other, &original).unwrap();
+    let proposal = proposal(1);
+    let stored = store.retain(&proposal).unwrap();
+    assert_eq!(
+        fs::read(moved.join(&stored.name)).unwrap(),
+        proposal.bytes()
+    );
+    assert_eq!(fs::read_dir(&other).unwrap().count(), 0);
+}

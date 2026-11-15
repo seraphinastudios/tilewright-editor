@@ -7,8 +7,9 @@ and Accept (issue #57, [ADR 0003](../decisions/0003-change-set-proposals.md)).
 This page describes the format, its bounds and checks, and how a proposal
 is applied, as the `tilewright-editor-proposal` crate implements them.
 Making sandboxes, submitting from an agent and opening a proposal in the
-desktop are later work; nothing described here lets an agent publish to a
-person's world.
+desktop (what the person sees for each step: PR 6d) are later work;
+nothing described here lets an agent publish to a person's world, and
+nothing publishes except the person's own Accept.
 
 ## The document
 
@@ -199,9 +200,14 @@ stopped) that a front end drives on the person's session:
   applied steps stay applied, as normal undo entries and recovery records.
   A world that moved in between is `proposal.base_stale`.
 
-A refused step leaves nothing pending and can be tried again. Every
-applied step carries the person's actor; the proposal's body digest maps
-them to the proposal.
+A refused step (`proposal.base_stale`, `proposal.step_refused`,
+`proposal.step_diverged`) leaves nothing pending, the world and its undo
+stack as they were, and can be tried again; only the person's Cancel of a
+prepared step stops a proposal. `pending.exists` and `session.blocked` are
+given when the session cannot prepare a change at all, and
+`proposal.invalid` when a `Progress` is used with another proposal than
+the one it began. Every applied step carries the person's actor; the
+proposal's body digest maps them to the proposal.
 
 ### Equal but for the actor
 
@@ -213,7 +219,11 @@ the same step when every other top-level member is the same value, in the
 same order: format, title, every operation with every precondition
 (`test`, `expect`) and value, and the digests of every file consulted and
 written. Values are compared in the strict reader's canonical form, so
-whitespace and comments do not matter. Both sides must have a string actor.
+whitespace and comments do not matter, while member order does, and a
+member on one side only is a difference. Both sides must have a string
+actor. A recorded transaction with a member World's transaction format
+does not have is already refused when the proposal is read
+(`proposal.invalid`).
 
 ## What the digests protect
 
@@ -243,6 +253,19 @@ already there are success and write nothing; other bytes, a link, a
 directory or a leftover stage at the name are refused and left in place.
 The lock keeps cooperating writers apart; like the recovery store's, it
 does not stop a process of the same user that ignores it.
+
+Precisely, with the World crates at 0.2.0: the store never writes to the
+final name. `SourceDirectory::write` removes whatever is at the name it
+writes before creating it, so the store writes only the stage
+(`<name>.stage`), after checking nothing is there, and refuses (and keeps)
+a leftover stage. `SourceDirectory::rename` replaces its target, so the
+store renames only after checking the final name is free. Between that
+check and the rename, and between the stage check and the stage write, a
+process that ignores the lock can create an entry that the store then
+replaces: a window of a few system calls, which only a same-user process
+can use. A create-only write (`SourceDirectory::create`, expected in World
+0.2.2 and not used here) would close the stage window; the final-name
+window needs a rename that does not replace, which 0.2.0 does not offer.
 
 `read_proposal(root, name)` reads a store's name only, at most 16 MiB
 (larger is refused before it is read), refuses a link or anything but a

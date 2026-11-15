@@ -13,6 +13,13 @@
 //! regular file is refused and left alone. The directory's lock keeps
 //! cooperating writers apart; like the recovery store's, it does not stop
 //! a process of the same user that ignores it.
+//!
+//! The final name is never written: World 0.2.0's `write` removes what is
+//! at its name first, so only the stage is written, after an absence
+//! check, and its `rename` replaces, so the stage is renamed only after
+//! the final name is found free. A process that ignores the lock can still
+//! create an entry in the few system calls between a check and the write
+//! or rename, and the store would replace it.
 use tilewright_editor_ui::RefusalCode;
 use tilewright_source::{Access, AccessError, Mounts, SourceDirectory, SourceLock, SourceRoot};
 

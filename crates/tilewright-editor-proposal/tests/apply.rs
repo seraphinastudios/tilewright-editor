@@ -13,9 +13,13 @@ use common::{
     open, revision, sandbox, world,
 };
 use serde_json::{Value, json};
+use std::os::unix::fs::PermissionsExt;
 use std::{collections::BTreeMap, fs, path::Path};
-use tilewright_editor_proposal::{Notice, Progress, Proposal, Settled};
+use tilewright_editor_proposal::{
+    Notice, Progress, Proposal, ProposalStore, Settled, read_proposal,
+};
 use tilewright_editor_ui::{Action, RefusalCode, Session};
+use tilewright_source::SourceRoot;
 
 /// A change to a proposal body.
 type Change = Box<dyn Fn(&mut Value)>;
@@ -75,6 +79,43 @@ fn files(root: &Path) -> BTreeMap<String, Vec<u8>> {
     found
 }
 
+/// What a refusal must leave as it was: nothing pending, the same
+/// revision, the same applied steps and the same files.
+struct Untouched {
+    revision: [u8; 32],
+    applied: usize,
+    files: BTreeMap<String, Vec<u8>>,
+}
+impl Untouched {
+    fn of(person: &Session, root: &Path) -> Self {
+        assert!(person.history().pending().is_none());
+        Self {
+            revision: revision(person),
+            applied: person.applied_steps().len(),
+            files: files(root),
+        }
+    }
+    fn check(&self, person: &Session, root: &Path, case: &str) {
+        assert!(person.history().pending().is_none(), "{case}: pending");
+        assert_eq!(revision(person), self.revision, "{case}: revision");
+        assert_eq!(person.applied_steps().len(), self.applied, "{case}: steps");
+        assert!(files(root) == self.files, "{case}: files changed");
+    }
+}
+
+/// A private directory for proposal files, as the provisioner makes one.
+fn proposals_directory() -> tempfile::TempDir {
+    let dir = tempfile::Builder::new()
+        .prefix("tilewright-proposals-")
+        .tempdir_in(
+            std::env::var_os("TILEWRIGHT_CHECKED_TEST_ROOT")
+                .map_or_else(std::env::temp_dir, std::path::PathBuf::from),
+        )
+        .unwrap();
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    dir
+}
+
 /// Prepare and accept every remaining step.
 fn apply_all(proposal: &Proposal, progress: &mut Progress, person: &mut Session) {
     let mut records = Records::default();
@@ -92,10 +133,22 @@ fn apply_all(proposal: &Proposal, progress: &mut Progress, person: &mut Session)
 }
 
 #[test]
-fn a_recorded_session_applies_step_by_step_to_an_identical_copy() {
+fn a_stored_proposal_applies_step_by_step_to_an_identical_copy_under_another_actor() {
     let agent_world = world(|_| {});
     let person_world = world(|_| {});
-    let (session, proposal) = recorded(agent_world.path());
+    assert_eq!(files(agent_world.path()), files(person_world.path()));
+    let (session, written) = recorded(agent_world.path());
+    // The sandbox stores it; the person's side reads it from the
+    // directory with handles of its own, as another process would.
+    let directory = proposals_directory();
+    let stored = ProposalStore::open(SourceRoot::new(directory.path()))
+        .unwrap()
+        .retain(&written)
+        .unwrap();
+    drop(session);
+    let proposal = read_proposal(&SourceRoot::new(directory.path()), &stored.name).unwrap();
+    assert_eq!(proposal, written);
+    let session = open(agent_world.path(), AGENT);
     // The steps are the undo stack (pinned in build.rs): every kind once.
     let steps = proposal.steps();
     assert_eq!(steps.len(), KINDS);
@@ -104,8 +157,10 @@ fn a_recorded_session_applies_step_by_step_to_an_identical_copy() {
 
     let mut person = open(person_world.path(), PERSON);
     assert_eq!(revision(&person), proposal.base());
+    assert_ne!(PERSON, AGENT);
     let (mut progress, notices) = Progress::begin(&proposal, &person).unwrap();
     assert!(notices.is_empty());
+    assert_ne!(files(person_world.path()), files(agent_world.path()));
     apply_all(&proposal, &mut progress, &mut person);
     assert_eq!(revision(&person), proposal.result());
     assert_eq!(files(person_world.path()), files(agent_world.path()));
@@ -132,8 +187,10 @@ fn a_recorded_session_applies_step_by_step_to_an_identical_copy() {
         .to_owned();
     assert_ne!(last, placed);
     // Applying it again is refused: the world is past its base.
+    let untouched = Untouched::of(&person, person_world.path());
     let error = Progress::begin(&proposal, &person).unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalBaseStale);
+    untouched.check(&person, person_world.path(), "applied twice");
 }
 
 /// A proposal of the first `count` kinds and its person's copy.
@@ -211,6 +268,7 @@ fn an_edited_action_or_transaction_diverges_and_leaves_nothing_pending() {
             0
         );
         person.dispatch(Action::Accept, &mut records).unwrap();
+        let untouched = Untouched::of(&person, root.path());
         let error = progress
             .prepare_step(&forged, &mut person, &mut records)
             .unwrap_err();
@@ -219,6 +277,7 @@ fn an_edited_action_or_transaction_diverges_and_leaves_nothing_pending() {
             RefusalCode::ProposalStepDiverged,
             "{name}: {error}"
         );
+        untouched.check(&person, root.path(), name);
         assert_eq!(error.step(), Some(1), "{name}");
         assert!(person.history().pending().is_none(), "{name}");
         assert_eq!(person.applied_steps().len(), 1, "{name}");
@@ -253,10 +312,12 @@ fn a_moved_world_a_cancel_and_a_wrong_base_are_refused() {
     );
     let expected = revision(&person);
     accept(&mut person, edit(5, expected), &mut records);
+    let untouched = Untouched::of(&person, person_world.path());
     let error = progress
         .prepare_step(&proposal, &mut person, &mut records)
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalBaseStale);
+    untouched.check(&person, person_world.path(), "moved world");
     assert_eq!((error.step(), progress.next()), (Some(1), 1));
     // The person cancels a step: the proposal stops, applied steps stay.
     let root = world(|_| {});
@@ -290,8 +351,10 @@ fn a_moved_world_a_cancel_and_a_wrong_base_are_refused() {
         });
     });
     let person = open(other.path(), PERSON);
+    let untouched = Untouched::of(&person, other.path());
     let error = Progress::begin(&proposal, &person).unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalBaseStale);
+    untouched.check(&person, other.path(), "wrong base");
     // A progress belongs to one proposal.
     let (_, longer, _) = short(4, |_| {});
     let root = world(|_| {});
@@ -330,13 +393,16 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
         );
         person.dispatch(Action::Accept, &mut records).unwrap();
     }
+    let untouched = Untouched::of(&person, person_world.path());
     let error = progress
         .prepare_step(&proposal, &mut person, &mut records)
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalStepRefused);
     assert_eq!(error.engine_code(), Some(RefusalCode::GrantMissing));
     assert_eq!(error.step(), Some(2));
-    assert!(person.history().pending().is_none());
+    untouched.check(&person, person_world.path(), "grant missing");
+    // Refused, not stopped: the step can be tried again.
+    assert!(!progress.stopped());
 }
 
 #[test]
@@ -370,13 +436,128 @@ fn a_placement_whose_uid_the_world_already_has_is_refused() {
     let person_world = world(add);
     let mut person = open(person_world.path(), PERSON);
     let (mut progress, _) = Progress::begin(&forged, &person).unwrap();
+    let untouched = Untouched::of(&person, person_world.path());
     let error = progress
         .prepare_step(&forged, &mut person, &mut records)
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalStepRefused);
     assert_eq!(error.engine_code(), Some(RefusalCode::UidUnavailable));
+    untouched.check(&person, person_world.path(), "uid taken");
     // The unforged proposal applies.
     let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
     apply_all(&proposal, &mut progress, &mut person);
     assert_eq!(revision(&person), proposal.result());
+}
+
+#[test]
+fn a_removed_or_reordered_step_or_an_unknown_transaction_member_never_reaches_a_world() {
+    let (_agent, proposal, _person) = short(3, |_| {});
+    let mut removed = body(proposal.bytes());
+    removed["steps"].as_array_mut().unwrap().remove(1);
+    let mut reordered = body(proposal.bytes());
+    reordered["steps"].as_array_mut().unwrap().swap(1, 2);
+    for (name, body, code) in [
+        ("removed", removed, RefusalCode::ProposalChain),
+        ("reordered", reordered, RefusalCode::ProposalChain),
+    ] {
+        let error = Proposal::decode(&document(&body)).unwrap_err();
+        assert_eq!(error.code(), code, "{name}");
+    }
+    // A recorded transaction with a member World does not know.
+    let mut extra = body(proposal.bytes());
+    let text = extra["steps"][0]["transaction"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    extra["steps"][0]["transaction"] = Value::from(text.replacen('{', "{\"extra\":1,", 1));
+    fix_digests(&mut extra);
+    let error = Proposal::decode(&document(&extra)).unwrap_err();
+    assert_eq!(
+        (error.code(), error.step()),
+        (RefusalCode::ProposalInvalid, Some(0))
+    );
+}
+
+#[test]
+fn a_session_that_cannot_prepare_a_finished_or_stopped_proposal_is_refused() {
+    let (_agent, proposal, person_world) = short(2, |_| {});
+    let mut records = Records::default();
+    let mut person = open(person_world.path(), PERSON);
+    // A change of the person's own is pending: neither beginning nor a
+    // step touches it.
+    let expected = revision(&person);
+    person.dispatch(edit(5, expected), &mut records).unwrap();
+    let pending = person.history().pending().unwrap().sealed().to_owned();
+    assert_eq!(
+        Progress::begin(&proposal, &person).unwrap_err().code(),
+        RefusalCode::PendingExists
+    );
+    person.dispatch(Action::Cancel, &mut records).unwrap();
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    person.dispatch(edit(5, expected), &mut records).unwrap();
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::PendingExists);
+    assert_eq!(person.history().pending().unwrap().sealed(), pending);
+    person.dispatch(Action::Cancel, &mut records).unwrap();
+    // Finished: every further step is closed.
+    apply_all(&proposal, &mut progress, &mut person);
+    assert!(progress.finished(&proposal));
+    let untouched = Untouched::of(&person, person_world.path());
+    for _ in 0..2 {
+        let error = progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(error.code(), RefusalCode::ProposalClosed);
+    }
+    untouched.check(&person, person_world.path(), "finished");
+    // Stopped by a Cancel: closed every time after, though the world is
+    // still at the cancelled step's base.
+    let root = world(|_| {});
+    let mut person = open(root.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Cancel, &mut records).unwrap();
+    assert_eq!(revision(&person), proposal.base());
+    let untouched = Untouched::of(&person, root.path());
+    for _ in 0..2 {
+        let error = progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(error.code(), RefusalCode::ProposalClosed);
+    }
+    untouched.check(&person, root.path(), "stopped");
+}
+
+#[test]
+fn reaching_the_steps_result_by_other_edits_is_not_accepting_the_step() {
+    // Step 0 moves marker_1 to (4, 2). The person cancels it, then moves the
+    // marker to (5, 2) and on to (4, 2): the same files, so the same
+    // revision as the step's result, but not the step.
+    let (_agent, proposal, person_world) = short(1, |_| {});
+    let mut records = Records::default();
+    let mut person = open(person_world.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Cancel, &mut records).unwrap();
+    for x in [5, 4] {
+        let expected = revision(&person);
+        let action = Action::Move {
+            uid: "marker_1".into(),
+            x,
+            y: 2,
+            expected,
+        };
+        accept(&mut person, action, &mut records);
+    }
+    assert_eq!(revision(&person), proposal.steps()[0].after());
+    let error = progress.settle(&proposal, &person).unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalBaseStale);
+    assert!(progress.stopped());
+    assert_eq!(progress.next(), 0);
 }

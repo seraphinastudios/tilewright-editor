@@ -49,8 +49,10 @@ library code):
   nothing pending and can be tried again; only the person's Cancel stops a
   proposal.
 - The store writes `proposal-<body digest>.json` with the recovery store's
-  durable sequence and never replaces a different file; same bytes are
-  success.
+  durable sequence. It never writes to the final name and refuses a
+  different file there; same bytes are success. With World 0.2.0 a
+  same-user process that ignores the lock can race the absence checks
+  (docs/PROPOSALS.md says exactly where).
 - The proposal codes join the engine's `RefusalCode` list.
 
 The digests detect corruption, not forgery by a same-user agent; safety

@@ -63,6 +63,11 @@ fn any_operation_precondition_or_digest_that_differs_is_detected() {
     let value: Value = serde_json::from_str(&recorded).unwrap();
     let operations = value["operations"].as_array().unwrap().len();
     let base_path = value["base"][0]["path"].as_str().unwrap().to_owned();
+    // The move holds both kinds of precondition: `test` operations and an
+    // `expect` on its `set`.
+    let ops = value["operations"].as_array().unwrap();
+    assert!(ops.iter().any(|op| op["op"] == "test"));
+    assert!(ops.iter().any(|op| op.get("expect").is_some()));
     // Every member of every operation, changed in turn.
     for index in 0..operations {
         let operation = value["operations"][index].as_object().unwrap().clone();
@@ -161,5 +166,18 @@ fn a_side_without_a_string_actor_or_strict_json_is_unreadable() {
                 "{other}"
             );
         }
+    }
+}
+
+#[test]
+fn an_extra_member_on_either_side_is_a_divergence() {
+    let recorded = sealed();
+    let extra = recorded.replacen('{', "{\"extra\":1,", 1);
+    for (left, right) in [
+        (recorded.as_str(), extra.as_str()),
+        (extra.as_str(), recorded.as_str()),
+    ] {
+        let divergence = compare_transactions(left, right).unwrap_err();
+        assert!(divergence.members.contains(&"other"), "{divergence:?}");
     }
 }
