@@ -1433,9 +1433,9 @@ dependencies = [
 
 [[package]]
 name = "tilewright-edit"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f12970d8337cf85f482b5d8a52e3b12aaf7067b547bde9251ce49d9e6fea1833"
+checksum = "7b5f5ef338f3ed929fae1a15c802926f673e6952008b2a826ac5b2a8c3467237"
 dependencies = [
  "sha2",
  "tempfile",
@@ -1597,9 +1597,9 @@ dependencies = [
 
 [[package]]
 name = "tilewright-jsonc"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e09599cb595e74725264da134dd440b701f0db7a87ade655f3c17a7eb31d1dd7"
+checksum = "fd46d736f8c4d629bf3d19b720d99115817e38e4214481d292b42cc597ff96fa"
 
 [[package]]
 name = "tilewright-render-api"
@@ -1695,9 +1695,9 @@ checksum = "a1d2c41aec4b5f94a1964b09dd8f2e9698c08f1038f2de2869f2da216937b53e"
 
 [[package]]
 name = "tilewright-source"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0ec9a0a1e3be7e905a15a5c6edfe20ef1afbd1c891f4b5498abd73d2cec67e9"
+checksum = "998ce939074a0794d4be73b09b737c29283b3b8def73f3e26901a61b49b94729"
 dependencies = [
  "rustix",
  "sha2",
