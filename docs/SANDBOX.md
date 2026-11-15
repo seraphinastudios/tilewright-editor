@@ -48,9 +48,10 @@ that starts its server: every start makes a new sandbox.
 The helper:
 
 1. checks the actor and the label, that the platform is Linux, that the
-   editor exists, and that the parent is on persistent local storage (it
-   refuses tmpfs, ramfs, overlay, network and unknown file systems), before
-   it creates anything;
+   editor and the world exist, that the parent is not the world or inside
+   it, and that the parent is on persistent local storage (it refuses
+   tmpfs, ramfs, overlay, network and unknown file systems), before it
+   creates anything;
 2. creates a new child `sandbox-<UTC time>-<16 random hex digits>` with
    mode 0700, never an existing one, and in it `world/`, `recovery/` and
    `proposals/`, each 0700, and checks that the four are distinct;

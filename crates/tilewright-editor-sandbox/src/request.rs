@@ -15,10 +15,10 @@ pub const REQUESTS: [&str; 9] = [
 
 /// The runner's own refusal codes, for lines it cannot read as a request.
 pub const TOO_LARGE: &str = "request.too_large";
-pub const NOT_UTF8: &str = NOT_UTF8;
-pub const PARSE: &str = PARSE;
-pub const INVALID: &str = INVALID;
-pub const UNKNOWN: &str = UNKNOWN;
+pub const NOT_UTF8: &str = "request.not_utf8";
+pub const PARSE: &str = "request.parse";
+pub const INVALID: &str = "request.invalid";
+pub const UNKNOWN: &str = "request.unknown";
 /// Every one of them, in documentation order.
 pub const CODES: [&str; 5] = [TOO_LARGE, NOT_UTF8, PARSE, INVALID, UNKNOWN];
 
@@ -100,13 +100,7 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
         .root()
         .get("request")
         .and_then(Value::as_str)
-        .ok_or_else(|| {
-            refused(
-                None,
-                INVALID,
-                "a request has a string member \"request\"",
-            )
-        })?;
+        .ok_or_else(|| refused(None, INVALID, "a request has a string member \"request\""))?;
     let Some(&known) = REQUESTS.iter().find(|known| **known == name) else {
         return Err(refused(
             None,

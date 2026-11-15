@@ -160,13 +160,30 @@ class SandboxProvisionTests(unittest.TestCase):
                 self.assertEqual(list(parent.iterdir()), [], case)
                 self.assertFalse((root / 'session').exists(), case)
             self.assertIsNotNone(sandbox.sandbox_actor('agent:' + 'x' * 250))
+            inside = source / 'nested'
+            result = run('--world', source, '--destination-parent', inside, '--actor', 'agent:tester')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'inside it', result.stderr)
+            self.assertEqual(sorted(path.name for path in inside.iterdir()), ['data'])
+            result = run('--world', source, '--destination-parent', source, '--actor', 'agent:tester')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(sorted(path.name for path in source.iterdir()), ['nested', 'world.jsonc'])
             missing = run('--world', root / 'absent', '--destination-parent', parent, '--actor', 'agent:tester')
             self.assertNotEqual(missing.returncode, 0)
             self.assertEqual(missing.stdout, b'')
-            # The copy failed after the sandbox was made: it is kept for
-            # inspection, never deleted.
+            self.assertEqual(list(parent.iterdir()), [])
+            # A copy refused part-way, here for a link, is found only after
+            # the sandbox was made: it is kept for inspection, never deleted.
+            linked = root / 'linked'
+            linked.mkdir()
+            (linked / 'a-link').symlink_to(source / 'world.jsonc')
+            refused = run('--world', linked, '--destination-parent', parent, '--actor', 'agent:tester')
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertEqual(refused.stdout, b'')
+            self.assertIn(b'preserve any created state', refused.stderr)
+            self.assertIn(b'link or special file', refused.stderr)
             self.assertEqual(len(list(parent.iterdir())), 1)
-            self.assertIn(b'preserve any created state', missing.stderr)
+            self.assertEqual((source / 'world.jsonc').read_bytes(), b'{"original": true}\n')
 
     def test_volatile_tmpfs_is_refused_before_creating_a_sandbox(self):
         volatile = '/dev/shm' if Path('/dev/shm').is_dir() and os.access('/dev/shm', os.W_OK) else '/tmp'

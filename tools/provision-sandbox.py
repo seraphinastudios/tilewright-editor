@@ -103,6 +103,9 @@ def main():
         raise ValueError('sandbox editing is supported only on Linux')
     executable = args.editor.resolve(strict=True) if args.editor else None
     parent = args.destination_parent.resolve(strict=True)
+    # A sandbox inside the world it copies would copy itself.
+    if parent.is_relative_to(args.world.resolve(strict=True)):
+        raise ValueError('the destination parent may not be the world or inside it')
     parent_fd = provision.directory(parent)
     held = []
     try:
