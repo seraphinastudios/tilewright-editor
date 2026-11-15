@@ -342,10 +342,21 @@ fn every_check_that_needs_no_world_refuses_with_its_code() {
             "not generated",
             Box::new(|b| b["steps"][0]["placed"] = json!("marker_1")),
         ),
+        (
+            "not generated, in its transaction too",
+            Box::new(|b| {
+                let assigned = b["steps"][0]["placed"].as_str().unwrap().to_owned();
+                let text = b["steps"][0]["transaction"].as_str().unwrap();
+                assert!(text.contains(&assigned));
+                b["steps"][0]["transaction"] = json!(text.replace(&assigned, "marker_9"));
+                b["steps"][0]["placed"] = json!("marker_9");
+            }),
+        ),
     ];
     for (name, change) in place_cases {
         let mut body = proposal_body(&[step(&place)]);
         change(&mut body);
+        fix_digests(&mut body);
         assert_eq!(
             code(&document(&body)).unwrap_err(),
             RefusalCode::ProposalInvalid,
@@ -368,6 +379,31 @@ fn every_check_that_needs_no_world_refuses_with_its_code() {
         code(&document(&body)).unwrap_err(),
         RefusalCode::ProposalInvalid
     );
+    // A transaction that changes more files than one review shows, and
+    // one at the limit.
+    for (files, ok) in [
+        (limits::CHANGED_FILES, true),
+        (limits::CHANGED_FILES + 1, false),
+    ] {
+        let mut sealed: Value = serde_json::from_str(&paint.transaction).unwrap();
+        let entries = |digest: &str| -> Value {
+            (0..files)
+                .map(|index| json!({"path": format!("planes/main/layers/0/{index}_0.jsonc"), "sha256": digest}))
+                .collect()
+        };
+        sealed["base"] = entries(&"0".repeat(64));
+        sealed["result"] = entries(&"1".repeat(64));
+        let body = proposal_body(&[step(&Prepared {
+            transaction: sealed.to_string(),
+            ..prepare(2)
+        })]);
+        let result = code(&document(&body));
+        assert_eq!(
+            result.as_ref().err(),
+            (!ok).then_some(&RefusalCode::ProposalBudget),
+            "{files}"
+        );
+    }
     // A transaction that changes no file.
     let body = proposal_body(&[step(&Prepared {
         after: [0xcd; 32],

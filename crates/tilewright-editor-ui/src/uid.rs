@@ -174,24 +174,27 @@ mod tests {
         for bytes in [[0; 16], [0xff; 16], [0x5a; 16], *b"0123456789abcdef"] {
             assert_eq!(uid_material(&format_uid(bytes)), Some(bytes));
         }
-        let uid = format_uid([0x5a; 16]);
-        for other in [
+        let generated = format_uid([0x5a; 16]);
+        for (index, other) in [
             String::new(),
-            uid.replacen("o.", "x.", 1),
-            uid[..uid.len() - 1].to_owned(),
-            format!("{uid}a"),
-            uid.to_uppercase(),
+            generated.replacen("o.", "x.", 1),
+            generated[..generated.len() - 1].to_owned(),
+            format!("{generated}a"),
+            generated.to_uppercase(),
             // The last character's two low bits must be zero.
-            format!("{}b", &uid[..uid.len() - 1]),
-            format!("{}1", &uid[..uid.len() - 1]),
-        ] {
-            assert_eq!(uid_material(&other), None, "{other:?}");
-            assert!(FixedUidSource::new(&other).is_err());
+            format!("{}b", &generated[..generated.len() - 1]),
+            format!("{}1", &generated[..generated.len() - 1]),
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(uid_material(other), None, "case {index}");
+            assert!(FixedUidSource::new(other).is_err(), "case {index}");
         }
-        let mut source = FixedUidSource::new(&uid).unwrap();
+        let mut source = FixedUidSource::new(&generated).unwrap();
         let mut bytes = [0; 16];
         source.fill(&mut bytes).unwrap();
-        assert_eq!(format_uid(bytes), uid);
+        assert_eq!(format_uid(bytes), generated);
         assert!(source.fill(&mut bytes).is_err());
     }
 
