@@ -73,8 +73,8 @@ pub struct Proposal {
 
 impl Proposal {
     /// Records the applied steps of `session` (its undo stack: undone
-    /// steps are not in it) as a proposal. `editor` is the version the
-    /// calling application was built as (1 to [`limits::EDITOR_BYTES`]
+    /// steps are not in it) as a proposal. `editor` is the version string
+    /// the calling editor build reports for itself (1 to [`limits::EDITOR_BYTES`]
     /// printable ASCII characters, no space); `receipt` the digest of the
     /// sandbox's provisioning receipt; `client` an untrusted label, such
     /// as the name an MCP client gave itself.
@@ -91,6 +91,18 @@ impl Proposal {
         editor: &str,
         receipt: [u8; 32],
         client: Option<&str>,
+    ) -> Result<Self, ProposalError> {
+        Self::record(session, editor, receipt, client, Self::decode)
+    }
+
+    /// [`Proposal::from_session`], reading its own document back with
+    /// `read`: tests substitute a reader that drifts.
+    fn record(
+        session: &Session,
+        editor: &str,
+        receipt: [u8; 32],
+        client: Option<&str>,
+        read: impl FnOnce(&[u8]) -> Result<Self, ProposalError>,
     ) -> Result<Self, ProposalError> {
         if session.history().needs_reload() {
             return Err(ProposalError::new(
@@ -150,8 +162,11 @@ impl Proposal {
             steps: &steps,
         })?;
         let bytes = frame(&body, &sha256(&body))?;
-        // What is recorded is exactly what reading it back accepts.
-        Self::decode(bytes.as_bytes())
+        // What is recorded is exactly what reading it back accepts, and it
+        // reads back as the steps the session prepared.
+        let proposal = read(bytes.as_bytes())?;
+        read_back(&proposal.steps, &steps)?;
+        Ok(proposal)
     }
 
     /// Reads and verifies a proposal document: strict JSON with exactly the
@@ -246,7 +261,8 @@ impl Proposal {
         };
         // The digest covers the body's exact bytes, as the reader found
         // them; any layout the strict reader accepts is read.
-        let body_sha256 = sha256(document.text(members.get("body").span()));
+        let body_text = document.text(members.get("body").span());
+        let body_sha256 = sha256(body_text);
         if body_sha256 != recorded_body {
             return Err(ProposalError::new(
                 RefusalCode::ProposalDigest,
@@ -273,12 +289,15 @@ impl Proposal {
             actor,
             steps,
             body_sha256,
-            bytes: text.to_owned(),
+            // The writer's frame around the body as read: files that differ
+            // only outside the body are one proposal, with one name.
+            bytes: frame(body_text, &recorded_body)?,
         })
     }
 
-    /// The bytes of the document: as read, or as written by
-    /// [`Proposal::from_session`].
+    /// The bytes of the document: the body exactly as read (or as
+    /// [`Proposal::from_session`] wrote it) in the writer's frame, so that
+    /// equal bodies give equal bytes and the same [`Proposal::file_name`].
     pub fn bytes(&self) -> &[u8] {
         self.bytes.as_bytes()
     }
@@ -340,6 +359,22 @@ struct Fields<'a> {
     client: Option<&'a str>,
     receipt: [u8; 32],
     steps: &'a [ProposalStep],
+}
+
+/// Each step read back from the written document has exactly the action
+/// and placed uid that were recorded: a change in how numbers or strings
+/// are written or read then fails when a proposal is made, not when it is
+/// applied.
+fn read_back(decoded: &[ProposalStep], recorded: &[ProposalStep]) -> Result<(), ProposalError> {
+    for (index, (decoded, recorded)) in decoded.iter().zip(recorded).enumerate() {
+        if decoded.action != recorded.action || decoded.placed != recorded.placed {
+            return Err(invalid("the recorded action does not read back as prepared").at(index));
+        }
+    }
+    if decoded.len() != recorded.len() {
+        return Err(invalid("the recorded steps do not read back as prepared"));
+    }
+    Ok(())
 }
 
 /// The form the writer emits for the body: minified JSON, members in
@@ -637,3 +672,6 @@ fn digest(value: &jsonc::Value, key: &str) -> Result<[u8; 32], ProposalError> {
         .and_then(unhex)
         .ok_or_else(|| invalid(format!("{key} is 64 lowercase hexadecimal digits")))
 }
+
+#[cfg(test)]
+mod tests;

@@ -594,7 +594,9 @@ fn digests_are_enforced_and_any_strict_layout_reads() {
         assert_ne!(other, &text, "case {index}");
         let read = Proposal::decode(other.as_bytes())
             .unwrap_or_else(|error| panic!("case {index}: {} {error}", error.code()));
-        assert_eq!(read.bytes(), other.as_bytes(), "case {index}");
+        // The body as read, in the writer's frame.
+        assert_eq!(read.bytes(), framed(other).as_bytes(), "case {index}");
+        assert_eq!(read.file_name(), proposal_name(other), "case {index}");
         assert_eq!(read.steps(), canonical.steps(), "case {index}");
         assert_eq!(
             (read.base(), read.result(), read.actor(), read.editor()),
@@ -641,6 +643,54 @@ fn digests_are_enforced_and_any_strict_layout_reads() {
         code(&[0xff, 0xfe, b'{']).unwrap_err(),
         RefusalCode::ProposalInvalid
     );
+}
+
+/// The writer's frame around the body of `text`, with its digest.
+fn framed(text: &str) -> String {
+    let document =
+        tilewright_jsonc::Document::parse(text, &tilewright_jsonc::Limits::default()).unwrap();
+    let span = document.root().get("body").unwrap().span();
+    let body = &text[span.start..span.end];
+    format!(
+        "{{\"body\":{body},\"body_sha256\":\"{}\",\"format\":\"{FORMAT}\"}}",
+        hex(&sha256(body))
+    )
+}
+fn proposal_name(text: &str) -> String {
+    let framed = framed(text);
+    let document =
+        tilewright_jsonc::Document::parse(framed.as_str(), &tilewright_jsonc::Limits::default())
+            .unwrap();
+    let digest = document
+        .root()
+        .get("body_sha256")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    format!("proposal-{digest}.json")
+}
+
+#[test]
+fn files_that_differ_only_outside_the_body_are_one_proposal() {
+    let paint = prepare(2);
+    let text = String::from_utf8(document(&proposal_body(&[step(&paint)]))).unwrap();
+    let written = Proposal::decode(text.as_bytes()).unwrap();
+    let resaved = [
+        format!("{text}\n"),
+        format!(
+            "{{ \"format\" : \"{FORMAT}\",\n  \"body_sha256\": \"{}\",\n  \"body\" : {}\n}}\r\n",
+            hex(&written.body_sha256()),
+            &text["{\"body\":".len()..text.find(",\"body_sha256\"").unwrap()]
+        ),
+        text.replacen("\"format\"", "\"\\u0066ormat\"", 1),
+    ];
+    for (index, other) in resaved.iter().enumerate() {
+        assert_ne!(other, &text, "case {index}");
+        let read = Proposal::decode(other.as_bytes()).unwrap();
+        assert_eq!(read, written, "case {index}");
+        assert_eq!(read.bytes(), written.bytes(), "case {index}");
+        assert_eq!(read.file_name(), written.file_name(), "case {index}");
+    }
 }
 
 /// `text` with its body changed by `edit` and the body digest made to

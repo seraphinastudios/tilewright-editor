@@ -36,7 +36,7 @@ The body, exactly these members:
 
 | Member | Value |
 |---|---|
-| `editor` | The release version of the application that wrote it, as the caller passes it to `Proposal::from_session` (the version that application reports): 1 to 64 printable ASCII characters, no space. Informational; nothing checks it against the reader. |
+| `editor` | The version string the writing editor build reports for itself, as the caller passes it to `Proposal::from_session`: today the workspace crate version (0.1.0 in every release), not the release tag. 1 to 64 printable ASCII characters, no space. Informational; nothing checks it against the reader. |
 | `actor` | The actor of every step, a valid engine actor (1 to 256 printable ASCII characters). In a sandbox it comes from the operator's flag, never from the client. |
 | `client` | `null`, or an untrusted label of at most 256 bytes, such as the name an MCP client gave itself. It is never an actor and is shown escaped (`Proposal::client_display`). |
 | `base` | The World revision the first step starts from. |
@@ -89,13 +89,21 @@ a proposal.
 
 ### What a reader requires and what the writer emits
 
-A reader takes any document the strict reader accepts: whitespace and
-member order are free, and strings and numbers may be spelled any way JSON
-allows. It refuses comments, a byte-order mark, duplicate keys, unknown or
-missing members, wrong types, non-finite numbers and integers beyond
-±(2^53 − 1). The body digest covers the body's bytes exactly as they are in
-the file, so two writers that format a number differently still read each
-other's proposals.
+A reader takes any document the strict reader accepts: whitespace, member
+order and string escapes are free. A number may be re-spelled only within
+its kind: an integer is written without fraction or exponent (an integer
+member refuses `4.0` and `4e0`), and other numbers keep their value. In a
+field value, `1` (an integer) and `1.0` (a number) are different values,
+so a tool that rewrites one as the other changes the action, and the step
+then diverges or is refused when the proposal is applied. A reader refuses
+comments, a byte-order mark, duplicate keys, unknown or missing members,
+wrong types, non-finite numbers, integers beyond ±(2^53 − 1) and number
+tokens longer than 128 bytes. The body digest covers the body's bytes
+exactly as they are in the file, from its `{` to its `}`, so two writers
+that format a number differently within its kind still read each other's
+proposals. A decoded proposal's bytes (`Proposal::bytes`) are the body as
+read in the writer's frame, so files that differ only outside the body are
+the same proposal, with the same bytes and file name.
 
 The writer emits one fixed form: minified, members in sorted order, no
 trailing newline, strings escaping only `"`, `\` and characters below
@@ -116,7 +124,7 @@ All in `tilewright_editor_proposal::limits`:
 | Action strings | 4,096 bytes |
 | Stroke cells | 4,096, the brush's limit |
 | Field values | 8 levels of nesting, 4,096 values (itself included) and 64 KiB encoded, the engine's budget; objects at most 256 members, World's reader limit |
-| JSON values in one proposal | 256 × (3 × 4,096 + 64) + 64 = 3,162,176, keys included; it follows from the bounds above, so no proposal within them reaches it |
+| JSON values in one proposal | 256 × (3 × 4,096 + 64) + 64 = 3,162,176 (object keys are not counted); it follows from the bounds above, so no proposal within them reaches it. A hostile document just under it can take several hundred MB of memory for well under a second while it is read |
 | Client label | 256 bytes |
 | Editor version | 64 bytes |
 
@@ -127,7 +135,10 @@ applied steps (`Session::applied_steps`: the undo stack, so undone steps are
 not in it). It is refused with pending.exists while a change is pending,
 with session.blocked in a blocked session, with `proposal.empty` when no
 step is applied, with `proposal.invalid` for a step the session did not
-prepare itself, with `proposal.chain` when the steps do not end at the
+prepare itself, for an editor version that is empty or holds a space or a
+character outside printable ASCII, or for a step that does not read back
+with the action and uid it recorded, with `proposal.budget` for an editor
+version over 64 bytes, with `proposal.chain` when the steps do not end at the
 session's revision, and with `proposal.budget` over a bound. What it builds
 is read back with `Proposal::decode` before it is returned.
 
@@ -149,8 +160,10 @@ and every `Proposal` value has passed all of it:
    step records a uid, and no two steps place the same uid.
 
 None of this shows that a step's transaction is what its Action
-prepares: verification reads both, but only compares the Action's
-`expected` revision and a placement's uid with the transaction. Only
+prepares: verification compares the Action's `expected` revision with the
+step's `before`, and checks the transaction's seal, actor and changed
+files and a placement's uid, but never that the transaction is what the
+Action prepares. Only
 dispatching the Action again when the proposal is applied, and comparing
 what it prepares with the recorded transaction, establishes that.
 
