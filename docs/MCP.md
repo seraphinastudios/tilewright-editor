@@ -58,7 +58,11 @@ eras to send `server/discover` first.
   `_meta["io.modelcontextprotocol/serverInfo"]`. The `server/discover` and
   `tools/list` results may be cached for an hour (`ttlMs` 3600000,
   `cacheScope` `public`): they do not change while the server runs.
-- Notifications get no reply, not even a wrong one.
+- Notifications get no reply, not even a wrong one. As in the World
+  server, any object without an `id` is treated as a notification, even
+  one that is not a valid request (`{"jsonrpc": "2.0", "method": 1}`), and
+  gets no reply; JSON-RPC 2.0's own example answers that with -32600 and a
+  null `id`. This is a known divergence.
   `notifications/cancelled` is accepted and needs nothing, because each
   request is answered before the next is read. A response sent to the
   server, whatever its ID, is ignored.
@@ -144,7 +148,8 @@ followed by `<list>_cursor` as well as `<list>_more`.
   `--match`, it may start with `--`.
 - `lint`: its findings are computed once per snapshot, when the world is
   loaded, since they prepare the catalog's view; a call only lists them.
-- `render`: `region` is `[x, y, width, height]` in tiles, inside the
+- `render`: `region` is `[x, y, width, height]` in tiles (the schema's
+  `prefixItems`: four integers, width and height at least 1), inside the
   catalog's view (the whole view by default); `scale` is 1 to 4 (default
   1). The region is framed and drawn exactly as `render` frames and draws
   it, and the image is encoded by the same encoder, so it is the PNG
@@ -229,8 +234,12 @@ names each resource's digest; `n` when there is no catalog, `i` and a
 not load it is `x` and a 64-bit fingerprint of its diagnostics. The
 fingerprints are FNV-1a, not a security measure: two different invalid
 catalogs, budget verdicts or broken worlds with colliding fingerprints
-would read as one snapshot, which only makes `refresh` say `changed:
-false`; two loadable catalogs never do. `refresh` reports `changed` when the binding changed, so a
+would read as one snapshot: `refresh` would say `changed: false`, and
+cursors would stay valid across the two, so pages could mix them. A world
+author can search for such a collision in an invalid catalog's message
+(about 2^32 tries); the only report part that differs is that message.
+Two loadable catalogs never collide. A test checks that a changed
+invalid-catalog message is a changed snapshot. `refresh` reports `changed` when the binding changed, so a
 catalog edit is a change even though the World revision stays the same;
 cursors are bound to the binding, while the `revision` argument compares
 only the World revision. The old snapshot is dropped before the world
@@ -267,16 +276,11 @@ checked against its output schema. The marker world keeps the profile's id
 and version and the ground grids as they are; they are marked in the
 schemas and pass the vocabulary rule.
 
-Every reply escapes the same characters as the CLI's JSON (the set in
-[docs/CLI.md](CLI.md#world-text-is-data)): every control character,
-U+2028 and U+2029, the bidirectional formatting characters, and invisible
-or format characters: the soft hyphen, the combining grapheme joiner, the
-Hangul fillers, zero-width spaces and joiners, U+2060 to U+206F, the
-byte-order mark, U+FFF0 to U+FFFB, the shorthand and musical format
-controls, and U+E0000 to U+E0FFF but for the variation selectors, written
-as `\u` escapes (surrogate pairs above U+FFFF). A world value therefore
-cannot end the reply's line or forge a message, and the characters of that
-set reach a reader only as escapes.
+Every reply escapes exactly the characters the CLI's JSON escapes, the one
+set listed in [docs/CLI.md](CLI.md#world-text-is-data) (`node::escaped` in
+the observe crate), written as `\u` escapes (surrogate pairs above
+U+FFFF). A world value therefore cannot end the reply's line or forge a
+message, and the characters of that set reach a reader only as escapes.
 
 ## Read-only by construction
 
@@ -298,9 +302,16 @@ names or calls. They are text searches, not a proof:
   (`.f(` or `::f(`) of `rename`, `remove_file`, `remove_directory`,
   `set_own_access`, `make_directory` or `write`;
 - the standard library's `fs`, `net` or `process` modules however they are
-  imported (each file is searched with its lines joined, so `use std::{io,
-  fs};` over several lines is caught), `File`, `OpenOptions`,
-  `DirBuilder`, `Command`, or `create_dir`;
+  imported: each file is searched with its lines joined (a file that
+  cannot be read fails the check), and inside a `use ...;` statement a bare
+  `fs`, `net` or `process` followed by `::`, `,`, `}`, `;` or `as` is
+  refused, so `use std::{io, fs};` over several lines is caught; elsewhere
+  `fs::`, `net::` and `process::` are, so `std::process::exit` and
+  `process::Command` are too, while a variable `process` or an enum variant
+  `Command` is allowed; and the whole words `File`, `OpenOptions`,
+  `DirBuilder`, `create_dir` and `create_dir_all`. String literals and
+  trailing comments are searched as code: one that spells such a name fails
+  the check;
 - and, as for every editor crate, `std::fs`, `std::net`,
   `std::process::Command`, `tokio::` or a function named `parse`,
   `serialize`, `write` or `save`.

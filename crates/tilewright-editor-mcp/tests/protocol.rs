@@ -706,7 +706,10 @@ impl Random {
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn random_and_mutated_requests_get_exactly_the_replies_json_rpc_asks_for() {
+/// The oracle encodes the server's own rules, which are JSON-RPC's except
+/// that an object without an `id` gets no reply even when it is not a valid
+/// request (see docs/MCP.md, "Protocol").
+fn random_and_mutated_requests_get_exactly_the_replies_the_servers_rules_give() {
     let seeds = [
         request(1, "server/discover", json!({})),
         request(2, "tools/list", json!({})),
@@ -731,6 +734,37 @@ fn random_and_mutated_requests_get_exactly_the_replies_json_rpc_asks_for() {
     let mut lines: Vec<Vec<u8>> = Vec::new();
     for round in 0..600 {
         let mut line = seeds[round % seeds.len()].clone().into_bytes();
+        // Every other line, the ID becomes one of every kind: strings,
+        // which must come back exactly as sent, integers, and IDs JSON-RPC
+        // does not allow, which get a reply without one.
+        if round % 2 == 1 {
+            const IDS: [&str; 9] = [
+                r#""s-1""#,
+                r#""""#,
+                r#""\u00e9 \"q\"""#,
+                "-7",
+                "0",
+                "null",
+                "1.5",
+                "[]",
+                "{}",
+            ];
+            let text = String::from_utf8(line).unwrap();
+            let at = text.find("\"id\":").unwrap() + "\"id\":".len();
+            let end = at + text[at..].find(',').unwrap();
+            line = format!(
+                "{}{}{}",
+                &text[..at],
+                IDS[random.below(IDS.len())],
+                &text[end..]
+            )
+            .into_bytes();
+            // Half of those stay as they are, so the IDs reach the server.
+            if random.below(2) == 0 {
+                lines.push(line);
+                continue;
+            }
+        }
         match random.below(4) {
             // Flip, insert or delete a few bytes.
             0..=1 => {
@@ -823,6 +857,7 @@ fn arguments_refused(called: &Called) -> bool {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_input_schemas_accept_exactly_what_the_server_accepts_at_their_bounds() {
     let mut server = server(&neutral());
     let replies = session(&mut server, &[request(1, "tools/list", json!({}))]);
@@ -834,7 +869,6 @@ fn the_input_schemas_accept_exactly_what_the_server_accepts_at_their_bounds() {
         let found = &schema(tool)["properties"][property];
         found[keyword]
             .as_i64()
-            .or_else(|| found["items"][keyword].as_i64())
             .unwrap_or_else(|| panic!("{tool}.{property} has no {keyword}"))
     };
     let tile = |plane: Value, layer: Value, x: Value| json!({"plane": plane, "layer": layer, "x": x, "y": 0});
@@ -883,8 +917,38 @@ fn the_input_schemas_accept_exactly_what_the_server_accepts_at_their_bounds() {
             json!({"scale": scale + step, "region": [0, 0, 1, 1]}),
             false,
         ));
-        let corner = bound("render", "region", keyword);
-        cases.push(("render", json!({"region": [corner, 0, 1, 1]}), true));
+    }
+    // `region`: each item's own bounds, from the schema's `prefixItems`.
+    let region = schema("render")["properties"]["region"].clone();
+    assert_eq!(region["items"], json!(false));
+    assert_eq!(
+        (region["minItems"].as_i64(), region["maxItems"].as_i64()),
+        (Some(4), Some(4))
+    );
+    let items = region["prefixItems"].as_array().unwrap().clone();
+    assert_eq!(items.len(), 4);
+    for (index, item) in items.iter().enumerate() {
+        assert_eq!(item["type"], "integer", "{index}");
+        let least = item["minimum"].as_i64().unwrap();
+        let most = item["maximum"].as_i64().unwrap();
+        let with = |value: i64| {
+            let mut region = [0_i64, 0, 1, 1];
+            region[index] = value;
+            json!({"region": region})
+        };
+        // The server's own refusals at the edges: a region off the view is
+        // `target.unknown`, a too-large one `output.budget`, neither an
+        // argument error.
+        cases.push(("render", with(least), true));
+        cases.push(("render", with(most), true));
+        if index >= 2 {
+            assert_eq!(least, 1, "width and height are at least 1");
+            cases.push(("render", with(least - 1), false));
+            cases.push(("render", with(-5), false));
+        }
+    }
+    for length in [3, 5] {
+        cases.push(("render", json!({"region": vec![1; length]}), false));
     }
     // JSON Schema's integer takes a number with no fraction, and the server
     // takes it too; one with a fraction is neither's.

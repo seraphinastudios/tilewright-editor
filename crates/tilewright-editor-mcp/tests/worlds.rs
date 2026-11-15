@@ -192,8 +192,36 @@ fn error_code(called: &common::Called) -> String {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn cursors_are_bound_to_tool_section_arguments_and_snapshot() {
     let (_directory, root) = crowded();
+    // Twins of tile (0, 0) of plane main, layer 0: another x, another y,
+    // another layer, another plane, each with two objects, so a cursor at
+    // offset 1 lies inside each of their lists and only the fingerprint
+    // can refuse it.
+    let twin = |uid: &str, at: [i64; 2]| json!({"uid": uid, "at": at, "proto": "marker", "layer": "item", "fields": {}});
+    edit(&root, MAIN_CHUNK, |chunk| {
+        let objects = chunk["objects"].as_array_mut().unwrap();
+        for index in 0..2 {
+            objects.push(twin(&format!("twin_x_{index}"), [1, 0]));
+            objects.push(twin(&format!("twin_y_{index}"), [0, 1]));
+        }
+    });
+    let mut chunk = read_json(&root, "planes/main/layers/0/-1_0.jsonc");
+    chunk["chunk"] = json!([0, 0]);
+    for (plane, layer, tag) in [("main", 1, "layer"), ("z_plane_00", 0, "plane")] {
+        chunk["plane"] = json!(plane);
+        chunk["layer"] = json!(layer);
+        chunk["objects"] = json!([
+            twin(&format!("twin_{tag}_0"), [0, 0]),
+            twin(&format!("twin_{tag}_1"), [0, 0])
+        ]);
+        store_json(
+            &root,
+            &format!("planes/{plane}/layers/{layer}/0_0.jsonc"),
+            &chunk,
+        );
+    }
     let mut server = server(&root);
     let origin: Value = serde_json::from_str(ORIGIN).unwrap();
     let cursor = cursor_of(&mut server, "tile", &origin, "objects");
@@ -211,6 +239,17 @@ fn cursors_are_bound_to_tool_section_arguments_and_snapshot() {
     lower["layer"] = json!(1);
     let mut other_plane = origin.clone();
     other_plane["plane"] = json!("z_plane_00");
+    for twin in [&elsewhere, &below, &lower, &other_plane] {
+        let page = call(
+            &mut server,
+            "tile",
+            &json!({
+                "plane": twin["plane"], "layer": twin["layer"], "x": twin["x"], "y": twin["y"],
+                "section": "objects"
+            }),
+        );
+        assert_eq!(page.structured()["total"], 2, "{twin}");
+    }
     for (tool, arguments) in [
         ("tile", resume(&origin, "arrivals")),
         ("tile", resume(&elsewhere, "objects")),
@@ -282,13 +321,19 @@ fn cursors_are_bound_to_tool_section_arguments_and_snapshot() {
 fn a_catalog_only_change_is_a_changed_snapshot_with_the_same_revision() {
     let (_directory, root) = crowded();
     let mut server = server(&root);
+    let status = |server: &mut Server| {
+        call(server, "overview", &json!({})).structured()["catalog"]["status"].clone()
+    };
     let cursor = cursor_of(&mut server, "catalog", &json!({}), "prototypes");
     let before = call(&mut server, "overview", &json!({}));
+    assert_eq!(before.structured()["catalog"]["status"], "loaded");
+    // An edit that keeps the catalog loaded: its view shrinks by a row.
     edit(&root, "preview.jsonc", |catalog| {
-        catalog["prototypes"].as_array_mut().unwrap().pop();
+        catalog["view"]["bounds"] = json!([0, 0, 8, 5]);
     });
     let refreshed = call(&mut server, "refresh", &json!({}));
     let refreshed = refreshed.structured();
+    assert_eq!(status(&mut server), "loaded");
     assert_eq!(refreshed["changed"], true);
     assert_eq!(refreshed["revision"], refreshed["previous_revision"]);
     assert_eq!(refreshed["revision"], before.structured()["revision"]);
@@ -298,6 +343,46 @@ fn a_catalog_only_change_is_a_changed_snapshot_with_the_same_revision() {
         &json!({"section": "prototypes", "cursor": cursor}),
     );
     assert_eq!(error_code(&stale), "cursor.stale");
+    // The same catalog again is the same snapshot as before the edit:
+    // a fresh cursor survives a refresh that finds nothing new.
+    let cursor = cursor_of(&mut server, "catalog", &json!({}), "prototypes");
+    assert_eq!(
+        call(&mut server, "refresh", &json!({})).structured()["changed"],
+        false
+    );
+    assert!(
+        !call(
+            &mut server,
+            "catalog",
+            &json!({"section": "prototypes", "cursor": cursor})
+        )
+        .is_error()
+    );
+}
+
+#[test]
+fn an_invalid_catalog_whose_problem_changes_is_a_changed_snapshot() {
+    let (_directory, root) = fixture_copy("prototype-neutral");
+    edit(&root, "preview.jsonc", |catalog| {
+        catalog["resources"][0]["path"] = json!("preview-assets/first_missing.atx1");
+    });
+    let mut server = server(&root);
+    let problem = |server: &mut Server| {
+        let overview = call(server, "overview", &json!({}));
+        assert_eq!(overview.structured()["catalog"]["status"], "invalid");
+        overview.structured()["catalog"]["problem"].clone()
+    };
+    let first = problem(&mut server);
+    assert_eq!(
+        call(&mut server, "refresh", &json!({})).structured()["changed"],
+        false
+    );
+    edit(&root, "preview.jsonc", |catalog| {
+        catalog["resources"][0]["path"] = json!("preview-assets/second_missing.atx1");
+    });
+    let refreshed = call(&mut server, "refresh", &json!({}));
+    assert_eq!(refreshed.structured()["changed"], true);
+    assert_ne!(problem(&mut server), first);
 }
 
 #[test]
@@ -803,6 +888,16 @@ fn widest_planes(root: &Path, text: &str) {
 /// The neutral fixture with every list of every report past its bound, the
 /// longest ids World allows and free text that prints at its widest.
 fn widest() -> (tempfile::TempDir, PathBuf) {
+    let (directory, root) = widest_catalog(&long_id('q', 0));
+    let text: String = std::iter::repeat_n('\u{e0041}', limits::MAXIMUM_TEXT_CHARACTERS).collect();
+    widest_planes(&root, &text);
+    (directory, root)
+}
+
+/// [`widest`] without its extra planes: one plane, and a catalog whose
+/// lists overflow the byte budget. The objects' portals lead to plane
+/// `portals`.
+fn widest_catalog(portals: &str) -> (tempfile::TempDir, PathBuf) {
     let (directory, root) = fixture_copy("prototype-neutral");
     // 256 tag characters: each prints as a 12-byte JSON escape, the most.
     let text: String = std::iter::repeat_n('\u{e0041}', limits::MAXIMUM_TEXT_CHARACTERS).collect();
@@ -857,7 +952,7 @@ fn widest() -> (tempfile::TempDir, PathBuf) {
         let uid = long_id('u', index);
         objects.push(json!({
             "uid": uid, "at": [0, 0], "proto": protos[0], "layer": "item", "fields": fields,
-            "portal": {"plane": long_id('q', 0), "layer": 0, "at": [0, 0]}
+            "portal": {"plane": portals, "layer": 0, "at": [0, 0]}
         }));
         catalog["editing"]["movable_uids"]
             .as_array_mut()
@@ -879,7 +974,6 @@ fn widest() -> (tempfile::TempDir, PathBuf) {
     edit(&root, "planes/main/plane.jsonc", |plane| {
         plane["title"] = json!(text);
     });
-    widest_planes(&root, &text);
     (directory, root)
 }
 
@@ -956,6 +1050,38 @@ fn a_report_spends_its_byte_budget_in_report_order() {
     // The planes come before the catalog, and are listed.
     assert!(lists[2].1 > 0, "{lists:?}");
     assert!(first_cut >= 2, "{lists:?}");
+}
+
+#[test]
+fn the_byte_budget_runs_out_inside_the_catalog_in_report_order() {
+    let (_directory, root) = widest_catalog("main");
+    let mut server = server(&root);
+    let report = call(&mut server, "overview", &json!({"limit": 500}));
+    let report = report.structured();
+    let listed = |path: &str| {
+        let (parent, key) = path.rsplit_once('.').unwrap();
+        let parent = at(report, parent);
+        (
+            parent[key].as_array().unwrap().len(),
+            parent[format!("{key}_more")].as_u64().unwrap(),
+        )
+    };
+    // The planes and the view's zones fit; the grants run out of budget.
+    assert_eq!(report["planes_more"], 0);
+    assert!(!report["planes"].as_array().unwrap().is_empty());
+    let (zones, zones_more) = listed("catalog.view_zones");
+    assert!(zones > 0 && zones_more == 0, "{zones} {zones_more}");
+    let grants: Vec<(usize, u64)> = tilewright_editor_observe::overview::SECTIONS[4..]
+        .iter()
+        .map(|section| listed(section))
+        .collect();
+    let cut = grants
+        .iter()
+        .position(|(listed, more)| *more > 0 && *listed < 64)
+        .expect("the grants run out of budget");
+    for (listed, _) in &grants[cut + 1..] {
+        assert_eq!(*listed, 0, "{grants:?}");
+    }
 }
 
 #[test]

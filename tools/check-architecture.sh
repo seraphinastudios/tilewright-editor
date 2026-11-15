@@ -58,16 +58,23 @@ if grep -RnE --include='*.rs' \
 fi
 # Nor do they name the standard library's file, network or process
 # modules, its file types, or a directory-creating call, however the import
-# is spelled: each file is read with its comment lines dropped and its lines
-# joined, so a grouped import such as `use std::{io, fs::File};` across
-# several lines is caught.
-for file in $(find "${read_only[@]}" -name '*.rs' | sort); do
-  if grep -vE '^[[:space:]]*//' "${file}" | tr '\n' ' ' | grep -qE \
-    '\b(fs|net|process)[[:space:]]*(::|,|\}|;|as[[:space:]])|\b(File|OpenOptions|DirBuilder|Command)\b|create_dir'; then
+# is spelled. Each file is read with its comment lines dropped and its lines
+# joined (a file that cannot be read stops the script), so a grouped import
+# over several lines is caught. Inside a `use ...;` statement a bare `fs`,
+# `net` or `process` followed by `::`, `,`, `}`, `;` or `as` is refused
+# (`use std::{io, fs};`); elsewhere only `fs::`, `net::` or `process::` is,
+# so a variable or enum variant may be called `process` or `Command`.
+# String literals and trailing comments are not stripped: one that spells
+# `fs::`, `File` or such fails the check too, and is better reworded.
+while IFS= read -r -d '' file; do
+  text=$(sed -e '/^[[:space:]]*\/\//d' -- "${file}" | tr '\n' ' ')
+  if grep -qE \
+    '\buse\b[^;]*\b(fs|net|process)\b[[:space:]]*(::|,|\}|;|as[[:space:]])|\b(fs|net|process)[[:space:]]*::|\b(File|OpenOptions|DirBuilder)\b|\bcreate_dir(_all)?\b' \
+    <<<"${text}"; then
     echo "${file} names file, network or process access" >&2
     exit 1
   fi
-done
+done < <(find "${read_only[@]}" -name '*.rs' -print0 | sort -z)
 # Nor do they write: `render` returns pixels, the binary writes the one
 # file `--out` names, and the MCP server returns the image in its reply. World's confined access writes only through a
 # directory it opens, and its lock creates a file in the root on Windows;
