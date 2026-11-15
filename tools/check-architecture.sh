@@ -16,8 +16,9 @@ jq -e '
   deps("tilewright-editor-preview") == ["serde_json","sha2","tempfile","tilewright-jsonc","tilewright-render-api","tilewright-render-resources","tilewright-render-testkit","tilewright-render-world","tilewright-scene","tilewright-source"] and
   deps("tilewright-editor-testkit") == ["serde_json","sha2","tilewright-editor-project","tilewright-source"] and
   deps("tilewright-editor-proposal") == ["serde_json","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-preview","tilewright-editor-testkit","tilewright-editor-ui","tilewright-jsonc","tilewright-source"] and
+  deps("tilewright-editor-sandbox") == ["serde_json","tempfile","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-proposal","tilewright-editor-recovery","tilewright-editor-testkit","tilewright-editor-ui","tilewright-jsonc","tilewright-source"] and
   deps("tilewright-editor-recovery") == ["sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-testkit","tilewright-source"] and
-  deps("tilewright-editor") == ["png","pollster","sdl3","serde_json","sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-mcp","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-recovery","tilewright-editor-testkit","tilewright-editor-ui","tilewright-render-api","tilewright-render-resources","tilewright-render-sdl3","tilewright-render-testkit","tilewright-render-ui","tilewright-render-wgpu","tilewright-render-world","tilewright-scene","tilewright-source"] and
+  deps("tilewright-editor") == ["png","pollster","sdl3","serde_json","sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-mcp","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-proposal","tilewright-editor-recovery","tilewright-editor-sandbox","tilewright-editor-testkit","tilewright-editor-ui","tilewright-render-api","tilewright-render-resources","tilewright-render-sdl3","tilewright-render-testkit","tilewright-render-ui","tilewright-render-wgpu","tilewright-render-world","tilewright-scene","tilewright-source"] and
   ([.packages[].name | select(test("(client|protocol|server)"; "i"))] | length == 0) and
   all(.packages[].dependencies[];
     (.source // "") as $source |
@@ -35,9 +36,9 @@ if grep -RnE --include='*.rs' --exclude-dir=tests --exclude=tests.rs \
 fi
 
 # The read-only reports, and the MCP server that serves them, never reach
-# an editing session, history, recovery, proposals or provisioning: not even
-# through the ui crate that exports them. A missing source directory fails rather
-# than passing an empty search.
+# an editing session, history, recovery, proposals, the sandbox runner or
+# provisioning: not even through the ui crate that exports them. A missing
+# source directory fails rather than passing an empty search.
 read_only=(crates/tilewright-editor-observe/src crates/tilewright-editor-mcp/src)
 for directory in "${read_only[@]}"; do
   test -d "${directory}" || {
@@ -46,15 +47,15 @@ for directory in "${read_only[@]}"; do
   }
 done
 if grep -RnE --include='*.rs' \
-  '\b(Session|History|DurableRecovery|RecoveryStore|Proposal|ProposalStore)\b|tilewright_edit::|tilewright_editor_(commands|proposal|recovery|ui)\b|provision' \
+  '\b(Session|History|DurableRecovery|RecoveryStore|Proposal|ProposalStore|Sandbox)\b|tilewright_edit::|tilewright_editor_(commands|proposal|recovery|sandbox|ui)\b|provision' \
   crates/tilewright-editor-mcp/src | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
-  echo "the read-only MCP server reaches the ui crate, editing, history, recovery or provisioning" >&2
+  echo "the read-only MCP server reaches the ui crate, editing, history, recovery, the sandbox or provisioning" >&2
   exit 1
 fi
 if grep -RnE --include='*.rs' \
-  '\b(Session|History|DurableRecovery|RecoveryStore|Proposal)\b|tilewright_edit::|tilewright_editor_(commands|proposal|recovery)|provision' \
+  '\b(Session|History|DurableRecovery|RecoveryStore|Proposal|Sandbox)\b|tilewright_edit::|tilewright_editor_(commands|proposal|recovery|sandbox)|provision' \
   "${read_only[@]}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
-  echo "the read-only observe crate or MCP server reaches editing, history, recovery, proposals or provisioning" >&2
+  echo "the read-only observe crate or MCP server reaches editing, history, recovery, proposals, the sandbox or provisioning" >&2
   exit 1
 fi
 # Nor do they name the standard library's file, network or process
@@ -89,5 +90,19 @@ if grep -RnE --include='*.rs' \
   '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory)\b|\.(directory|lock)[[:space:]]*\(|(\.|::)(rename|remove_file|remove_directory|set_own_access|make_directory|write)[[:space:]]*\(' \
   "${read_only[@]}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
   echo "the read-only observe crate or MCP server opens a root or directory, locks, resolves a path or writes" >&2
+  exit 1
+fi
+
+# The sandbox runner opens only the directories it is given: a request
+# carries no path, so the module that reads requests names no path, root
+# or OS string type.
+sandbox_requests=crates/tilewright-editor-sandbox/src/request.rs
+test -f "${sandbox_requests}" || {
+  echo "missing ${sandbox_requests}" >&2
+  exit 1
+}
+if grep -nE '\b(Path|PathBuf|OsStr|OsString|SourceRoot|SourceDirectory)\b|std::(path|env)' \
+  "${sandbox_requests}" | grep -vE '^[0-9]+:[[:space:]]*//' >/dev/null; then
+  echo "the sandbox runner's requests name a path, root or environment" >&2
   exit 1
 fi
