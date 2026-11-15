@@ -125,9 +125,6 @@ impl Proposal {
             let origin = step
                 .origin
                 .ok_or_else(|| invalid("the step was not prepared by this session").at(index))?;
-            if origin.actor() != session.actor() {
-                return Err(invalid("the step has another actor").at(index));
-            }
             steps.push(ProposalStep {
                 action: origin.action().clone(),
                 placed: origin.placed().map(str::to_owned),

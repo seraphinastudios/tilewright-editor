@@ -166,9 +166,9 @@ fn a_placement_with_a_fixed_uid_places_exactly_it_once() {
     let dir = tempfile::tempdir().unwrap();
     copy_tree(&fixture_world("prototype-neutral"), dir.path());
     let mut session = open(dir.path());
-    let uid = format_uid([0x24; 16]);
+    let fixed = format_uid([0x24; 16]);
     let error = session
-        .dispatch_placing(label(&session, "x"), &uid, &mut Records)
+        .dispatch_placing(label(&session, "x"), &fixed, &mut Records)
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::InputInvalid);
     let error = session
@@ -177,10 +177,10 @@ fn a_placement_with_a_fixed_uid_places_exactly_it_once() {
     assert_eq!(error.code(), RefusalCode::InputInvalid);
     assert!(session.history().pending().is_none());
     session
-        .dispatch_placing(place(&session), &uid, &mut Records)
+        .dispatch_placing(place(&session), &fixed, &mut Records)
         .unwrap();
     run(&mut session, Action::Accept);
-    assert!(session.world().object(&uid).is_some());
+    assert!(session.world().object(&fixed).is_some());
     assert_eq!(
         session
             .applied_steps()
@@ -189,11 +189,11 @@ fn a_placement_with_a_fixed_uid_places_exactly_it_once() {
             .origin
             .unwrap()
             .placed(),
-        Some(uid.as_str())
+        Some(fixed.as_str())
     );
     // Taken now: the one-shot source has nothing else to give.
     let error = session
-        .dispatch_placing(place(&session), &uid, &mut Records)
+        .dispatch_placing(place(&session), &fixed, &mut Records)
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::UidUnavailable);
     // The session's own source is back.
@@ -202,5 +202,5 @@ fn a_placement_with_a_fixed_uid_places_exactly_it_once() {
     let sealed: Value =
         serde_json::from_str(session.history().pending().unwrap().sealed()).unwrap();
     let drawn = sealed["operations"][0]["object"]["uid"].as_str().unwrap();
-    assert_ne!(drawn, uid);
+    assert_ne!(drawn, fixed);
 }

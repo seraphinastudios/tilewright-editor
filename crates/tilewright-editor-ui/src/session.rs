@@ -953,8 +953,9 @@ impl Session {
     /// Keep [`Session::applied_steps`] paired with History's stacks:
     /// `before` are the depths before the dispatch, `preparing` what the
     /// dispatched action would prepare. A commit moves exactly one entry;
-    /// anything else (which History never does) drops the pairing of every
-    /// entry rather than guess.
+    /// anything else (which History never does), or stacks of other
+    /// lengths than History's, drops the pairing of every entry rather than
+    /// guess.
     fn track_steps(&mut self, before: (usize, usize), preparing: Option<Preparing>, ok: bool) {
         let after = self.history.depths();
         if after != before {
@@ -975,11 +976,11 @@ impl Session {
                     let origin = self.undone.pop().flatten();
                     self.steps.push(origin);
                 }
-                _ => {
-                    self.steps = vec![None; after.0];
-                    self.undone = vec![None; after.1];
-                }
+                _ => self.forget_origins(),
             }
+        }
+        if (self.steps.len(), self.undone.len()) != after {
+            self.forget_origins();
         }
         if self.history.pending().is_none() {
             self.preparing = None;
@@ -989,6 +990,12 @@ impl Session {
             }
             self.preparing = Some(preparing);
         }
+    }
+    /// Drop the pairing of every stack entry with its origin.
+    fn forget_origins(&mut self) {
+        let (undo, redo) = self.history.depths();
+        self.steps = vec![None; undo];
+        self.undone = vec![None; redo];
     }
     /// Recompute the notes, warnings and review of the pending transaction.
     /// Only dispatch changes the pending transaction, so this runs after it.
