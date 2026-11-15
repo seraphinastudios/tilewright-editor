@@ -51,14 +51,33 @@ pub struct Rendered {
 impl Rendered {
     /// The success report, with the PNG's length and SHA-256 digest.
     pub fn finish(self, png_bytes: usize, sha256: &[u8; 32]) -> Outcome {
-        let report = self.report.with(
-            "png",
-            Map::new()
-                .count("bytes", png_bytes)
-                .with("sha256", Node::Text(revision_hex(sha256))),
-        );
-        printed(&report, self.json, crate::cli::EXIT_SUCCESS)
+        printed(
+            &with_png(self.report, png_bytes, sha256),
+            self.json,
+            crate::cli::EXIT_SUCCESS,
+        )
     }
+}
+
+/// `report` with the PNG's length and SHA-256 digest.
+pub fn with_png(report: Map, png_bytes: usize, sha256: &[u8; 32]) -> Map {
+    report.with(
+        "png",
+        Map::new()
+            .count("bytes", png_bytes)
+            .with("sha256", Node::Text(revision_hex(sha256))),
+    )
+}
+
+/// Why a region cannot be drawn: a stable code and this editor's message.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Refusal {
+    pub code: &'static str,
+    pub message: &'static str,
+}
+
+const fn refusal(code: &'static str, message: &'static str) -> Refusal {
+    Refusal { code, message }
 }
 
 /// Opens the world of `request`; its load failure is the output (exit 3).
@@ -96,29 +115,44 @@ const OVER_WORK: &str = "The region at this scale exceeds the renderer's scene b
 /// The refusal to print (exit 4).
 pub fn render(observed: &Observed, request: &Request) -> Result<Rendered, Outcome> {
     let json = request.json;
-    let Framed {
-        prepared,
-        view: (plane, layer, region, tiles),
-    } = frame_region(observed, request)?;
-    let frame = prepared.reference_frame().map_err(|_| {
-        refused(
-            "render.failed",
-            "The reference renderer could not draw the view.",
-            json,
-        )
-    })?;
-    let report = report(
-        observed,
-        request,
-        (plane, layer, region, tiles),
-        &frame,
-        &prepared.diagnostics,
-    );
+    let framed = frame_region(observed, request)?;
+    let (frame, report) = draw(observed, framed, request.scale)
+        .map_err(|refusal| refused(refusal.code, refusal.message, json))?;
     Ok(Rendered {
         frame,
         report,
         json,
     })
+}
+
+/// Draws a framed region at `scale`: its pixels, and its report without
+/// the PNG's facts, which [`with_png`] adds.
+///
+/// # Errors
+/// `render.failed` when the reference renderer cannot draw it.
+pub fn draw(
+    observed: &Observed,
+    framed: Framed<'_>,
+    scale: u32,
+) -> Result<(ReferenceFrame, Map), Refusal> {
+    let Framed {
+        prepared,
+        view: (plane, layer, region, tiles),
+    } = framed;
+    let frame = prepared.reference_frame().map_err(|_| {
+        refusal(
+            "render.failed",
+            "The reference renderer could not draw the view.",
+        )
+    })?;
+    let report = report(
+        observed,
+        scale,
+        (plane, layer, region, tiles),
+        &frame,
+        &prepared.diagnostics,
+    );
+    Ok((frame, report))
 }
 
 /// A region framed and prepared for drawing, not yet drawn.
@@ -143,38 +177,42 @@ impl Framed<'_> {
 /// # Errors
 /// The refusal to print (exit 4).
 pub fn frame_region<'a>(observed: &'a Observed, request: &Request) -> Result<Framed<'a>, Outcome> {
-    let json = request.json;
+    frame_view(observed, request.region, request.scale)
+        .map_err(|refusal| refused(refusal.code, refusal.message, request.json))
+}
+
+/// [`frame_region`] for `region` (`None`: the whole view) at `scale`.
+///
+/// # Errors
+/// Why the region cannot be framed.
+pub fn frame_view(
+    observed: &Observed,
+    region: Option<[i64; 4]>,
+    scale: u32,
+) -> Result<Framed<'_>, Refusal> {
     let (catalog, resources) = match &observed.catalog {
         Catalog::Absent => {
-            return Err(refused(
+            return Err(refusal(
                 "catalog.absent",
                 "The world has no editor catalog (preview.jsonc), so it has no view to render.",
-                json,
             ));
         }
         Catalog::Invalid(_) => {
-            return Err(refused(
+            return Err(refusal(
                 "catalog.invalid",
                 "The editor catalog does not load; lint reports why.",
-                json,
             ));
         }
         Catalog::Loaded(loaded) => (&loaded.0, &loaded.1),
     };
     let (plane, layer, bounds) = catalog.view();
-    let region = request.region.unwrap_or(bounds);
-    let tiles = region_tiles(region).ok_or_else(|| {
-        refused(
-            "output.budget",
-            "The region has more than 4,096 tiles.",
-            json,
-        )
-    })?;
+    let region = region.unwrap_or(bounds);
+    let tiles = region_tiles(region)
+        .ok_or_else(|| refusal("output.budget", "The region has more than 4,096 tiles."))?;
     if !inside(region, bounds) {
-        return Err(refused(
+        return Err(refusal(
             "target.unknown",
             "The region is not inside the catalog's view.",
-            json,
         ));
     }
     let world = observed.world();
@@ -192,16 +230,15 @@ pub fn frame_region<'a>(observed: &'a Observed, request: &Request) -> Result<Fra
         )
         .is_err()
         {
-            refused(
+            refusal(
                 "preview.unprepared",
                 "The view cannot be prepared for display; lint reports why.",
-                json,
             )
         } else {
-            refused("output.budget", OVER_WORK, json)
+            refusal("output.budget", OVER_WORK)
         }
     };
-    let too_large = || refused("output.budget", TOO_LARGE, json);
+    let too_large = || refusal("output.budget", TOO_LARGE);
     // First compile in the largest viewport to find what the region draws,
     // then again in a viewport that holds exactly that, centred on the same
     // point. Both viewports have even sides, so the camera moves every quad
@@ -223,7 +260,7 @@ pub fn frame_region<'a>(observed: &'a Observed, request: &Request) -> Result<Fra
         world,
         catalog,
         resources,
-        &view(catalog, world, region, request.scale, [MEASURE, MEASURE]),
+        &view(catalog, world, region, scale, [MEASURE, MEASURE]),
         measuring,
     )
     .map_err(|_| unprepared())?;
@@ -232,7 +269,7 @@ pub fn frame_region<'a>(observed: &'a Observed, request: &Request) -> Result<Fra
         world,
         catalog,
         resources,
-        &view(catalog, world, region, request.scale, [width, height]),
+        &view(catalog, world, region, scale, [width, height]),
         PreviewLimits::default(),
     )
     .map_err(|_| unprepared())?;
@@ -246,7 +283,7 @@ pub fn frame_region<'a>(observed: &'a Observed, request: &Request) -> Result<Fra
 /// [`Rendered::finish`] adds.
 fn report(
     observed: &Observed,
-    request: &Request,
+    scale: u32,
     (plane, layer, region, tiles): (&str, i32, [i64; 4], usize),
     frame: &ReferenceFrame,
     diagnostics: &[tilewright_editor_preview::PreviewDiagnostic],
@@ -261,7 +298,7 @@ fn report(
                 .with("layer", layer)
                 .with("region", Node::List(region.map(Node::Integer).to_vec()))
                 .count("tiles", tiles)
-                .with("scale", request.scale)
+                .with("scale", scale)
                 .with("width", frame.width)
                 .with("height", frame.height),
         )

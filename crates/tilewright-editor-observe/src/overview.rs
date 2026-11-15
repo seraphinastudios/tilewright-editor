@@ -6,7 +6,7 @@ use crate::limits::{
     MAXIMUM_FIELDS, MAXIMUM_GRANTS, MAXIMUM_LAYERS, MAXIMUM_PLANES, MAXIMUM_RENDER_LAYERS,
     MAXIMUM_TERRAINS, MAXIMUM_VIEW_ZONES,
 };
-use crate::node::{Map, Node};
+use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::Observed;
 use tilewright_editor_preview::PreviewCatalog;
 use tilewright_editor_ui::zones;
@@ -14,7 +14,25 @@ use tilewright_source::{Plane, Projection, World};
 
 pub const FORMAT: &str = "tilewright.editor-overview/1";
 
+/// The pageable lists of the report, by their path in it.
+pub const SECTIONS: [&str; 8] = [
+    "profile.render_layers",
+    "profile.terrains",
+    "planes",
+    "catalog.view_zones",
+    "catalog.grants.movable_uids",
+    "catalog.grants.fields",
+    "catalog.grants.terrain",
+    "catalog.grants.objects",
+];
+
+/// The report as the CLI prints it.
 pub fn report(observed: &Observed) -> Map {
+    report_paged(observed, &Bounded)
+}
+
+/// The report with its [`SECTIONS`] listed as `pager` decides.
+pub fn report_paged(observed: &Observed, pager: &dyn Pager) -> Map {
     let world = observed.world();
     let summary = observed.document.summary();
     let profile = world.profile();
@@ -34,7 +52,9 @@ pub fn report(observed: &Observed) -> Map {
         .text("id", &summary.profile)
         .text("version", &summary.profile_version)
         .with("projection", projection)
-        .bounded(
+        .paged(
+            pager,
+            "profile.render_layers",
             "render_layers",
             &profile.render_layers,
             MAXIMUM_RENDER_LAYERS,
@@ -45,26 +65,38 @@ pub fn report(observed: &Observed) -> Map {
             summary.ground_layers.iter().map(String::as_str),
         )
         .optional_text("terrain_layer", summary.terrain_layer.as_deref())
-        .bounded("terrains", &summary.terrains, MAXIMUM_TERRAINS, |terrain| {
-            Node::Text(terrain.clone())
-        })
+        .paged(
+            pager,
+            "profile.terrains",
+            "terrains",
+            &summary.terrains,
+            MAXIMUM_TERRAINS,
+            |terrain| Node::Text(terrain.clone()),
+        )
         .with(
             "layer_height",
             profile.layer_height.map_or(Node::Null, Node::from),
         );
-    let mut catalog = observed.catalog_status(true);
-    if let Some(loaded) = observed.catalog() {
-        catalog = catalog_members(catalog, world, loaded);
-    }
-    observed
+    // Built in the order the report lists them, so a pager that spends a
+    // byte budget spends it in report order: the planes, then the catalog.
+    let report = observed
         .header(FORMAT)
         .with("profile", profile)
         .count("definitions", world.definitions().len())
         .count("plane_count", world.planes().len())
-        .bounded("planes", world.planes().values(), MAXIMUM_PLANES, |plane| {
-            plane_node(plane).into()
-        })
-        .with("catalog", catalog)
+        .paged(
+            pager,
+            "planes",
+            "planes",
+            world.planes().values(),
+            MAXIMUM_PLANES,
+            |plane| plane_node(plane).into(),
+        );
+    let mut catalog = observed.catalog_status(true);
+    if let Some(loaded) = observed.catalog() {
+        catalog = catalog_members(catalog, world, loaded, pager);
+    }
+    report.with("catalog", catalog)
 }
 
 /// One plane: its definition, what it holds and, per spatial layer, its
@@ -143,21 +175,44 @@ fn tile_bounds(size: i64, [min_x, min_y, max_x, max_y]: [i64; 4]) -> Node {
 
 /// The catalog's counts, the zones its view shows and everything it
 /// grants.
-fn catalog_members(catalog: Map, world: &World, loaded: &PreviewCatalog) -> Map {
+fn catalog_members(catalog: Map, world: &World, loaded: &PreviewCatalog, pager: &dyn Pager) -> Map {
     let editing = loaded.editing();
     let view_zones = zones::view_zones(world, loaded);
     let counts = zones::tile_counts(view_zones.iter().map(|(_, zone)| *zone));
+    // `view_zones` comes before `grants` in the report, so it is built
+    // first.
+    let catalog = catalog
+        .count("view_tiles_with_zone", view_zones.len())
+        .paged(
+            pager,
+            "catalog.view_zones",
+            "view_zones",
+            counts,
+            MAXIMUM_VIEW_ZONES,
+            |(zone, tiles)| Map::new().text("id", zone).count("tiles", tiles).into(),
+        )
+        .count("prototypes", loaded.prototypes().count())
+        .count("resources", loaded.resource_count());
     let grants = Map::new()
-        .bounded(
+        .paged(
+            pager,
+            "catalog.grants.movable_uids",
             "movable_uids",
             &editing.movable_uids,
             MAXIMUM_GRANTS,
             |uid| Node::Text(uid.clone()),
         )
-        .bounded("fields", &editing.fields, MAXIMUM_GRANTS, |(uid, field)| {
-            Map::new().text("uid", uid).text("field", field).into()
-        })
-        .bounded(
+        .paged(
+            pager,
+            "catalog.grants.fields",
+            "fields",
+            &editing.fields,
+            MAXIMUM_GRANTS,
+            |(uid, field)| Map::new().text("uid", uid).text("field", field).into(),
+        )
+        .paged(
+            pager,
+            "catalog.grants.terrain",
             "terrain",
             &editing.terrain,
             MAXIMUM_GRANTS,
@@ -170,7 +225,9 @@ fn catalog_members(catalog: Map, world: &World, loaded: &PreviewCatalog) -> Map 
                     .into()
             },
         )
-        .bounded(
+        .paged(
+            pager,
+            "catalog.grants.objects",
             "objects",
             &editing.objects,
             MAXIMUM_GRANTS,
@@ -195,12 +252,5 @@ fn catalog_members(catalog: Map, world: &World, loaded: &PreviewCatalog) -> Map 
                 .with("manage", editing.zones.manage),
         )
         .with("anchors", Map::new().with("edit", editing.anchors.edit));
-    catalog
-        .count("view_tiles_with_zone", view_zones.len())
-        .bounded("view_zones", counts, MAXIMUM_VIEW_ZONES, |(zone, tiles)| {
-            Map::new().text("id", zone).count("tiles", tiles).into()
-        })
-        .count("prototypes", loaded.prototypes().count())
-        .count("resources", loaded.resource_count())
-        .with("grants", grants)
+    catalog.with("grants", grants)
 }

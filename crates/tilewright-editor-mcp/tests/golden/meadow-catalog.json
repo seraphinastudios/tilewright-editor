@@ -1,0 +1,38 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "format": "tilewright.editor-catalog/1",
+      "revision": "<revision>",
+      "catalog": {
+        "status": "absent"
+      },
+      "match": null,
+      "prototypes": [],
+      "prototypes_more": 0,
+      "prototypes_cursor": null,
+      "terrain_palette": [],
+      "terrain_palette_more": 0,
+      "terrain_palette_cursor": null,
+      "zone_palette": [],
+      "zone_palette_more": 0,
+      "zone_palette_cursor": null
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (read-only)",
+        "version": "0.0.0-test"
+      }
+    }
+  }
+}

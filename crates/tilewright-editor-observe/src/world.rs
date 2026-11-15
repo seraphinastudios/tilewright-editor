@@ -6,7 +6,7 @@
 //! loads through the preview loader. Nothing here holds a session, a
 //! recovery store or any write authority.
 use crate::limits::MAXIMUM_DIAGNOSTICS;
-use crate::node::{Map, Node};
+use crate::node::{Bounded, Map, Node, Pager};
 use std::path::Path;
 use tilewright_editor_document::{WorldDocument, revision_hex};
 use tilewright_editor_preview::{PreviewCatalog, PreviewLimits, ReadyResources, loader};
@@ -189,13 +189,20 @@ pub fn target_node(world: &World, target: &Target<'_>) -> Map {
 
 /// The report of a world that does not load: World's diagnostics.
 pub fn load_failure(diagnostics: &[Diagnostic]) -> Map {
+    load_failure_paged(diagnostics, &Bounded)
+}
+
+/// [`load_failure`] with its `diagnostics` listed as `pager` decides.
+pub fn load_failure_paged(diagnostics: &[Diagnostic], pager: &dyn Pager) -> Map {
     Map::new()
         .with(
             "format",
             Node::Text("tilewright.editor-load-failure/1".into()),
         )
         .count("problems", diagnostics.len())
-        .bounded(
+        .paged(
+            pager,
+            "diagnostics",
             "diagnostics",
             diagnostics,
             MAXIMUM_DIAGNOSTICS,

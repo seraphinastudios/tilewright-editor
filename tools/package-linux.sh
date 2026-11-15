@@ -65,6 +65,26 @@ assert size == (report["image"]["width"], report["image"]["height"]), report["im
 assert len(png) == report["png"]["bytes"], report["png"]
 PYTHON
 test "$(ls -A "${render_smoke}" | wc -l)" -eq 2
+# The MCP server answers over stdio with the packaged binary: discovery, and
+# render, whose image is the PNG render wrote, byte for byte.
+mcp_meta='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
+printf '%s\n' \
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{${mcp_meta}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"render\",\"arguments\":{},${mcp_meta}}}" |
+  "${stage}/tilewright-editor-${version}/bin/tilewright-editor" mcp \
+    "${stage}/tilewright-editor-${version}/samples/prototype-neutral" 2>/dev/null |
+  python3 -I -c '
+import base64, json, sys
+replies = [json.loads(line) for line in sys.stdin]
+assert [reply["id"] for reply in replies] == [1, 2], replies
+assert replies[0]["result"]["supportedVersions"] == ["2026-07-28"], replies[0]
+result = replies[1]["result"]
+assert result["isError"] is False, result["content"][0]
+image = result["content"][1]
+assert image["type"] == "image" and image["mimeType"] == "image/png", image["type"]
+with open(sys.argv[1], "rb") as written:
+    assert base64.b64decode(image["data"], validate=True) == written.read(), "the MCP image is not the PNG render writes"
+' "${render_smoke}/sample.png"
 SYFT_CHECK_FOR_APP_UPDATE=false syft \
   "${stage}/tilewright-editor-${version}/bin/tilewright-editor" \
   --source-name tilewright-editor --source-version "${version}" \

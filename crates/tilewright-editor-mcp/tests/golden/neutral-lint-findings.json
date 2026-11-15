@@ -1,0 +1,57 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "format": "tilewright.editor-page/1",
+      "revision": "<revision>",
+      "section": "findings",
+      "offset": 0,
+      "total": 2,
+      "items": [
+        {
+          "code": "preview.effects-neutral",
+          "severity": "info",
+          "location": {
+            "plane": "main",
+            "layer": 0
+          },
+          "message": "Preview v1 uses neutral effects and one-tile footprints; profile fields are retained without inferred rendering behavior.",
+          "detail": null
+        },
+        {
+          "code": "anchor.unreferenced",
+          "severity": "info",
+          "location": {
+            "plane": "main",
+            "anchor": "lookout",
+            "layer": 0,
+            "at": [
+              -2,
+              0
+            ]
+          },
+          "message": "No portal names this anchor; scripts or saves outside the world may still use its id.",
+          "detail": null
+        }
+      ],
+      "next_cursor": null,
+      "byte_budget_reached": false
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (read-only)",
+        "version": "0.0.0-test"
+      }
+    }
+  }
+}

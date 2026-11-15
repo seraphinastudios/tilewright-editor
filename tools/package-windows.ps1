@@ -50,6 +50,20 @@ try {
         throw "the rendered sample does not match its report"
     }
     if ((Get-ChildItem -Force $RenderSmoke).Count -ne 1) { throw "render wrote more than its one file" }
+    # The MCP server answers over stdio with the packaged binary: discovery,
+    # and render, whose image is the PNG render wrote, byte for byte.
+    $McpMeta = '"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
+    $McpInput = @(
+        "{""jsonrpc"":""2.0"",""id"":1,""method"":""server/discover"",""params"":{$McpMeta}}",
+        "{""jsonrpc"":""2.0"",""id"":2,""method"":""tools/call"",""params"":{""name"":""render"",""arguments"":{},$McpMeta}}"
+    ) -join "`n"
+    $McpReplies = @($McpInput | & "$Stage/bin/tilewright-editor.exe" mcp "$Stage/samples/prototype-neutral" 2>$null | ForEach-Object { $_ | ConvertFrom-Json })
+    if ($LASTEXITCODE -ne 0) { throw "the MCP server of the packaged binary failed" }
+    if ($McpReplies.Count -ne 2 -or $McpReplies[0].id -ne 1 -or $McpReplies[1].id -ne 2) { throw "the MCP server did not answer each request once" }
+    if ($McpReplies[0].result.supportedVersions[0] -ne "2026-07-28") { throw "the MCP server does not serve revision 2026-07-28" }
+    $McpImage = $McpReplies[1].result.content[1]
+    if ($McpReplies[1].result.isError -or $McpImage.type -ne "image" -or $McpImage.mimeType -ne "image/png") { throw "MCP render returned no PNG" }
+    if ([Convert]::ToHexString([Convert]::FromBase64String($McpImage.data)) -ne [Convert]::ToHexString($Png)) { throw "the MCP image is not the PNG render writes" }
     syft "$Stage/bin/tilewright-editor.exe" --source-name tilewright-editor --source-version $Version --output "cyclonedx-json=$Stage/sbom.cdx.json"
     $Sbom = Get-Content "$Stage/sbom.cdx.json" -Raw | ConvertFrom-Json
     if ($Sbom.components.Count -lt 10) { throw "binary SBOM is incomplete" }

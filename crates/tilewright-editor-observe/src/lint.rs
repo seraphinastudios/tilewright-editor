@@ -7,7 +7,7 @@
 //! editor's existing checks, with no analysis of its own. Reachability is
 //! deliberately left out until the profile can say what blocks movement.
 use crate::limits::MAXIMUM_FINDINGS;
-use crate::node::{Map, Node};
+use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::{Catalog, Observed};
 use std::collections::BTreeSet;
 use tilewright_editor_preview::PreviewLimits;
@@ -42,6 +42,7 @@ impl Severity {
 /// One finding: a stable code, a severity, where, and a message this
 /// editor wrote. `detail` is text from elsewhere (a loader message), kept
 /// apart from the message because it may quote world text.
+#[derive(Clone)]
 pub struct Finding {
     pub code: &'static str,
     pub severity: Severity,
@@ -51,11 +52,11 @@ pub struct Finding {
 }
 
 impl Finding {
-    fn node(self) -> Node {
+    fn node(&self) -> Node {
         Map::new()
             .with("code", Node::Text(self.code.into()))
             .with("severity", Node::Text(self.severity.as_str().into()))
-            .with("location", self.location)
+            .with("location", self.location.clone())
             .text("message", &self.message)
             .optional_text("detail", self.detail.as_deref())
             .into()
@@ -249,9 +250,18 @@ fn holder_location(world: &World, holder: &anchors::PortalHolder<'_>) -> Map {
         .with("carried", holder.depth > 0)
 }
 
-/// The lint report, and whether it has an error.
+/// The pageable lists of the report, by their path in it.
+pub const SECTIONS: [&str; 1] = ["findings"];
+
+/// The lint report as the CLI prints it, and whether it has an error.
 pub fn report(observed: &Observed) -> (Map, bool) {
-    let found = findings(observed);
+    report_paged(observed, &findings(observed), &Bounded)
+}
+
+/// The lint report of `found`, the [`findings`] about `observed`, with
+/// its [`SECTIONS`] listed as `pager` decides, and whether it has an
+/// error.
+pub fn report_paged(observed: &Observed, found: &[Finding], pager: &dyn Pager) -> (Map, bool) {
     let count = |severity: Severity| {
         found
             .iter()
@@ -268,7 +278,14 @@ pub fn report(observed: &Observed) -> (Map, bool) {
             .header(FORMAT)
             .with("catalog", observed.catalog_status(false))
             .with("counts", counts)
-            .bounded("findings", found, MAXIMUM_FINDINGS, Finding::node),
+            .paged(
+                pager,
+                "findings",
+                "findings",
+                found,
+                MAXIMUM_FINDINGS,
+                Finding::node,
+            ),
         errors > 0,
     )
 }

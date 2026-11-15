@@ -214,6 +214,16 @@ fn occupied(target: &Target) -> Result<bool, tilewright_source::AccessError> {
     target.root.exists(&target.name)
 }
 
+/// [`encode`] and the PNG's SHA-256, for the MCP server's `render`: the
+/// same bytes this command writes.
+pub fn encode_with_digest(
+    frame: &tilewright_editor_preview::ReferenceFrame,
+) -> Option<(Vec<u8>, [u8; 32])> {
+    let png = encode(frame)?;
+    let digest: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(&png).into();
+    Some((png, digest))
+}
+
 /// The frame as an RGBA8 PNG with fixed settings and no metadata, so the
 /// same pixels always give the same bytes with this encoder; `None` past
 /// [`MAXIMUM_PNG_BYTES`].

@@ -3,7 +3,7 @@
 
 //! `tile`: everything on one plane tile, and what the catalog allows there.
 use crate::limits::{MAXIMUM_ARRIVALS, MAXIMUM_FIELDS, MAXIMUM_TILE_ANCHORS, MAXIMUM_TILE_OBJECTS};
-use crate::node::{Map, Node};
+use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::{Observed, target_node};
 use tilewright_editor_preview::PreviewCatalog;
 use tilewright_editor_ui::{anchors, grants, zones};
@@ -11,9 +11,25 @@ use tilewright_source::{FieldValue, Object, World};
 
 pub const FORMAT: &str = "tilewright.editor-tile/1";
 
-/// The tile `x, y` of spatial `layer` in `plane`, or `None` when the world
-/// has no such plane.
+/// The pageable lists of the report, by their path in it.
+pub const SECTIONS: [&str; 3] = ["objects", "anchors", "arrivals"];
+
+/// The tile `x, y` of spatial `layer` in `plane`, as the CLI prints it, or
+/// `None` when the world has no such plane.
 pub fn report(observed: &Observed, plane_id: &str, layer: i32, x: i64, y: i64) -> Option<Map> {
+    report_paged(observed, plane_id, layer, x, y, &Bounded)
+}
+
+/// [`report`] with its [`SECTIONS`] listed as `pager` decides.
+#[allow(clippy::too_many_lines)]
+pub fn report_paged(
+    observed: &Observed,
+    plane_id: &str,
+    layer: i32,
+    x: i64,
+    y: i64,
+    pager: &dyn Pager,
+) -> Option<Map> {
     let world = observed.world();
     let plane = world.planes().get(plane_id)?;
     // World requires a positive chunk size; the bound keeps this total.
@@ -102,16 +118,35 @@ pub fn report(observed: &Observed, plane_id: &str, layer: i32, x: i64, y: i64) -
             )
             .with("zone", zone)
             .with("catalog", status)
-            .bounded("objects", objects, MAXIMUM_TILE_OBJECTS, |object| {
-                object_node(world, catalog, plane_id, object).into()
-            })
-            .bounded("anchors", here, MAXIMUM_TILE_ANCHORS, |id| {
-                Map::new()
-                    .text("id", id)
-                    .count("portals", named.get(id).copied().unwrap_or(0))
-                    .into()
-            })
-            .bounded("arrivals", &arrivals, MAXIMUM_ARRIVALS, arrival_node),
+            .paged(
+                pager,
+                "objects",
+                "objects",
+                objects,
+                MAXIMUM_TILE_OBJECTS,
+                |object| object_node(world, catalog, plane_id, object).into(),
+            )
+            .paged(
+                pager,
+                "anchors",
+                "anchors",
+                here,
+                MAXIMUM_TILE_ANCHORS,
+                |id| {
+                    Map::new()
+                        .text("id", id)
+                        .count("portals", named.get(id).copied().unwrap_or(0))
+                        .into()
+                },
+            )
+            .paged(
+                pager,
+                "arrivals",
+                "arrivals",
+                &arrivals,
+                MAXIMUM_ARRIVALS,
+                arrival_node,
+            ),
     )
 }
 

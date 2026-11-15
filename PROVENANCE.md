@@ -2,8 +2,10 @@
 
 All implementation, tests, documentation, and synthetic fixtures in this
 repository are MIT work by Seraphina Studios. No outside implementation, tests,
-configuration, or fixtures are copied or adapted. Dependency font data retains
-its own license as recorded below.
+configuration, or fixtures are copied or adapted; the one port of Seraphina
+Studios' own MIT code from a sibling repository is recorded under
+[MCP server](#mcp-server). Dependency font data retains its own license as
+recorded below.
 
 Independent implementation remains the default. Before any outside source is
 inspected as implementation reference or reused, confirm that its license is
@@ -35,6 +37,37 @@ identical in every locked ICU4X 2.4.0 and support crate that the renderer's
 Parley text layout brings in).
 Transformation: verbatim license notice inclusion for binary/source package
 attribution; no dependency implementation is copied into editor source.
+
+## MCP server
+
+`crates/tilewright-editor-mcp` and `docs/MCP.md` implement MCP revision
+2026-07-28 over stdio.
+
+- **Ported from tilewright-world.** The protocol layer is ported from
+  Seraphina Studios' own MIT server in
+  <https://github.com/seraphinastudios/tilewright-world>, at revision
+  `4a73edd103c6d25bf53b1c6ae8c983cc87d56087` (2026-11-14):
+  `crates/tilewright-mcp/src/lib.rs` (the message loop, capped line reads,
+  per-request version and capability checks, `server/discover`,
+  `tools/list`, `tools/call` and error replies) into `src/lib.rs`;
+  `src/budget.rs` (the two-copy byte cost and the cursor format and checks)
+  and `src/json.rs` (`clip`, `fingerprint`) into `src/budget.rs`;
+  `src/snapshot.rs` (load, binding, `empty`) into `src/snapshot.rs`; and
+  the tool list, annotations, tool errors, `revision` check and `refresh`
+  of `src/tools.rs` into `src/tools.rs`. Transformation: renamed to this
+  editor's server and tools; JSON strings are written by the observe
+  crate's `json_string`, with this editor's escaped set; snapshots load
+  through the observe crate and bind the catalog too; cursors carry the
+  section and may name offset 0; the tools, schemas, pager and tests are
+  new. Same owner and licence: no notice beyond this record is needed.
+- **Specification.** Protocol facts were taken from the specification at
+  <https://modelcontextprotocol.io/specification/2026-07-28>, consulted on
+  2026-11-14 (the Tools page, `server/tools`, for content types, structured
+  content and its text copy, output schemas and tool execution errors), and
+  through the World server, whose own record lists the pages it read. Only
+  protocol facts (message shapes, method, field and `_meta` key names,
+  error codes) are used; no specification text, schema file or SDK code is
+  copied or adapted.
 
 ## Shared renderer UI font
 

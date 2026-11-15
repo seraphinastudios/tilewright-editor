@@ -1,7 +1,7 @@
 # Editing engine
 
-Every editing front end (the desktop app today; a command line and an MCP
-server later, issue #57) drives one engine: `Session` in the
+Every editing front end (the desktop app today; a command line and MCP
+editing tools later, issue #57) drives one engine: `Session` in the
 `tilewright-editor-ui` crate. The engine has no SDL, GPU, font, layout or
 direct file access. A front end builds `Action`s, calls `Session::dispatch`,
 and reads the result back; it adds no editing logic of its own and cannot
@@ -44,7 +44,8 @@ bypass anything the desktop app enforces. See
 
 Questions that need no editing session (what a world holds, one tile, the
 catalog, lint findings, a picture of a region) are answered by the read-only
-commands of [docs/CLI.md](CLI.md), which build no `Session` at all.
+commands of [docs/CLI.md](CLI.md) and the MCP server's observe tools of
+[docs/MCP.md](MCP.md), which build no `Session` at all.
 
 The front end owns everything else: layout and drawing, input, the frame
 selection, the recovery store it passes to `dispatch` and the recovery
