@@ -4,11 +4,11 @@ An agent edits only in its own provisioned sandbox, where it may prepare
 and accept steps; what it hands over is a proposal. Only a person applies
 a proposal to their world, one step at a time, through the normal Review
 and Accept (issue #57, [ADR 0003](../decisions/0003-change-set-proposals.md)).
-This page describes the format, its bounds and its checks, as the
-`tilewright-editor-proposal` crate implements them. Applying a proposal,
-the proposal store, making sandboxes, submitting from an agent and opening
-a proposal in the desktop are later work; nothing described here lets an
-agent publish to a person's world, or publishes anything at all.
+This page describes the format, its bounds and checks, and how a proposal
+is applied, as the `tilewright-editor-proposal` crate implements them.
+Making sandboxes, submitting from an agent and opening a proposal in the
+desktop are later work; nothing described here lets an agent publish to a
+person's world.
 
 ## The document
 
@@ -93,6 +93,7 @@ Members are in sorted order, with no whitespace, comment or trailing
 newline, and strings and numbers are written as `serde_json` writes them.
 Reading re-encodes what it read and refuses a document whose bytes differ:
 the same proposal always has the same bytes, and so the same body digest.
+A store keeps it as `proposal-<body_sha256>.json`.
 
 ## Bounds
 
@@ -137,17 +138,51 @@ and every `Proposal` value has passed all of it:
    step's transaction inserts exactly its `placed` uid, no other step
    records a uid, and no two steps place the same uid.
 
-## Applying (next)
+## Applying
 
-Applying is the next part of this work and is not in the crate yet. As the
-owner decided, it will dispatch each step's Action again through the
-engine on the person's session, under the person's catalog grants and
-with the person's actor (a placement with the uid it recorded, through
-`Session::dispatch_placing`); require the transaction it prepares to equal
-the recorded one in everything but the actor; leave each equal step
-pending for the person's normal Review and Accept, one at a time; and
-apply a proposal only to the exact revision it was made from (the strict
-base), never rebasing it.
+`Progress` is plain data (the next step, the prepared one, whether it is
+stopped) that a front end drives on the person's session:
+
+- `Progress::begin` requires the session to be at the proposal's `base` with
+  nothing pending (`proposal.base_stale` otherwise: another world, a world
+  that moved on, or a proposal already applied). This is the strict base:
+  a proposal applies only to the exact revision it was made from, and is
+  never rebased. If the person's catalog revision differs from the
+  proposal's, it says so (`Notice::CatalogDiffers`) and goes on: every step
+  is dispatched under the person's grants anyway.
+- `Progress::prepare_step` dispatches the next step's Action through
+  `Session::dispatch` (a `place` through `Session::dispatch_placing` with
+  its recorded uid), with the person's actor and catalog. An engine refusal
+  is `proposal.step_refused` with the engine's own code beside it (for
+  example grant.missing when the person's catalog does not grant what the
+  sandbox's did, uid.unavailable when the uid is taken). The transaction it
+  prepares must equal the recorded one in everything but the actor;
+  otherwise the change is cancelled and the step is refused with
+  `proposal.step_diverged`, naming the step and which members differ, with
+  no world text. An equal step is pending for the person's normal Review
+  and Accept.
+- After the person accepts, the session must be at the step's `after`
+  revision with that step on top of its undo stack before the next step is
+  prepared (`Progress::settle`, which `prepare_step` calls first). If the
+  person cancels, the proposal stops (`proposal.closed` from then on);
+  applied steps stay applied, as normal undo entries and recovery records.
+  A world that moved in between is `proposal.base_stale`.
+
+A refused step leaves nothing pending and can be tried again. Every
+applied step carries the person's actor; the proposal's body digest maps
+them to the proposal.
+
+### Equal but for the actor
+
+The recorded transaction carries the sandbox's actor and the one prepared
+again carries the person's. The actor is a top-level member of the
+transaction text that nothing else depends on: `base` and `result` are
+digests of file bytes, and files never hold the actor. Two transactions are
+the same step when every other top-level member is the same value, in the
+same order: format, title, every operation with every precondition
+(`test`, `expect`) and value, and the digests of every file consulted and
+written. Values are compared in the strict reader's canonical form, so
+whitespace and comments do not matter. Both sides must have a string actor.
 
 ## What the digests protect
 
@@ -159,10 +194,26 @@ only what it says. Safety comes from three things instead: every step is
 dispatched again through the engine under the person's own catalog grants;
 the strict base, so a proposal applies only to the exact world it was made
 from and cannot be replayed; and the person's Review and Accept of every
-step. Nothing in the crate publishes.
+step. Nothing in the crate publishes on its own.
 
-## Files
+## The store
 
-A proposal file is named `proposal-<body_sha256>.json`
-(`Proposal::file_name`). The store that writes and reads these files in a
-sandbox's `proposals/` directory comes with applying.
+`ProposalStore::open(root)` takes a directory the caller already opened (in
+a sandbox, the `proposals/` directory the provisioner will pass): the
+current user's alone (mode 0700, no access control list) on a checked
+local file system, locked for as long as the store is held. Linux only:
+elsewhere it is refused with `proposal.store`, as recovery is.
+
+`ProposalStore::retain` writes `proposal-<body digest>.json` with the
+recovery store's sequence: stage beside it, verify the bytes and the
+private 0600 access, check the name is still free, rename, sync the
+directory (a sync that is not durable fails), verify again. The same bytes
+already there are success and write nothing; other bytes, a link, a
+directory or a leftover stage at the name are refused and left in place.
+The lock keeps cooperating writers apart; like the recovery store's, it
+does not stop a process of the same user that ignores it.
+
+`read_proposal(root, name)` reads a store's name only, at most 16 MiB
+(larger is refused before it is read), refuses a link or anything but a
+regular file, decodes and verifies it, and requires the name to carry the
+body's digest.
