@@ -53,8 +53,11 @@ only through the ui crate, for the functions the desktop editor draws from).
 `tools/check-architecture.sh` pins its direct dependencies and fails if its
 non-test sources name `Session`, `History`, a recovery store, the
 transaction or recovery crates, or provisioning, or if they name a World
-root, directory or lock, resolve a path, or call a method or function that
-opens a directory, writes, locks, renames or removes. The crate
+root, directory or lock, resolve a path, call a method or function that
+opens a directory, writes, locks, renames or removes, or name the standard
+library's file, network or process modules or file types however they are
+imported (the exact list is in [docs/MCP.md](MCP.md#read-only-by-construction);
+these are text searches, not a proof). The crate
 opens no file for writing: `render` gets pixels from it, and the binary
 encodes them and writes the one new file `--out` names, refusing any output
 path it can see is inside the world (see [What it writes](#what-it-writes)
@@ -84,9 +87,12 @@ character (C0, DEL and C1); U+2028 and U+2029; the bidirectional formatting
 characters U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069;
 and the invisible or format characters U+00AD, U+034F, the Hangul fillers
 U+115F, U+1160, U+3164 and U+FFA0, U+17B4, U+17B5, U+180E, U+200B to U+200F,
-U+2060 to U+2064, U+FEFF, U+FFF9 to U+FFFB, the shorthand format controls
-U+1BCA0 to U+1BCA3, the musical formatting characters U+1D173 to U+1D17A and
-the tag characters U+E0000 to U+E007F. Variation selectors are not escaped.
+U+2060 to U+206F, U+FEFF, U+FFF0 to U+FFFB, the shorthand format controls
+U+1BCA0 to U+1BCA3, the musical formatting characters U+1D173 to U+1D17A,
+and U+E0000 to U+E0FFF (the tag characters and the unassigned
+default-ignorable code points around them) except the variation selectors
+U+E0100 to U+E01EF. Variation selectors (also U+FE00 to U+FE0F) are not
+escaped.
 
 The text form is for people. It is not unambiguous, so scripts and agents
 parse `--json`:

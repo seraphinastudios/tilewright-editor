@@ -77,11 +77,9 @@ pub fn report_paged(observed: &Observed, pager: &dyn Pager) -> Map {
             "layer_height",
             profile.layer_height.map_or(Node::Null, Node::from),
         );
-    let mut catalog = observed.catalog_status(true);
-    if let Some(loaded) = observed.catalog() {
-        catalog = catalog_members(catalog, world, loaded, pager);
-    }
-    observed
+    // Built in the order the report lists them, so a pager that spends a
+    // byte budget spends it in report order: the planes, then the catalog.
+    let report = observed
         .header(FORMAT)
         .with("profile", profile)
         .count("definitions", world.definitions().len())
@@ -93,8 +91,12 @@ pub fn report_paged(observed: &Observed, pager: &dyn Pager) -> Map {
             world.planes().values(),
             MAXIMUM_PLANES,
             |plane| plane_node(plane).into(),
-        )
-        .with("catalog", catalog)
+        );
+    let mut catalog = observed.catalog_status(true);
+    if let Some(loaded) = observed.catalog() {
+        catalog = catalog_members(catalog, world, loaded, pager);
+    }
+    report.with("catalog", catalog)
 }
 
 /// One plane: its definition, what it holds and, per spatial layer, its
@@ -177,6 +179,20 @@ fn catalog_members(catalog: Map, world: &World, loaded: &PreviewCatalog, pager: 
     let editing = loaded.editing();
     let view_zones = zones::view_zones(world, loaded);
     let counts = zones::tile_counts(view_zones.iter().map(|(_, zone)| *zone));
+    // `view_zones` comes before `grants` in the report, so it is built
+    // first.
+    let catalog = catalog
+        .count("view_tiles_with_zone", view_zones.len())
+        .paged(
+            pager,
+            "catalog.view_zones",
+            "view_zones",
+            counts,
+            MAXIMUM_VIEW_ZONES,
+            |(zone, tiles)| Map::new().text("id", zone).count("tiles", tiles).into(),
+        )
+        .count("prototypes", loaded.prototypes().count())
+        .count("resources", loaded.resource_count());
     let grants = Map::new()
         .paged(
             pager,
@@ -236,17 +252,5 @@ fn catalog_members(catalog: Map, world: &World, loaded: &PreviewCatalog, pager: 
                 .with("manage", editing.zones.manage),
         )
         .with("anchors", Map::new().with("edit", editing.anchors.edit));
-    catalog
-        .count("view_tiles_with_zone", view_zones.len())
-        .paged(
-            pager,
-            "catalog.view_zones",
-            "view_zones",
-            counts,
-            MAXIMUM_VIEW_ZONES,
-            |(zone, tiles)| Map::new().text("id", zone).count("tiles", tiles).into(),
-        )
-        .count("prototypes", loaded.prototypes().count())
-        .count("resources", loaded.resource_count())
-        .with("grants", grants)
+    catalog.with("grants", grants)
 }

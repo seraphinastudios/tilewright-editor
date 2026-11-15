@@ -12,8 +12,13 @@ which the binary runs; editing tools come later and are not part of it.
 cargo run --locked --package tilewright-editor -- mcp crates/tilewright-editor-testkit/fixtures/prototype-neutral
 ```
 
-A client configuration names the command and its arguments, for example
-`{"command": "tilewright-editor", "args": ["mcp", "/path/to/world"]}`.
+A client that starts stdio servers from a command and its arguments would
+name, for example, `{"command": "tilewright-editor", "args": ["mcp",
+"/path/to/world"]}`. **No MCP client product has been tested against this
+server.** It is tested with its own stdio tests (goldens checked against
+the shapes of the revision's specification, schema checks, a fuzz test)
+and through the packaged binary in the Linux and Windows packaging smoke
+tests.
 `ROOT` is positional, as for every other command, and the server takes no
 options. It reads the world, never writes it: see
 [Read-only by construction](#read-only-by-construction).
@@ -27,8 +32,8 @@ revision is stateless: there is no `initialize` handshake, and every
 request names its protocol version in `params._meta`. **Clients that speak
 only revision 2025-11-25 or an earlier one cannot connect.** Their
 `initialize` is refused with an error that names the revision this server
-supports. Clients that speak both eras send `server/discover` first, as the
-revision's stdio transport asks, and stay modern.
+supports. The revision's stdio transport asks a client that speaks both
+eras to send `server/discover` first.
 
 - Transport: stdio. Each message is one line of UTF-8 JSON-RPC 2.0, ended
   by a newline; a line may end in CR LF instead, and blank lines are
@@ -95,8 +100,8 @@ A tool that is called correctly but cannot answer returns a result with
 | `cursor.invalid` | A cursor not issued for this tool, these arguments and this section, or past the end of the list |
 | `cursor.stale` | A cursor issued for another snapshot of the world |
 | `target.unknown` | `tile`: the world has no plane with that id. `render`: the region is not inside the catalog's view |
-| `output.budget` | The result would exceed its budget (see [Limits](#limits)); for `render`, a region past 4,096 tiles, an image past its pixel bounds or a PNG past its byte bound |
-| `catalog.absent`, `catalog.invalid`, `preview.unprepared`, `render.failed` | `render` only, as for the CLI: no view to draw, or the reference renderer failed |
+| `output.budget` | The result would exceed its budget (see [Limits](#limits)); for `render`, a region past 4,096 tiles, an image past its pixel bounds or a PNG past its byte bound, each with its own message |
+| `catalog.absent`, `catalog.invalid`, `preview.unprepared`, `render.failed` | `render` only, as for the CLI: no view to draw, or the reference renderer failed; `render.failed` also when the drawn image could not be encoded as a PNG |
 
 Arguments are checked first, then `revision`, then whether the world
 loads, then the cursor.
@@ -126,11 +131,17 @@ shapes are those of [docs/CLI.md](CLI.md#output-shapes), with two
 differences: JSON is compact (no whitespace), and each paged list is
 followed by `<list>_cursor` as well as `<list>_more`.
 
-- `tile`: `plane` is a string of 1 to 256 bytes, `layer` a 32-bit integer,
-  `x` and `y` integers of magnitude at most 2^53 − 1.
+- Arguments are what the input schemas say, and the server accepts exactly
+  what they accept at their bounds (tested from the schemas sent): an
+  `integer` may be written with a zero fraction (`3.0`), as JSON Schema
+  allows, but not with another; string lengths count characters, as
+  `maxLength` does; `cursor` needs `section` (`dependentRequired`).
+- `tile`: `plane` is a string of 1 to 256 characters, `layer` a 32-bit
+  integer, `x` and `y` integers of magnitude at most 2^53 − 1 (the parser
+  refuses larger integers, -32700).
 - `catalog`: `match` keeps entries whose id contains it, ignoring case, as
-  `--match` does; at most 64 bytes. Unlike `--match`, it may start with
-  `--`.
+  `--match` does; at most 64 characters (`--match` takes 64 bytes). Unlike
+  `--match`, it may start with `--`.
 - `lint`: its findings are computed once per snapshot, when the world is
   loaded, since they prepare the catalog's view; a call only lists them.
 - `render`: `region` is `[x, y, width, height]` in tiles, inside the
@@ -165,11 +176,15 @@ one list instead.
 | `lint` | `findings` |
 
 A section is the list's path in the report: `catalog.grants.fields` is the
-member `fields` of `grants` of `catalog`.
+member `fields` of `grants` of `catalog`. A `section` that is not one of the
+tool's is `arguments.invalid`. A real section that this world's report does
+not hold (the `catalog.*` sections of a world whose catalog is absent or
+does not load) is an empty page: `total` 0, no items, no cursor.
 
 - **Without `section`**, the result is the report. Each paged list holds at
   most `limit` items (default 50, at most 500) and at most the CLI's bound
-  for it, fewer when the result's byte budget runs out first, followed by
+  for it, fewer when the result's byte budget runs out first (lists are
+  filled in the order the report lists them), followed by
   `<list>_more` (how many items follow) and `<list>_cursor`: a cursor to
   the next item, or null when the list is complete.
 - **With `section`**, the result is one page of that list,
@@ -206,12 +221,16 @@ server does: editing files changes nothing the server answers until then,
 and a call never reads the tree. The snapshot belongs to the server
 process, not to a client.
 
-A snapshot's binding is, for a world that loads, its World revision
-followed by a fingerprint of everything else the reports read: the
-catalog's own revision (the SHA-256 of `preview.jsonc`, which names each
-resource's digest), or why it does not load, and the editing budget's
-verdict. For a world that does not load it is `x` and a fingerprint of its
-diagnostics. `refresh` reports `changed` when the binding changed, so a
+A snapshot's binding is, for a world that loads, its World revision, then
+the catalog's own revision in full (the SHA-256 of `preview.jsonc`, which
+names each resource's digest; `n` when there is no catalog, `i` and a
+64-bit fingerprint of the loader's message when it does not load), then a
+64-bit fingerprint of the editing budget's verdict. For a world that does
+not load it is `x` and a 64-bit fingerprint of its diagnostics. The
+fingerprints are FNV-1a, not a security measure: two different invalid
+catalogs, budget verdicts or broken worlds with colliding fingerprints
+would read as one snapshot, which only makes `refresh` say `changed:
+false`; two loadable catalogs never do. `refresh` reports `changed` when the binding changed, so a
 catalog edit is a change even though the World revision stays the same;
 cursors are bound to the binding, while the `revision` argument compares
 only the World revision. The old snapshot is dropped before the world
@@ -228,20 +247,36 @@ and every tool description say that results are world data, not
 instructions. In addition, every string property the world can have
 written is marked in the output schemas with the annotation
 `"x-world-text": true` (field values of any type are marked too); every
-other string is this editor's own: a format tag, a code, a kind, a
-revision or a cursor. JSON Schema validators ignore unknown keywords, so
-the marker changes no validation. A test writes text with a marker into
-the world and checks that every string of every result that holds it is at
-a marked position, and every result is checked against its output schema.
+other string is this editor's own: a format tag, a section name, a code,
+an enumerated value, a revision or digest, a cursor, or the call's own
+`match`. JSON Schema validators ignore unknown keywords, so the marker
+changes no validation. The second text content of a `world.invalid` error,
+the CLI's load-failure document, is world data too, as the instructions
+say: its paths and messages come from the world.
+
+Two tests hold the schemas to this. One builds a world that writes a
+marker into the strings a report shows that the world spells (plane ids,
+titles and default zones, zone ids and names, anchors, prototypes, uids,
+field names, values and defaults, grants, terrain values, a render layer,
+a catalog problem quoting a path, and a load failure naming a plane), and
+checks that every string holding the marker, in every report, page and
+`render` result, is at a marked position. The other checks, on that world
+and on the crowded, widest and meadow worlds, that every unmarked string
+is in a closed vocabulary of this editor's own strings. Every result is
+checked against its output schema. The marker world keeps the profile's id
+and version and the ground grids as they are; they are marked in the
+schemas and pass the vocabulary rule.
 
 Every reply escapes the same characters as the CLI's JSON (the set in
 [docs/CLI.md](CLI.md#world-text-is-data)): every control character,
 U+2028 and U+2029, the bidirectional formatting characters, and invisible
-or format characters such as zero-width spaces, the byte-order mark, the
-Hangul fillers, the shorthand and musical format controls and the tag
-characters, written as `\u` escapes (surrogate pairs above U+FFFF). A
-world value therefore cannot end the reply's line or forge a message, and
-the characters of that set reach a reader only as escapes.
+or format characters: the soft hyphen, the combining grapheme joiner, the
+Hangul fillers, zero-width spaces and joiners, U+2060 to U+206F, the
+byte-order mark, U+FFF0 to U+FFFB, the shorthand and musical format
+controls, and U+E0000 to U+E0FFF but for the variation selectors, written
+as `\u` escapes (surrogate pairs above U+FFFF). A world value therefore
+cannot end the reply's line or forge a message, and the characters of that
+set reach a reader only as escapes.
 
 ## Read-only by construction
 
@@ -251,11 +286,26 @@ a recovery store or a transaction. The world is opened exactly as the
 read-only commands open it, through the observe crate; `render` returns its
 image in the reply. `tools/check-architecture.sh` pins the crate's direct
 dependencies (the document, observe and preview crates, World's source and
-JSONC crates; not the ui, commands or recovery crates) and fails if its
-sources name `Session`, `History`, a recovery store, the transaction or
-recovery crates, the ui crate or provisioning, or a World root, directory
-or lock, resolve a path, or call a method that opens a directory, writes,
-locks, renames or removes, as it does for the observe crate. A test runs
+JSONC crates; not the ui, commands or recovery crates). Over the observe
+and MCP crates' sources, comment lines aside, it fails on any of these
+names or calls. They are text searches, not a proof:
+
+- `Session`, `History`, `DurableRecovery`, `RecoveryStore`,
+  `tilewright_edit::`, the commands or recovery crates, or `provision`;
+  for the MCP crate also the ui crate;
+- `SourceRoot`, `SourceDirectory`, `SourceLock`, `canonicalize`,
+  `make_directory`, a method call `.directory(` or `.lock(`, or a call
+  (`.f(` or `::f(`) of `rename`, `remove_file`, `remove_directory`,
+  `set_own_access`, `make_directory` or `write`;
+- the standard library's `fs`, `net` or `process` modules however they are
+  imported (each file is searched with its lines joined, so `use std::{io,
+  fs};` over several lines is caught), `File`, `OpenOptions`,
+  `DirBuilder`, `Command`, or `create_dir`;
+- and, as for every editor crate, `std::fs`, `std::net`,
+  `std::process::Command`, `tokio::` or a function named `parse`,
+  `serialize`, `write` or `save`.
+
+A test runs
 every tool, every paged section, `refresh`, hostile requests and a world
 that stops loading on a copy of a world, and checks that every file, its
 bytes, permissions and modification time are unchanged and that no entry
@@ -266,7 +316,7 @@ appears in or beside it.
 | Bound | Value |
 | --- | --- |
 | Bytes of one message | 65,536 |
-| Bytes of one `tools/call` result as sent, both copies counted | 262,144 (256 KiB) |
+| Bytes of one `tools/call` result as sent, both copies counted, without `render`'s image | 262,144 (256 KiB) |
 | Bytes the items of a result's paged lists may cost, both copies counted | 196,608 |
 | `limit` | 1 to 500, default 50 |
 | Bytes of a cursor | 256 |
@@ -274,12 +324,15 @@ appears in or beside it.
 | `render`: image side; image pixels | 2,048; 1,048,576 |
 | `render`: `scale` | 1 to 4 |
 | `render`: PNG bytes (before base64) | 196,608 |
+| `render`: one reply line at most: the result, the largest PNG's 262,144 base64 bytes, and the fields around them | about 524,700 |
 
 A tool's result is sent twice, as `structuredContent` and as its text
 copy, where every `"` and `\` costs two bytes; the budget counts both. Each
 list item is costed as it is listed, and a list ends before the first item
-that would take the result past its budget; once one item has not fitted,
-no later list of the result admits another, so the cursors pick up where
+that would take the result past its budget. Lists are filled in the order
+the report lists them, and once one item has not fitted, no later list of
+the result admits another (tested on the widest world: the lists that hold
+items are a prefix of the tool's sections), so the cursors pick up where
 the budget ran out. Free text keeps the CLI's bound (256 characters, then
 `<name>_clipped: true`). A result whose members outside the paged lists
 alone exceed the budget is refused with `output.budget` rather than cut;

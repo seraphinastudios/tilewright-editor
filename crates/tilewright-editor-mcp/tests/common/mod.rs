@@ -245,12 +245,19 @@ pub fn edit(root: &Path, path: &str, change: impl FnOnce(&mut Value)) {
 
 pub const MAIN_CHUNK: &str = "planes/main/layers/0/0_0.jsonc";
 
-/// Every entry under `root`: its kind, bytes, permissions and modification
-/// time.
+/// Every entry under `root`, and `root` itself under the empty path: its
+/// kind, bytes, permissions and modification time. A directory's time
+/// changes when an entry is made or removed in it, so an entry made and
+/// removed again during a session is seen too.
 pub type Tree = BTreeMap<PathBuf, (bool, Vec<u8>, std::fs::Permissions, std::time::SystemTime)>;
 
 pub fn tree(root: &Path) -> Tree {
     let mut entries = BTreeMap::new();
+    let own = std::fs::metadata(root).unwrap();
+    entries.insert(
+        PathBuf::new(),
+        (true, Vec::new(), own.permissions(), own.modified().unwrap()),
+    );
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(&directory).unwrap() {

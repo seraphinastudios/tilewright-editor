@@ -18,6 +18,42 @@
     "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2025-11-25\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
   },
   {
+    "case": "another version of the same year",
+    "reply": {
+      "error": {
+        "code": -32022,
+        "data": {
+          "requested": "2026-01-01",
+          "supported": [
+            "2026-07-28"
+          ]
+        },
+        "message": "Unsupported protocol version"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-01-01\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+  },
+  {
+    "case": "a version with a suffix",
+    "reply": {
+      "error": {
+        "code": -32022,
+        "data": {
+          "requested": "2026-07-28 ",
+          "supported": [
+            "2026-07-28"
+          ]
+        },
+        "message": "Unsupported protocol version"
+      },
+      "id": 1,
+      "jsonrpc": "2.0"
+    },
+    "request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28 \",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+  },
+  {
     "case": "missing meta",
     "reply": {
       "error": {

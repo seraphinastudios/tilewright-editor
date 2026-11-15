@@ -214,9 +214,6 @@ fn occupied(target: &Target) -> Result<bool, tilewright_source::AccessError> {
     target.root.exists(&target.name)
 }
 
-/// The frame as an RGBA8 PNG with fixed settings and no metadata, so the
-/// same pixels always give the same bytes with this encoder; `None` past
-/// [`MAXIMUM_PNG_BYTES`].
 /// [`encode`] and the PNG's SHA-256, for the MCP server's `render`: the
 /// same bytes this command writes.
 pub fn encode_with_digest(
@@ -227,6 +224,9 @@ pub fn encode_with_digest(
     Some((png, digest))
 }
 
+/// The frame as an RGBA8 PNG with fixed settings and no metadata, so the
+/// same pixels always give the same bytes with this encoder; `None` past
+/// [`MAXIMUM_PNG_BYTES`].
 fn encode(frame: &tilewright_editor_preview::ReferenceFrame) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     {

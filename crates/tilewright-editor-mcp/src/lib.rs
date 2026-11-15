@@ -36,7 +36,7 @@ mod tools;
 
 pub use budget::{
     DEFAULT_LIMIT, MAXIMUM_CURSOR_BYTES, MAXIMUM_IMAGE_BYTES, MAXIMUM_IMAGE_PIXELS,
-    MAXIMUM_IMAGE_SIDE, MAXIMUM_LIMIT, MAXIMUM_RESULT_BYTES, MAXIMUM_SCALE, cost,
+    MAXIMUM_IMAGE_SIDE, MAXIMUM_LIMIT, MAXIMUM_RESULT_BYTES, MAXIMUM_SCALE, cost, is_binding,
 };
 pub use schema::Schema;
 pub use tools::{TOOLS, load_failure_schema, output_schema};

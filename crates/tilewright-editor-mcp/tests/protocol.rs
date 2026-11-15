@@ -21,8 +21,9 @@ fn revision(name: &str) -> String {
     tilewright_editor_document::revision_hex(&document.revision())
 }
 
-/// `text` with the fixture's bindings (its revision and 16 hex digits)
-/// and revision replaced by placeholders.
+/// `text` with the fixture's bindings (its revision, then the catalog's
+/// state and the budget's fingerprint, whose catalog revision also changes
+/// with line endings) and revision replaced by placeholders.
 fn placeholders(text: &str, fixture: &str) -> String {
     let revision = revision(fixture);
     let mut output = String::new();
@@ -30,10 +31,18 @@ fn placeholders(text: &str, fixture: &str) -> String {
     while let Some(at) = rest.find(&revision) {
         output.push_str(&rest[..at]);
         let after = &rest[at + revision.len()..];
-        let hex = after.bytes().take_while(u8::is_ascii_hexdigit).count();
-        if hex == 16 {
+        let tail = after
+            .bytes()
+            .take_while(|byte| byte.is_ascii_hexdigit() || matches!(byte, b'n' | b'i'))
+            .count();
+        if tail > 0 {
+            assert!(
+                tilewright_editor_mcp::is_binding(&format!("{revision}{}", &after[..tail])),
+                "{}",
+                &after[..tail]
+            );
             output.push_str("<binding>");
-            rest = &after[16..];
+            rest = &after[tail..];
         } else {
             output.push_str("<revision>");
             rest = after;
@@ -400,6 +409,18 @@ fn protocol_errors_have_their_codes_and_golden_replies() {
             "",
         ),
         (
+            "another version of the same year",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}"#.to_owned(),
+            -32022,
+            "",
+        ),
+        (
+            "a version with a suffix",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28 ","io.modelcontextprotocol/clientCapabilities":{}}}}"#.to_owned(),
+            -32022,
+            "",
+        ),
+        (
             "missing meta",
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#.to_owned(),
             -32602,
@@ -611,6 +632,61 @@ fn tool_arguments_are_checked() {
     }
 }
 
+/// What the server must answer one line with.
+#[derive(Clone, Debug)]
+enum Expected {
+    /// Nothing: a blank line, a notification or a response.
+    None,
+    /// One error without an ID: the line is not a request whose ID can be
+    /// read.
+    WithoutId,
+    /// One reply with this ID.
+    Id(Value),
+}
+
+/// The reply a line must get, decided independently of the server: with
+/// World's parser under the limits the revision's messages are read with,
+/// then JSON-RPC's rules for IDs, notifications and responses.
+fn expected_reply(line: &[u8]) -> Expected {
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    if line.iter().all(|byte| matches!(byte, b' ' | b'\t' | b'\r')) {
+        return Expected::None;
+    }
+    let Ok(text) = std::str::from_utf8(line) else {
+        return Expected::WithoutId;
+    };
+    let limits = tilewright_jsonc::Limits {
+        max_input_bytes: MAXIMUM_MESSAGE_BYTES,
+        max_depth: 32,
+        max_values: 10_000,
+        max_array_items: 1_000,
+        max_object_keys: 128,
+        max_string_bytes: 16 * 1024,
+        max_number_bytes: 32,
+        max_comments: 0,
+        max_comment_bytes: 0,
+        max_lines: 1,
+        max_line_bytes: MAXIMUM_MESSAGE_BYTES,
+    };
+    let Ok(document) = tilewright_jsonc::Document::parse(text, &limits) else {
+        return Expected::WithoutId;
+    };
+    let root = document.root();
+    if root.as_object().is_none() {
+        return Expected::WithoutId;
+    }
+    if root.get("method").is_none() && (root.get("result").is_some() || root.get("error").is_some())
+    {
+        return Expected::None;
+    }
+    match root.get("id") {
+        None => Expected::None,
+        Some(tilewright_jsonc::Value::Integer { value, .. }) => Expected::Id(json!(value)),
+        Some(tilewright_jsonc::Value::String { value, .. }) => Expected::Id(json!(value)),
+        Some(_) => Expected::WithoutId,
+    }
+}
+
 /// A small deterministic generator for the fuzz test.
 struct Random(u64);
 
@@ -629,7 +705,8 @@ impl Random {
 }
 
 #[test]
-fn random_and_mutated_requests_never_panic_and_get_at_most_one_reply() {
+#[allow(clippy::too_many_lines)]
+fn random_and_mutated_requests_get_exactly_the_replies_json_rpc_asks_for() {
     let seeds = [
         request(1, "server/discover", json!({})),
         request(2, "tools/list", json!({})),
@@ -680,14 +757,27 @@ fn random_and_mutated_requests_never_panic_and_get_at_most_one_reply() {
         line.retain(|byte| *byte != b'\n');
         lines.push(line);
     }
+    let mut expected_in_session = Vec::new();
     for line in &lines {
         let mut input = line.clone();
         input.push(b'\n');
         let (output, _) = serve_raw(&mut server, &input);
         let replies: Vec<&str> = output.lines().collect();
-        assert!(replies.len() <= 1, "{}", String::from_utf8_lossy(line));
+        let expected = expected_reply(line);
+        let shown = String::from_utf8_lossy(line);
+        match &expected {
+            Expected::None => assert!(replies.is_empty(), "{shown}: {output}"),
+            Expected::WithoutId | Expected::Id(_) => {
+                assert_eq!(replies.len(), 1, "{shown}: {output}");
+            }
+        }
+        expected_in_session.push(expected.clone());
         if let Some(reply) = replies.first() {
             let value = common::checked_reply(reply);
+            match &expected {
+                Expected::Id(id) => assert_eq!(&value["id"], id, "{shown}"),
+                _ => assert!(value.get("id").is_none(), "{shown}: {reply}"),
+            }
             if value["result"]["content"].is_array() {
                 let tool = serde_json::from_slice::<Value>(line)
                     .ok()
@@ -698,15 +788,137 @@ fn random_and_mutated_requests_never_panic_and_get_at_most_one_reply() {
             }
         }
     }
-    // All of them in one session: one reply per request line at most, in
-    // order, and the server still answers afterwards.
+    let answered = expected_in_session
+        .iter()
+        .filter(|expected| !matches!(expected, Expected::None))
+        .count();
+    assert!(answered > 100 && answered < lines.len(), "{answered}");
+    // All of them in one session: exactly the replies expected, in order,
+    // and the server still answers afterwards.
     let mut input = lines.join(&b'\n');
     input.push(b'\n');
     input.extend(request(99, "tools/list", json!({})).as_bytes());
     input.push(b'\n');
     let (output, _) = serve_raw(&mut server, &input);
     let replies: Vec<&str> = output.lines().collect();
-    assert!(replies.len() <= lines.len() + 1);
+    assert_eq!(replies.len(), answered + 1);
+    let ids: Vec<Value> = expected_in_session
+        .iter()
+        .filter_map(|expected| match expected {
+            Expected::None => None,
+            Expected::WithoutId => Some(Value::Null),
+            Expected::Id(id) => Some(id.clone()),
+        })
+        .collect();
+    for (reply, id) in replies.iter().zip(&ids) {
+        assert_eq!(&common::checked_reply(reply)["id"], id);
+    }
     let last = common::checked_reply(replies.last().unwrap());
     assert_eq!(last["id"], 99);
+}
+
+/// Whether a call was refused for its arguments.
+fn arguments_refused(called: &Called) -> bool {
+    called.is_error() && called.error_text().contains(" failed: arguments.invalid: ")
+}
+
+#[test]
+fn the_input_schemas_accept_exactly_what_the_server_accepts_at_their_bounds() {
+    let mut server = server(&neutral());
+    let replies = session(&mut server, &[request(1, "tools/list", json!({}))]);
+    let tools = replies[0].1["result"]["tools"].as_array().unwrap().clone();
+    let schema = |tool: &str| -> Value {
+        tools.iter().find(|entry| entry["name"] == tool).unwrap()["inputSchema"].clone()
+    };
+    let bound = |tool: &str, property: &str, keyword: &str| -> i64 {
+        let found = &schema(tool)["properties"][property];
+        found[keyword]
+            .as_i64()
+            .or_else(|| found["items"][keyword].as_i64())
+            .unwrap_or_else(|| panic!("{tool}.{property} has no {keyword}"))
+    };
+    let tile = |plane: Value, layer: Value, x: Value| json!({"plane": plane, "layer": layer, "x": x, "y": 0});
+    let main = json!("main");
+    // Each case: the tool, its arguments, whether the schema accepts them.
+    let mut cases: Vec<(&str, Value, bool)> = Vec::new();
+    let plane_most = usize::try_from(bound("tile", "plane", "maxLength")).unwrap();
+    let plane_least = usize::try_from(bound("tile", "plane", "minLength")).unwrap();
+    // maxLength counts characters: two-byte characters at the bound pass.
+    cases.push((
+        "tile",
+        tile(json!("é".repeat(plane_most)), json!(0), json!(0)),
+        true,
+    ));
+    cases.push((
+        "tile",
+        tile(json!("é".repeat(plane_most + 1)), json!(0), json!(0)),
+        false,
+    ));
+    cases.push((
+        "tile",
+        tile(json!("p".repeat(plane_least - 1)), json!(0), json!(0)),
+        false,
+    ));
+    for (keyword, step) in [("minimum", -1), ("maximum", 1)] {
+        let layer = bound("tile", "layer", keyword);
+        cases.push(("tile", tile(main.clone(), json!(layer), json!(0)), true));
+        cases.push((
+            "tile",
+            tile(main.clone(), json!(layer + step), json!(0)),
+            false,
+        ));
+        let x = bound("tile", "x", keyword);
+        cases.push(("tile", tile(main.clone(), json!(0), json!(x)), true));
+        let limit = bound("overview", "limit", keyword);
+        cases.push(("overview", json!({"limit": limit}), true));
+        cases.push(("overview", json!({"limit": limit + step}), false));
+        let scale = bound("render", "scale", keyword);
+        cases.push((
+            "render",
+            json!({"scale": scale, "region": [0, 0, 1, 1]}),
+            true,
+        ));
+        cases.push((
+            "render",
+            json!({"scale": scale + step, "region": [0, 0, 1, 1]}),
+            false,
+        ));
+        let corner = bound("render", "region", keyword);
+        cases.push(("render", json!({"region": [corner, 0, 1, 1]}), true));
+    }
+    // JSON Schema's integer takes a number with no fraction, and the server
+    // takes it too; one with a fraction is neither's.
+    cases.push(("tile", tile(main.clone(), json!(0), json!(3.0)), true));
+    cases.push(("tile", tile(main.clone(), json!(0), json!(3.5)), false));
+    cases.push(("overview", json!({"limit": 2.0}), true));
+    cases.push((
+        "render",
+        json!({"scale": 2.0, "region": [0.0, 0, 1, 1]}),
+        true,
+    ));
+    let match_most = usize::try_from(bound("catalog", "match", "maxLength")).unwrap();
+    cases.push(("catalog", json!({"match": "é".repeat(match_most)}), true));
+    cases.push((
+        "catalog",
+        json!({"match": "é".repeat(match_most + 1)}),
+        false,
+    ));
+    // A cursor needs its section, in the schema and the server.
+    for tool in ["overview", "tile", "catalog", "lint"] {
+        assert_eq!(
+            schema(tool)["dependentRequired"],
+            json!({"cursor": ["section"]}),
+            "{tool}"
+        );
+    }
+    cases.push(("overview", json!({"cursor": "tw1.x"}), false));
+    for (tool, arguments, accepted) in cases {
+        let called = call(&mut server, tool, &arguments);
+        assert_eq!(
+            !arguments_refused(&called),
+            accepted,
+            "{tool} {arguments}: {}",
+            called.line.get(..300).unwrap_or(&called.line)
+        );
+    }
 }

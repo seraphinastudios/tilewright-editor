@@ -56,6 +56,18 @@ if grep -RnE --include='*.rs' \
   echo "the read-only observe crate or MCP server reaches editing, history, recovery or provisioning" >&2
   exit 1
 fi
+# Nor do they name the standard library's file, network or process
+# modules, its file types, or a directory-creating call, however the import
+# is spelled: each file is read with its comment lines dropped and its lines
+# joined, so a grouped import such as `use std::{io, fs::File};` across
+# several lines is caught.
+for file in $(find "${read_only[@]}" -name '*.rs' | sort); do
+  if grep -vE '^[[:space:]]*//' "${file}" | tr '\n' ' ' | grep -qE \
+    '\b(fs|net|process)[[:space:]]*(::|,|\}|;|as[[:space:]])|\b(File|OpenOptions|DirBuilder|Command)\b|create_dir'; then
+    echo "${file} names file, network or process access" >&2
+    exit 1
+  fi
+done
 # Nor do they write: `render` returns pixels, the binary writes the one
 # file `--out` names, and the MCP server returns the image in its reply. World's confined access writes only through a
 # directory it opens, and its lock creates a file in the root on Windows;

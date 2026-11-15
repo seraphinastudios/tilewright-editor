@@ -13,11 +13,12 @@ use tilewright_source::Diagnostic;
 
 /// One load of the world.
 pub struct Snapshot {
-    /// What cursors are bound to and what `refresh` compares: for a world
-    /// that loads, its revision and a fingerprint of everything else the
-    /// reports read (the catalog's own revision, or why it does not load,
-    /// and the editing budget's verdict); for one that does not, `x` and a
-    /// fingerprint of its diagnostics.
+    /// What cursors are bound to and what `refresh` compares. For a world
+    /// that loads: its revision (64 hex digits), then the catalog's state
+    /// (its own revision, 64 hex digits; `n` when there is none; `i` and a
+    /// fingerprint of why it does not load), then a fingerprint of the
+    /// editing budget's verdict (16 hex digits). For one that does not:
+    /// `x` and a fingerprint of its diagnostics.
     pub binding: String,
     pub state: State,
 }
@@ -45,23 +46,22 @@ impl Snapshot {
         match Observed::open_for_lint(root) {
             Ok(observed) => {
                 let revision = revision_hex(&observed.document.revision());
+                // The catalog's revision in full: a world author must not be
+                // able to make two catalogs one snapshot.
                 let catalog = match &observed.catalog {
-                    Catalog::Absent => vec![b"absent".to_vec()],
+                    Catalog::Absent => "n".to_owned(),
                     Catalog::Invalid(problem) => {
-                        vec![b"invalid".to_vec(), problem.as_bytes().to_vec()]
+                        format!("i{:016x}", fingerprint(&[problem.as_bytes()]))
                     }
-                    Catalog::Loaded(loaded) => {
-                        vec![b"loaded".to_vec(), loaded.0.revision().to_vec()]
-                    }
+                    Catalog::Loaded(loaded) => revision_hex(&loaded.0.revision()),
                 };
-                let budget = observed.over_editor_budget.as_ref().map_or_else(
-                    || vec![b"fits".to_vec()],
-                    |codes| codes.iter().map(|code| code.as_bytes().to_vec()).collect(),
+                let budget: Vec<&[u8]> = observed.over_editor_budget.as_ref().map_or_else(
+                    || vec![b"fits".as_slice()],
+                    |codes| codes.iter().map(|code| code.as_bytes()).collect(),
                 );
-                let parts: Vec<&[u8]> = catalog.iter().chain(&budget).map(Vec::as_slice).collect();
                 let findings = lint::findings(&observed);
                 Self {
-                    binding: format!("{revision}{:016x}", fingerprint(&parts)),
+                    binding: format!("{revision}{catalog}{:016x}", fingerprint(&budget)),
                     state: State::Valid(Box::new(Valid {
                         observed,
                         revision,

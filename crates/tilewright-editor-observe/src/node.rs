@@ -272,35 +272,43 @@ impl Pager for Bounded {
 /// - and invisible or format characters a reader would not see: U+00AD
 ///   (soft hyphen), U+034F (combining grapheme joiner), the Hangul fillers
 ///   U+115F, U+1160, U+3164 and U+FFA0, the Khmer inherent vowels U+17B4
-///   and U+17B5, U+180E, U+200B to U+200F, U+2060 to U+2064, U+FEFF,
-///   U+FFF9 to U+FFFB, the shorthand format controls U+1BCA0 to U+1BCA3,
-///   the musical formatting characters U+1D173 to U+1D17A and the tag
-///   characters U+E0000 to U+E007F.
+///   and U+17B5, U+180E, U+200B to U+200F, U+2060 to U+206F (word joiner,
+///   invisible operators and the deprecated format controls), U+FEFF,
+///   U+FFF0 to U+FFFB, the shorthand format controls U+1BCA0 to U+1BCA3,
+///   the musical formatting characters U+1D173 to U+1D17A, and U+E0000 to
+///   U+E0FFF (the tag characters and the unassigned default-ignorable code
+///   points around them) except the variation selectors U+E0100 to
+///   U+E01EF.
 ///
-/// Variation selectors are not escaped: they change how a character is
-/// drawn, not what text says.
+/// Variation selectors (U+FE00 to U+FE0F and U+E0100 to U+E01EF) are not
+/// escaped: they change how a character is drawn, not what text says.
+/// [`ESCAPED_RANGES`] lists the ranges this adds to [`unprintable`].
 pub fn escaped(character: char) -> bool {
     unprintable(character)
-        || matches!(
-            character,
-            '\u{ad}'
-                | '\u{34f}'
-                | '\u{115f}'
-                | '\u{1160}'
-                | '\u{17b4}'
-                | '\u{17b5}'
-                | '\u{180e}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{3164}'
-                | '\u{feff}'
-                | '\u{ffa0}'
-                | '\u{fff9}'..='\u{fffb}'
-                | '\u{1bca0}'..='\u{1bca3}'
-                | '\u{1d173}'..='\u{1d17a}'
-                | '\u{e0000}'..='\u{e007f}'
-        )
+        || ESCAPED_RANGES
+            .iter()
+            .any(|(first, last)| (*first..=*last).contains(&character))
 }
+
+/// The invisible or format characters [`escaped`] adds to [`unprintable`],
+/// as inclusive ranges in code point order.
+pub const ESCAPED_RANGES: [(char, char); 15] = [
+    ('\u{ad}', '\u{ad}'),
+    ('\u{34f}', '\u{34f}'),
+    ('\u{115f}', '\u{1160}'),
+    ('\u{17b4}', '\u{17b5}'),
+    ('\u{180e}', '\u{180e}'),
+    ('\u{200b}', '\u{200f}'),
+    ('\u{2060}', '\u{206f}'),
+    ('\u{3164}', '\u{3164}'),
+    ('\u{feff}', '\u{feff}'),
+    ('\u{ffa0}', '\u{ffa0}'),
+    ('\u{fff0}', '\u{fffb}'),
+    ('\u{1bca0}', '\u{1bca3}'),
+    ('\u{1d173}', '\u{1d17a}'),
+    ('\u{e0000}', '\u{e00ff}'),
+    ('\u{e01f0}', '\u{e0fff}'),
+];
 
 /// The JSON form: one document, two-space indented, ending with a newline.
 /// Every [`escaped`] character is written as a `\u` escape (a UTF-16
@@ -568,50 +576,63 @@ mod tests {
             "v: a\\u{e0041}\\u{feff}\\u{200b}\\u{ad}\\u{2060}\\u{fff9}\\u{180e}\u{fe0f}b\n"
         );
         assert!(!super::escaped('\u{fe0f}'));
-        assert!(super::escaped('\u{e007f}') && !super::escaped('\u{e0080}'));
+        assert!(super::escaped('\u{e007f}') && super::escaped('\u{e0080}'));
     }
 
     #[test]
-    fn fillers_joiners_and_format_controls_are_escaped_too() {
-        for character in [
-            '\u{34f}',
-            '\u{115f}',
-            '\u{1160}',
-            '\u{17b4}',
-            '\u{17b5}',
-            '\u{3164}',
-            '\u{ffa0}',
-            '\u{1bca0}',
-            '\u{1bca3}',
-            '\u{1d173}',
-            '\u{1d17a}',
-        ] {
-            assert!(super::escaped(character), "U+{:04X}", u32::from(character));
-            let text = format!("a{character}b");
-            let json = to_json(&Map::new().text("v", &text));
-            assert!(json.is_ascii(), "{json}");
-            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-            assert_eq!(parsed["v"], text);
-            assert_eq!(
-                to_text(&Map::new().text("v", &text)),
-                format!("v: a\\u{{{:x}}}b\n", u32::from(character))
-            );
+    fn every_code_point_of_every_escaped_range_is_escaped_in_both_forms() {
+        let mut count = 0;
+        for (first, last) in super::ESCAPED_RANGES {
+            for character in first..=last {
+                count += 1;
+                assert!(super::escaped(character), "U+{:04X}", u32::from(character));
+                let text = format!("a{character}b");
+                let json = to_json(&Map::new().text("v", &text));
+                assert!(json.is_ascii(), "{json}");
+                let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+                assert_eq!(parsed["v"], text);
+                assert_eq!(
+                    to_text(&Map::new().text("v", &text)),
+                    format!("v: a\\u{{{:x}}}b\n", u32::from(character))
+                );
+            }
         }
-        // The neighbours of each range are not.
+        assert_eq!(
+            count,
+            1 + 1 + 2 + 2 + 1 + 5 + 16 + 1 + 1 + 1 + 12 + 4 + 8 + 256 + 3600
+        );
+        // The neighbours of each range, and the variation selectors, are
+        // not.
         for character in [
+            '\u{ac}',
+            '\u{ae}',
             '\u{34e}',
+            '\u{350}',
             '\u{115e}',
             '\u{1161}',
             '\u{17b3}',
             '\u{17b6}',
+            '\u{180d}',
+            '\u{180f}',
+            '\u{2070}',
             '\u{3163}',
             '\u{3165}',
+            '\u{fe00}',
+            '\u{fe0f}',
+            '\u{fefe}',
             '\u{ff9f}',
             '\u{ffa1}',
+            '\u{ffef}',
+            '\u{fffc}',
             '\u{1bc9f}',
             '\u{1bca4}',
             '\u{1d172}',
             '\u{1d17b}',
+            '\u{e0100}',
+            '\u{e01ef}',
+            '\u{e1000}',
+            'é',
+            '\u{1f600}',
         ] {
             assert!(!super::escaped(character), "U+{:04X}", u32::from(character));
         }

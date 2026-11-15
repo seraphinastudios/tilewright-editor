@@ -44,6 +44,11 @@
             }
           },
           "required": [],
+          "dependentRequired": {
+            "cursor": [
+              "section"
+            ]
+          },
           "additionalProperties": false
         },
         "outputSchema": {
@@ -1440,6 +1445,11 @@
             "x",
             "y"
           ],
+          "dependentRequired": {
+            "cursor": [
+              "section"
+            ]
+          },
           "additionalProperties": false
         },
         "outputSchema": {
@@ -2594,6 +2604,11 @@
             }
           },
           "required": [],
+          "dependentRequired": {
+            "cursor": [
+              "section"
+            ]
+          },
           "additionalProperties": false
         },
         "outputSchema": {
@@ -3236,6 +3251,11 @@
             }
           },
           "required": [],
+          "dependentRequired": {
+            "cursor": [
+              "section"
+            ]
+          },
           "additionalProperties": false
         },
         "outputSchema": {

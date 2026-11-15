@@ -205,15 +205,46 @@ fn cursors_are_bound_to_tool_section_arguments_and_snapshot() {
     };
     let mut elsewhere = origin.clone();
     elsewhere["x"] = json!(1);
+    let mut below = origin.clone();
+    below["y"] = json!(1);
+    let mut lower = origin.clone();
+    lower["layer"] = json!(1);
+    let mut other_plane = origin.clone();
+    other_plane["plane"] = json!("z_plane_00");
     for (tool, arguments) in [
         ("tile", resume(&origin, "arrivals")),
         ("tile", resume(&elsewhere, "objects")),
+        ("tile", resume(&below, "objects")),
+        ("tile", resume(&lower, "objects")),
+        ("tile", resume(&other_plane, "objects")),
         ("catalog", resume(&json!({}), "prototypes")),
         ("lint", resume(&json!({}), "findings")),
     ] {
         let called = call(&mut server, tool, &arguments);
         assert_eq!(error_code(&called), "cursor.invalid", "{tool} {arguments}");
     }
+    // A catalog cursor is bound to its `match`: given without it, or with
+    // another, it is refused.
+    let matched = cursor_of(
+        &mut server,
+        "catalog",
+        &json!({"match": "crowd"}),
+        "prototypes",
+    );
+    for arguments in [
+        json!({"section": "prototypes", "cursor": matched}),
+        json!({"section": "prototypes", "cursor": matched, "match": "CROWD"}),
+        json!({"section": "prototypes", "cursor": matched, "match": ""}),
+    ] {
+        let called = call(&mut server, "catalog", &arguments);
+        assert_eq!(error_code(&called), "cursor.invalid", "{arguments}");
+    }
+    let resumed = call(
+        &mut server,
+        "catalog",
+        &json!({"section": "prototypes", "cursor": matched, "match": "crowd"}),
+    );
+    assert_eq!(resumed.structured()["offset"], 1);
     // The limit is not part of what a cursor is bound to.
     let mut arguments = resume(&origin, "objects");
     arguments["limit"] = json!(3);
@@ -367,6 +398,311 @@ fn a_missing_root_is_a_world_that_does_not_load() {
     let called = call(&mut server, "overview", &json!({}));
     assert_eq!(error_code(&called), "world.invalid");
     assert!(!root.exists());
+}
+
+/// The marker world text carries in the marking tests.
+const MARK: &str = "zq";
+
+/// The neutral sample with the marker in every string the world spells
+/// that a report shows: plane ids and titles, default zones, zone ids and
+/// names, anchors, prototypes, uids, field names and values, defaults,
+/// grants, terrain values and a render layer.
+fn marked_world() -> (tempfile::TempDir, PathBuf) {
+    let (directory, root) = fixture_copy("prototype-neutral");
+    edit(&root, "profile/profile.jsonc", |profile| {
+        profile["render_layers"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("zq_render_layer"));
+    });
+    edit(&root, "profile/schema/object.jsonc", |schema| {
+        schema["fields"]["zq_field"] = json!({"type": "string"});
+    });
+    edit(&root, "planes/main/plane.jsonc", |plane| {
+        plane["title"] = json!("zq main title");
+        plane["default_zone"] = json!("zq_zone");
+    });
+    edit(&root, "planes/main/zones.jsonc", |zones| {
+        let zones = zones["zones"].as_array_mut().unwrap();
+        zones.push(json!({"id": "zq_zone", "name": "zq zone name"}));
+        zones.push(json!({"id": "zq_zone.child", "parent": "zq_zone", "name": "zq child"}));
+    });
+    edit(&root, "planes/main/anchors.jsonc", |anchors| {
+        anchors["anchors"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "zq_anchor", "layer": 0, "at": [3, 2]}));
+    });
+    store_json(
+        &root,
+        "defs/proto/zq_proto.jsonc",
+        &json!({"format": "tilewright.def/1", "type": "proto", "id": "zq_proto", "fields": {}}),
+    );
+    edit(&root, "preview.jsonc", |catalog| {
+        catalog["prototypes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"proto": "zq_proto", "resource": "grass", "anchor": "ground"}));
+        let editing = &mut catalog["editing"];
+        editing["terrain"][0]["values"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("zq_proto"));
+        editing["movable_uids"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("zq_uid"));
+        editing["fields"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"uid": "zq_uid", "field": "zq_field"}));
+        editing["objects"].as_array_mut().unwrap().push(json!({
+            "proto": "zq_proto", "layer": "item", "fields": ["zq_field"],
+            "defaults": {"zq_field": "zq default"}, "portal": true
+        }));
+    });
+    edit(&root, MAIN_CHUNK, |chunk| {
+        let objects = chunk["objects"].as_array_mut().unwrap();
+        objects.push(json!({
+            "uid": "zq_uid", "at": [3, 2], "proto": "zq_proto", "layer": "item",
+            "fields": {"zq_field": "zq value", "label": "zq label"},
+            "portal": {"anchor": "zq_anchor"}
+        }));
+        objects.push(json!({
+            "uid": "zq_uid_far", "at": [3, 2], "proto": "zq_proto", "layer": "item",
+            "fields": {"label": "zq far"},
+            "portal": {"plane": "zq_plane", "layer": 0, "at": [5, 5]}
+        }));
+    });
+    edit(&root, "world.jsonc", |world| {
+        world["planes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("zq_plane"));
+    });
+    store_json(
+        &root,
+        "planes/zq_plane/plane.jsonc",
+        &json!({"format": "tilewright.plane/1", "id": "zq_plane", "title": "zq plane title",
+                "kind": "shared", "chunk_size": 32}),
+    );
+    (directory, root)
+}
+
+/// Whether `text` is one of this editor's own strings, which an output
+/// schema may leave unmarked: a format tag, a revision or digest, a
+/// cursor, an enumerated value, or a stable code.
+fn editor_vocabulary(text: &str) -> bool {
+    const VALUES: [&str; 17] = [
+        "absent",
+        "invalid",
+        "loaded",
+        "top_down",
+        "isometric",
+        "location",
+        "anchor",
+        "error",
+        "warning",
+        "info",
+        "null",
+        "boolean",
+        "integer",
+        "number",
+        "string",
+        "json",
+        "ground",
+    ];
+    const CODE_PREFIXES: [&str; 9] = [
+        "catalog.", "preview.", "portal.", "anchor.", "zone.", "world.", "source.", "jsonc.",
+        "shape.",
+    ];
+    text.starts_with("tilewright.editor-")
+        || (text.len() == 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        || text.starts_with("tw1.")
+        || VALUES.contains(&text)
+        || text == "standing"
+        || tilewright_editor_observe::overview::SECTIONS
+            .iter()
+            .chain(&tilewright_editor_observe::tile::SECTIONS)
+            .chain(&tilewright_editor_observe::catalog::SECTIONS)
+            .chain(&tilewright_editor_observe::lint::SECTIONS)
+            .any(|section| *section == text)
+        || CODE_PREFIXES.iter().any(|prefix| {
+            text.strip_prefix(prefix).is_some_and(|rest| {
+                !rest.is_empty()
+                    && rest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || b"_.-".contains(&byte))
+            })
+        })
+}
+
+/// Every result of every tool on `root`: each report at the default and
+/// the largest limit, every page of every section, `render` and `refresh`.
+fn every_result(server: &mut Server, tiles: &[Value]) -> Vec<common::Called> {
+    let mut results = Vec::new();
+    let mut calls: Vec<(&str, Value, &[&str])> = vec![
+        (
+            "overview",
+            json!({}),
+            &tilewright_editor_observe::overview::SECTIONS,
+        ),
+        (
+            "catalog",
+            json!({}),
+            &tilewright_editor_observe::catalog::SECTIONS,
+        ),
+        (
+            "lint",
+            json!({}),
+            &tilewright_editor_observe::lint::SECTIONS,
+        ),
+    ];
+    for tile in tiles {
+        calls.push((
+            "tile",
+            tile.clone(),
+            &tilewright_editor_observe::tile::SECTIONS,
+        ));
+    }
+    for (tool, arguments, sections) in calls {
+        for limit in [None, Some(500)] {
+            let mut report = arguments.clone();
+            if let Some(limit) = limit {
+                report["limit"] = json!(limit);
+            }
+            results.push(call(server, tool, &report));
+        }
+        for section in sections {
+            let mut paged = arguments.clone();
+            paged["section"] = json!(section);
+            paged["limit"] = json!(500);
+            results.push(call(server, tool, &paged));
+        }
+    }
+    results.push(call(server, "render", &json!({"region": [0, 0, 2, 2]})));
+    results.push(call(server, "refresh", &json!({})));
+    results
+}
+
+/// Checks the two marking rules on `results`: every string holding the
+/// marker is at a position marked world text, and every unmarked string is
+/// this editor's own. Returns how many marked strings held the marker.
+fn check_marks(results: &[common::Called]) -> usize {
+    let mut marked = 0;
+    for called in results {
+        assert!(!called.is_error(), "{}", called.line);
+        for (text, world) in &called.strings {
+            if text.contains(MARK) {
+                assert!(world, "world text {text:?} is not marked: {}", called.line);
+                marked += 1;
+            } else if !world {
+                assert!(
+                    editor_vocabulary(text),
+                    "unmarked {text:?} is not this editor's own: {}",
+                    called.line
+                );
+            }
+        }
+    }
+    marked
+}
+
+#[test]
+fn every_world_string_is_marked_and_every_unmarked_string_is_the_editors() {
+    let tiles = [
+        json!({"plane": "main", "layer": 0, "x": 3, "y": 2}),
+        json!({"plane": "main", "layer": 0, "x": 7, "y": 0}),
+        json!({"plane": "main", "layer": 0, "x": 7, "y": 3}),
+        json!({"plane": "zq_plane", "layer": 0, "x": 5, "y": 5}),
+    ];
+    let (_directory, root) = marked_world();
+    let mut server = server(&root);
+    let results = every_result(&mut server, &tiles);
+    let marked = check_marks(&results);
+    // Every kind of marked string turned up holding the marker.
+    let all: String = results.iter().map(|called| called.line.as_str()).collect();
+    for spelled in [
+        "zq main title",
+        "zq_zone",
+        "zq zone name",
+        "zq child",
+        "zq_anchor",
+        "zq_proto",
+        "zq_uid",
+        "zq_field",
+        "zq value",
+        "zq label",
+        "zq_plane",
+        "zq plane title",
+        "zq_render_layer",
+    ] {
+        assert!(all.contains(spelled), "{spelled} is in no result");
+    }
+    assert!(marked >= 100, "{marked}");
+    // The unmarked rule on the other worlds the tests build.
+    for (_directory, root) in [crowded(), widest(), fixture_copy("meadow")] {
+        let mut server = common::server(&root);
+        let origin: Value = serde_json::from_str(ORIGIN).unwrap();
+        let tiles = if root.join("planes/main").exists() {
+            vec![origin]
+        } else {
+            vec![json!({"plane": "meadow", "layer": 0, "x": 1, "y": 1})]
+        };
+        for called in every_result(&mut server, &tiles) {
+            if called.is_error() {
+                // `render` without a catalog.
+                assert!(
+                    called
+                        .error_text()
+                        .starts_with("render failed: catalog.absent")
+                );
+                continue;
+            }
+            check_marks(std::slice::from_ref(&called));
+        }
+    }
+}
+
+#[test]
+fn an_invalid_catalog_and_a_broken_world_carry_their_world_text_as_marked_or_world_data() {
+    // A catalog whose resource is missing: its problem quotes the path.
+    let (_directory, root) = marked_world();
+    edit(&root, "preview.jsonc", |catalog| {
+        catalog["resources"][0]["path"] = json!("preview-assets/zq_missing.atx1");
+    });
+    let mut server = server(&root);
+    let overview = call(&mut server, "overview", &json!({}));
+    let problem = overview.structured()["catalog"]["problem"]
+        .as_str()
+        .unwrap();
+    assert!(problem.contains("zq_missing"), "{problem}");
+    let lint = call(&mut server, "lint", &json!({}));
+    check_marks(&[overview, lint]);
+    // A world that does not load: its load-failure document, world data
+    // by the instructions, conforms to its schema and marks the marker.
+    edit(&root, "world.jsonc", |world| {
+        world["planes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("zq_absent"));
+    });
+    call(&mut server, "refresh", &json!({}));
+    let failed = call(&mut server, "overview", &json!({}));
+    let document = failed.result()["content"][1]["text"].as_str().unwrap();
+    let parsed =
+        tilewright_jsonc::Document::parse(document, &tilewright_jsonc::Limits::default()).unwrap();
+    let strings = tilewright_editor_mcp::load_failure_schema()
+        .check(parsed.root())
+        .unwrap();
+    assert!(
+        strings.iter().any(|(text, _)| text.contains(MARK)),
+        "{document}"
+    );
+    for (text, world) in strings {
+        assert!(!text.contains(MARK) || world, "{text}");
+        assert!(world || editor_vocabulary(&text), "{text}");
+    }
 }
 
 /// Text that tries everything, and a marker in it to find it again.
@@ -581,6 +917,45 @@ fn every_result_stays_within_the_byte_budget_and_pages_on_by_bytes() {
         }
     }
     assert!(by_bytes >= 1, "a page stopped at the byte budget");
+}
+
+#[test]
+fn a_report_spends_its_byte_budget_in_report_order() {
+    let (_directory, root) = widest();
+    let mut server = server(&root);
+    let report = call(&mut server, "overview", &json!({"limit": 500}));
+    let report = report.structured();
+    // Each section in report order: its items listed, and its items left.
+    let lists: Vec<(&str, usize, u64)> = tilewright_editor_observe::overview::SECTIONS
+        .iter()
+        .map(|section| {
+            let (path, key) = section.rsplit_once('.').unwrap_or(("", section));
+            let parent = if path.is_empty() {
+                report
+            } else {
+                at(report, path)
+            };
+            (
+                *section,
+                parent[key].as_array().unwrap().len(),
+                parent[format!("{key}_more")].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    // Once a list is cut short with items left, no later list lists any.
+    let first_cut = lists
+        .iter()
+        .position(|(_, listed, more)| *more > 0 && *listed < 64)
+        .expect("the widest world runs out of budget");
+    for (section, listed, _) in &lists[first_cut + 1..] {
+        assert_eq!(
+            *listed, 0,
+            "{section} listed items after the budget ran out: {lists:?}"
+        );
+    }
+    // The planes come before the catalog, and are listed.
+    assert!(lists[2].1 > 0, "{lists:?}");
+    assert!(first_cut >= 2, "{lists:?}");
 }
 
 #[test]

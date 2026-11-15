@@ -163,14 +163,24 @@ fn hex(text: &str) -> bool {
         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Whether `text` is a snapshot binding: 80 hex digits for a world that
-/// loads (its revision and a fingerprint of its catalog), or `x` and 16
-/// hex digits for one that does not.
+/// Whether `text` is a snapshot binding (`Snapshot::binding`): for a
+/// world that loads, its revision, the catalog's revision, `n` or `i` and
+/// 16 hex digits, and 16 hex digits; for one that does not, `x` and 16 hex
+/// digits.
 pub fn is_binding(text: &str) -> bool {
-    match text.strip_prefix('x') {
-        Some(rest) => rest.len() == 16 && hex(rest),
-        None => text.len() == 80 && hex(text),
+    if let Some(rest) = text.strip_prefix('x') {
+        return rest.len() == 16 && hex(rest);
     }
+    let (Some(revision), Some(rest)) = (text.get(..64), text.get(64..)) else {
+        return false;
+    };
+    let catalog = match rest.as_bytes().first() {
+        Some(b'n') => &rest[..1],
+        Some(b'i') => rest.get(..17).filter(|part| hex(&part[1..])).unwrap_or(""),
+        _ => rest.get(..64).filter(|part| hex(part)).unwrap_or(""),
+    };
+    let budget = &rest[catalog.len()..];
+    is_revision(revision) && !catalog.is_empty() && budget.len() == 16 && hex(budget)
 }
 
 /// Whether `text` is a revision: 64 lowercase hex digits.
@@ -334,7 +344,7 @@ mod tests {
     use tilewright_editor_observe::node::{Map, json_string};
 
     fn binding() -> String {
-        "a".repeat(80)
+        "a".repeat(144)
     }
 
     #[test]
@@ -343,7 +353,7 @@ mod tests {
         let text = cursor("catalog", &binding, 7, 50);
         assert_eq!(resume(&text, "catalog", &binding, 7), Ok(50));
         assert_eq!(
-            resume(&text, "catalog", &"b".repeat(80), 7),
+            resume(&text, "catalog", &"b".repeat(144), 7),
             Err(CursorError::Stale)
         );
         for (tool, arguments) in [("lint", 7), ("catalog", 8)] {
@@ -381,6 +391,42 @@ mod tests {
             resume(&cursor("lint", &invalid, 7, 0), "lint", &invalid, 7),
             Ok(0)
         );
+    }
+
+    #[test]
+    fn bindings_name_the_revision_the_catalog_and_the_budget() {
+        let revision = "0123456789abcdef".repeat(4);
+        let budget = "fedcba9876543210";
+        for catalog in ["c".repeat(64), "n".to_owned(), format!("i{budget}")] {
+            assert!(
+                is_binding(&format!("{revision}{catalog}{budget}")),
+                "{catalog}"
+            );
+            assert!(
+                !is_binding(&format!("{revision}{catalog}{budget}0")),
+                "{catalog}"
+            );
+            assert!(!is_binding(&format!("{revision}{catalog}")), "{catalog}");
+        }
+        for text in [
+            format!("{revision}{}{budget}", "c".repeat(63)),
+            format!("{revision}{}{budget}", "C".repeat(64)),
+            format!("{revision}i{}{budget}", "g".repeat(16)),
+            format!("{}{}{budget}", "A".repeat(64), "c".repeat(64)),
+            format!("x{budget}0"),
+            String::new(),
+        ] {
+            assert!(!is_binding(&text), "{text}");
+        }
+        assert!(is_binding(&format!("x{budget}")));
+        // The longest cursor stays under the cap.
+        let longest = cursor(
+            "overview",
+            &format!("{revision}{}{budget}", "c".repeat(64)),
+            u64::MAX,
+            usize::MAX,
+        );
+        assert!(longest.len() <= MAXIMUM_CURSOR_BYTES, "{}", longest.len());
     }
 
     #[test]
