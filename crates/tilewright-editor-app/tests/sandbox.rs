@@ -198,7 +198,7 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let placed = runner.step(
         json!({"kind": "place", "plane": "main", "layer": 0, "x": 2, "y": 2, "proto": "stone"}),
     );
-    let uid = placed["applied"]["placed"].as_str().unwrap().to_owned();
+    let assigned = placed["applied"]["placed"].as_str().unwrap().to_owned();
     runner.step(
         json!({"kind": "create_zone", "plane": "main", "zone": "camp", "name": "Camp",
         "parent": null}),
@@ -259,7 +259,7 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     assert_eq!(proposal.client(), Some(LABEL));
     assert_eq!(proposal.receipt(), sha256(&receipt));
     assert_eq!(proposal.editor(), env!("CARGO_PKG_VERSION"));
-    assert_eq!(proposal.steps()[3].placed(), Some(uid.as_str()));
+    assert_eq!(proposal.steps()[3].placed(), Some(assigned.as_str()));
     // The source was copied, never written.
     assert_eq!(tree(&source), original);
     assert_ne!(tree(&sandbox.join("world")), original);

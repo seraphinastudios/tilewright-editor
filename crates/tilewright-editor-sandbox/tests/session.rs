@@ -106,8 +106,8 @@ fn a_session_edits_reviews_accepts_and_submits_only_in_its_sandbox() {
         json!({"kind": "place", "plane": "main", "layer": 0, "x": 2, "y": 2, "proto": "stone"}),
     ));
     let placed = ok(driver.simple("accept"));
-    let uid = placed["applied"]["placed"].as_str().unwrap().to_owned();
-    assert!(uid.starts_with("o."), "{uid}");
+    let assigned = placed["applied"]["placed"].as_str().unwrap().to_owned();
+    assert!(assigned.starts_with("o."), "a generated object id");
 
     // Submit retains one proposal file of the applied steps.
     let submitted = ok(driver.simple("submit"));
@@ -132,7 +132,7 @@ fn a_session_edits_reviews_accepts_and_submits_only_in_its_sandbox() {
     assert_eq!(read.client(), Some("client \u{1b}[31m"));
     assert_eq!(read.receipt(), RECEIPT);
     assert_eq!(read.editor(), EDITOR);
-    assert_eq!(read.steps()[2].placed(), Some(uid.as_str()));
+    assert_eq!(read.steps()[2].placed(), Some(assigned.as_str()));
     // Submitting the same steps again is the same file, written once.
     let again = ok(driver.simple("submit"));
     assert_eq!(again["proposal"]["file"], name.as_str());
