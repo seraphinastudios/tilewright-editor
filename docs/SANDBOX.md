@@ -20,6 +20,11 @@ when applying: every step is dispatched again under the person's grants,
 on the exact base, and reviewed and accepted by the person
 ([what the digests protect](PROPOSALS.md#what-the-digests-protect)).
 
+A sandbox serves one run of the runner. Once a step was accepted it cannot
+be started again, so whatever was not submitted when the run ends is lost:
+an agent submits after each batch of steps worth keeping (a later submit
+records every step from the start again).
+
 This page describes `tools/provision-sandbox.py`, which makes a sandbox and
 starts the runner in it, and the runner's line protocol
 (`tilewright-editor sandbox`, crate `tilewright-editor-sandbox`). Both are
@@ -58,14 +63,17 @@ that starts its server: every start makes a new sandbox.
 The helper:
 
 1. checks the actor and the label, that the platform is Linux, that the
-   editor exists, that the world opens as a directory and is not a link,
-   that the parent is not the world or inside it, and that the parent is on persistent local storage (it refuses
+   editor exists, that the world opens as a directory and is not a link
+   (it keeps that descriptor and copies from it, so a path changed after
+   the check is never read), that the parent is not the world or inside
+   it, and that the parent is on persistent local storage (it refuses
    tmpfs, ramfs, overlay, network and unknown file systems), before it
    creates anything;
 2. creates a new child `sandbox-<UTC time>-<16 random hex digits>` with
    mode 0700, never an existing one, and in it `world/`, `recovery/` and
    `proposals/`, each 0700, and checks that the four are distinct;
-3. copies the world into `world/` with exactly the prototype helper's rules
+3. copies the world, from the descriptor it checked, into `world/` with
+   exactly the prototype helper's rules
    and limits (`tools/provision-prototype.py`: regular files and
    directories only, no links or special files, at most 4,096 entries and
    64 MiB, files 0600, everything synced);
@@ -74,11 +82,12 @@ The helper:
 5. checks the directories' identities and mounts again, and replaces itself
    with `tilewright-editor sandbox`, passing `world/`, `recovery/` and
    `proposals/` as open descriptors, with the actor, the label and the
-   receipt's SHA-256. Nothing else crosses: the helper's own descriptors,
-   the sandbox itself and its parent among them, are close-on-exec, and it
-   closes every other descriptor from 3 up to the open-file limit that it
-   inherited from whoever started it (with `os.closerange` over the gaps
-   between the three, not by listing `/proc`).
+   receipt's SHA-256. Nothing else crosses: it lists its open descriptors
+   in `/proc/self/fd` and closes every one above 2 but the three, its own
+   (the sandbox itself and its parent among them) and any it inherited from
+   whoever started it, whatever their number, above a lowered open-file
+   limit too. If `/proc/self/fd` cannot be listed it starts nothing (the
+   runner reaches its directories through `/proc/self/fd/N` anyway).
 
 It prints nothing on standard output (only `--help`, which an operator
 asks for, does): that is the runner's protocol, and
@@ -172,8 +181,21 @@ sandbox, and the sandbox cannot be started again: its recovery store holds
 records, and the runner refuses a store that is not empty. The same holds
 for a runner killed during an `accept`, from the moment it begins to retain
 the inverse. The way forward is a new sandbox (and a new proposal); the
-old one is kept for inspection. A retention that fails before anything is
-staged (`recovery.failed`) does not block: the change stays pending.
+old one is kept for inspection.
+
+A retention that fails (`recovery.failed`, at the recovery store's limits
+of 1,024 records or 64 MiB too) does not block the session: the change
+stays pending, and `status`, `review`, `cancel`, `undo`, `redo` and
+`submit` still work. But the recovery store refuses every record after its
+first failure, so no later `accept` in this run can succeed; the runner
+answers every later `accept` at once with `recovery.failed` and says so,
+and `status` reports `recovery_failed: true`. Cancel, `submit` the steps
+so far, and start a new sandbox.
+
+Every run ends this way in one respect: once a step was accepted, the
+sandbox's recovery store holds records, so the sandbox cannot be started
+again after the run ends, whether by `quit`, the end of input, a crash or
+a block. Steps not submitted when the run ends cannot be submitted later.
 
 So an agent should `submit` after each batch of steps worth keeping: a
 later submit records every step from the start again, so nothing is lost
@@ -181,7 +203,7 @@ by submitting often.
 
 | Request | Does | Reply members besides `ok`, `request`, `state` |
 |---|---|---|
-| `status` | Nothing. | `actor`, `client` (the label or `null`), `editor` (the version the binary reports), `receipt` (the receipt's SHA-256), `catalog` (the catalog revision), `catalog_verified` (whether the catalog and its resources still verify), `view` (`plane`, `layer`, `bounds` `[x, y, width, height]`: where grants apply), `proposals` (how many submits this run retained or found retained). |
+| `status` | Nothing. | `actor`, `client` (the label or `null`), `editor` (the version the binary reports), `receipt` (the receipt's SHA-256), `catalog` (the catalog revision), `catalog_verified` (whether the catalog and its resources still verify), `view` (`plane`, `layer`, `bounds` `[x, y, width, height]`: where grants apply), `proposals` (how many submits this run retained or found retained), `recovery_failed` (whether the recovery store refused a record in this run, after which no `accept` can succeed). |
 | `edit` | Prepares one edit: `action` is one Action in the proposal format's form ([docs/PROPOSALS.md](PROPOSALS.md#actions)), the same form a proposal records, so there is one Action form. Its `expected` must be the current `state.revision`. | `pending`: the change now pending. |
 | `review` | Nothing. | `pending`: the pending change, or `null`. |
 | `accept` | Accepts the pending change through the engine's gate (refused while its review is incomplete: 64 KiB of excerpt, 32 files), retains its inverse in `recovery/` and publishes it into `world/`. | `applied`: the step it added (`before`, `after` and `placed`, the uid a `place` assigned, else `null`), or `null` when it removed one (an accepted undo). |
@@ -189,7 +211,7 @@ by submitting often.
 | `undo` | Prepares the undo of the last step, as a reviewed change: `accept` publishes it, `cancel` drops it. | `pending`. |
 | `redo` | Prepares the redo of the last undone step, the same way. | `pending`. |
 | `submit` | Records every applied step (the undo stack) as a proposal and retains it in `proposals/`. | `proposal`: `file`, `body_sha256`, `bytes`, `steps`, `base`, `result`, and `existed` (whether that file was already there). |
-| `quit` | Ends the run after replying. The end of standard input does too. | None. |
+| `quit` | Ends the run after replying. The end of standard input does too. The sandbox cannot be started again once a step was accepted, so submit first: steps not submitted are lost. | None. |
 
 `pending` holds the engine's bounded summary of the pending change:
 `base` and `result` (revisions), `complete` (whether Accept may publish
@@ -251,7 +273,7 @@ The runner's own codes, for lines that are not a request it can read:
 | Message | 4 KiB before escaping. |
 | Review | The engine's: 64 KiB of excerpt and 32 files; past them Accept is refused. |
 | Proposal | 256 steps and 16 MiB. |
-| History and recovery | The engine's and the recovery store's: 1,024 records, 64 MiB. |
+| History and recovery | The engine's and the recovery store's: 1,024 records, 64 MiB. Past them the store refuses (`recovery.failed`) and no later `accept` in the run can succeed. |
 
 ### World text is data
 
@@ -307,13 +329,13 @@ Trimmed (`…` for digests and review lines):
 
 ```text
 > {"request":"status"}
-< {"ok":true,"request":"status","actor":"agent:docs","client":"example client","editor":"0.1.0","receipt":"310c…","catalog":"6156…","catalog_verified":true,"view":{"plane":"main","layer":0,"bounds":[0,0,8,6]},"proposals":0,"state":{"revision":"3345…","phase":"ready","pending":false,"undo":0,"redo":0}}
+< {"ok":true,"request":"status","actor":"agent:docs","client":"example client","editor":"0.1.0","receipt":"310c…","catalog":"6156…","catalog_verified":true,"view":{"plane":"main","layer":0,"bounds":[0,0,8,6]},"proposals":0,"recovery_failed":false,"state":{"revision":"3345…","phase":"ready","pending":false,"undo":0,"redo":0}}
 > {"request":"edit","action":{"kind":"move","uid":"marker_1","x":4,"y":2,"expected":"3345…"}}
 < {"ok":true,"request":"edit","pending":{"base":"3345…","result":"7f41…","complete":true,"files":[{"path":"planes/main/layers/0/0_0.jsonc","change":"modified","before_bytes":4057,"after_bytes":4057}],"files_omitted":0,"warnings":[],"warnings_omitted":0,"review":["planes/main/layers/0/0_0.jsonc / source excerpt; scroll for more",…],"review_omitted":0,"cut":false},"state":{"revision":"3345…","phase":"pending","pending":true,"undo":0,"redo":0}}
 > {"request":"accept"}
 < {"ok":true,"request":"accept","applied":{"before":"3345…","after":"7f41…","placed":null},"state":{"revision":"7f41…","phase":"ready","pending":false,"undo":1,"redo":0}}
 > {"request":"edit","action":{"kind":"paint","plane":"main","layer":0,"grid":"floor","x":0,"y":0,"proto":"stone","expected":"7f41…"}}
-< {"ok":false,"request":"edit","code":"grant.missing","message":"terrain capability or bounds refused","state":{"revision":"7f41…","phase":"ready","pending":false,"undo":1,"redo":0}}
+< {"ok":false,"request":"edit","code":"grant.missing","engine":"grant.missing","step":null,"message":"terrain capability or bounds refused","state":{"revision":"7f41…","phase":"ready","pending":false,"undo":1,"redo":0}}
 > {"request":"submit"}
 < {"ok":true,"request":"submit","proposal":{"file":"proposal-066a…json","body_sha256":"066a…","bytes":1781,"steps":1,"base":"3345…","result":"7f41…","existed":false},"state":{"revision":"7f41…","phase":"ready","pending":false,"undo":1,"redo":0}}
 > {"request":"quit"}

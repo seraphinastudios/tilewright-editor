@@ -89,14 +89,43 @@ def fresh_child(parent_fd):
 
 
 def close_others(kept):
-    """Close every descriptor from 3 up to the open-file limit except
-    `kept`, without listing /proc: os.closerange over the gaps between
-    them (Linux's close_range where Python has it)."""
-    start = 3
-    for fd in sorted(kept):
-        os.closerange(start, fd)
-        start = fd + 1
-    os.closerange(start, os.sysconf('SC_OPEN_MAX'))
+    """Close every open descriptor above 2 but `kept`, as /proc/self/fd
+    lists them: whatever their number, above a lowered open-file limit
+    too, and without a loop over the whole limit. The runner needs /proc
+    anyway (it reaches its directories as /proc/self/fd/N); if the list
+    cannot be read, nothing is started."""
+    kept = set(kept)
+    try:
+        names = os.listdir('/proc/self/fd')
+    except OSError as error:
+        raise ValueError('cannot list /proc/self/fd to close inherited descriptors') from error
+    for name in names:
+        fd = int(name)
+        # The listing's own descriptor is listed too, and already closed.
+        if fd > 2 and fd not in kept:
+            close_quietly(fd)
+
+
+def open_world(path):
+    """The world's directory, opened as the copy reads it: a directory,
+    not a link. The copy reads from this descriptor, not the path again."""
+    try:
+        return provision.directory(path)
+    except OSError as error:
+        raise ValueError('the world must be an existing readable directory, not a link') from error
+
+
+def copy_from(world_fd, destination):
+    """The prototype helper's copy, from the descriptor checked before the
+    sandbox was made. Its copy_tree opens its source with
+    provision.directory; for this one call that opens a duplicate of
+    `world_fd` instead, so a path changed after the check is never read."""
+    opener = provision.directory
+    provision.directory = lambda _source: os.dup(world_fd)
+    try:
+        return provision.copy_tree(None, destination)
+    finally:
+        provision.directory = opener
 
 
 def close_quietly(fd):
@@ -121,18 +150,19 @@ def main():
     if sys.platform != 'linux':
         raise ValueError('sandbox editing is supported only on Linux')
     executable = args.editor.resolve(strict=True) if args.editor else None
-    # The world must open as the copy opens it, a directory and not a link,
-    # before anything is created.
+    # The world must open as the copy reads it, a directory and not a
+    # link, before anything is created; the copy reads this descriptor.
+    world_fd = open_world(args.world)
+    held = [world_fd]
     try:
-        os.close(provision.directory(args.world))
-    except OSError as error:
-        raise ValueError('the world must be an existing readable directory, not a link') from error
-    parent = args.destination_parent.resolve(strict=True)
-    # A sandbox inside the world it copies would copy itself.
-    if parent.is_relative_to(args.world.resolve(strict=True)):
-        raise ValueError('the destination parent may not be the world or inside it')
-    parent_fd = provision.directory(parent)
-    held = []
+        parent = args.destination_parent.resolve(strict=True)
+        # A sandbox inside the world it copies would copy itself.
+        if parent.is_relative_to(args.world.resolve(strict=True)):
+            raise ValueError('the destination parent may not be the world or inside it')
+        parent_fd = provision.directory(parent)
+    except BaseException:
+        os.close(world_fd)
+        raise
     try:
         provision.persistent_mount(parent_fd)
         name = fresh_child(parent_fd)
@@ -148,7 +178,7 @@ def main():
             ids[child] = provision.identity(fd)
         if len({(v['device'], v['inode']) for v in ids.values()}) != 4:
             raise ValueError('provisioned directory identity collision')
-        copied = provision.copy_tree(args.world, children['world'])
+        copied = copy_from(world_fd, children['world'])
         os.fsync(task_fd)
         os.fsync(parent_fd)
         receipt = {'format': 'tilewright.sandbox-provision/1', 'platform': sys.platform,

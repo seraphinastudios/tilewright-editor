@@ -114,3 +114,10 @@ Decisions made with them (coordinator and PR worker, easy to revisit):
   has records). A new sandbox is the way forward, so agents submit after
   each batch worth keeping. Refusals carry the engine's code in `engine`
   whenever the engine decided them.
+- After the recovery store refuses one record it refuses every later one,
+  so the runner answers every later Accept at once with `recovery.failed`
+  and `status` shows `recovery_failed`; submit still works. Any run end
+  leaves a sandbox that cannot be restarted once a step was accepted.
+- The helper copies the world from the descriptor it checked before making
+  the sandbox, and closes every descriptor it holds or inherited but the
+  three, as `/proc/self/fd` lists them (failing closed without it).

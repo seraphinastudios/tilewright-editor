@@ -1,10 +1,12 @@
 """Check the agent sandbox mode: a fresh unique child per start, refusals
 before any state, nothing on stdout, the receipt, and descriptor passing."""
 # Copyright 2026 Seraphina Studios. SPDX-License-Identifier: MIT
+import contextlib
 import hashlib
 import importlib.util
 import json
 import os
+import resource
 from pathlib import Path
 import stat
 import subprocess
@@ -271,19 +273,38 @@ class SandboxProvisionTests(unittest.TestCase):
             editor.chmod(0o700)
             report = root / 'report.json'
             requests = b'{"request":"status"}\n{"request":"quit"}\n'
-            # A descriptor the launcher leaks into the helper, here one on
-            # the source world's own file, at a number above the helper's.
-            leaked = os.open(source / 'world.jsonc', os.O_RDONLY)
-            high = os.dup2(leaked, 200)
+            # Descriptors the launcher leaks into the helper, each on the
+            # source world's own file: every other free low number, so the
+            # helper's own descriptors, the three it passes among them, land
+            # in the holes between them and after the last; and one far
+            # above the open-file limit the helper is started with.
+            source_file = os.open(source / 'world.jsonc', os.O_RDONLY)
+            free = []
+            for number in range(3, 40):
+                try:
+                    os.fstat(number)
+                except OSError:
+                    free.append(number)
+            leaked = free[1:12:2]
+            # Room for a descriptor above the child's lowered limit.
+            limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+            ceiling = limit[1] if limit[1] != resource.RLIM_INFINITY else 1 << 20
+            resource.setrlimit(resource.RLIMIT_NOFILE, (min(ceiling, 4096), limit[1]))
+            high = min(2000, min(ceiling, 4096) - 1)
+            lowered = min(1024, high // 2)
+            for number in (*leaked, high):
+                os.dup2(source_file, number)
             try:
                 result = subprocess.run(
                     [sys.executable, str(SCRIPT), '--world', str(source), '--destination-parent', str(parent),
                      '--actor', 'agent:tester', '--client-label', 'a label', '--editor', str(editor)],
-                    input=requests, capture_output=True, check=False, pass_fds=(leaked, high),
+                    input=requests, capture_output=True, check=False, pass_fds=(*leaked, high),
+                    preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (lowered, limit[1])),
                     env={**os.environ, 'FAKE_EDITOR_REPORT': str(report)})
             finally:
-                os.close(leaked)
-                os.close(high)
+                for number in (source_file, *leaked, high):
+                    os.close(number)
+                resource.setrlimit(resource.RLIMIT_NOFILE, limit)
             self.assertEqual(result.returncode, 0, result.stderr)
             # Standard input reaches the runner, and its output is all
             # there is on standard output.
@@ -316,9 +337,85 @@ class SandboxProvisionTests(unittest.TestCase):
             # and the three directories are open (and the descriptor the
             # report's own listing used, which no longer resolves).
             self.assertNotIn(str(source / 'world.jsonc'), targets)
-            self.assertNotIn('200', seen['opened'])
+            self.assertNotIn(str(high), seen['opened'])
             others = {fd for fd in map(int, seen['opened']) if fd > 2} - fds
             self.assertEqual(others, set(), seen['opened'])
+            # The leaks were on both sides of the descriptors kept, so the
+            # holes between them and after the last were closed too.
+            self.assertTrue(any(fd < max(fds) for fd in leaked), (leaked, fds))
+            self.assertTrue(any(min(fds) < fd < max(fds) for fd in leaked) or
+                            any(fd > max(fds) for fd in leaked), (leaked, fds))
+
+    def test_a_world_path_swapped_after_the_check_is_not_what_is_copied(self):
+        with persistent_root(self) as temporary:
+            root = Path(temporary)
+            source = world(root)
+            parent = root / 'sandboxes'
+            parent.mkdir()
+            # The seam: the mount check runs after the world was opened and
+            # before the copy; here it also swaps the world's path.
+            check = sandbox.provision.persistent_mount
+            def swap_then_check(fd):
+                if not (root / 'moved').exists():
+                    source.rename(root / 'moved')
+                    source.mkdir()
+                    (source / 'other.jsonc').write_bytes(b'{"other": true}\n')
+                return check(fd)
+            argv = sys.argv
+            sandbox.provision.persistent_mount = swap_then_check
+            sys.argv = [str(SCRIPT), '--world', str(source), '--destination-parent', str(parent),
+                        '--actor', 'agent:tester']
+            try:
+                with open(os.devnull, 'w') as quiet, contextlib.redirect_stderr(quiet):
+                    self.assertEqual(sandbox.main(), 0)
+            finally:
+                sandbox.provision.persistent_mount = check
+                sys.argv = argv
+            [made] = parent.iterdir()
+            self.assertEqual(sorted(path.name for path in (made / 'world').iterdir()), ['nested', 'world.jsonc'])
+            self.assertEqual(json.loads((made / 'provision.json').read_text())['copy'], {'files': 2, 'bytes': 23})
+
+    def test_close_others_fails_closed_without_a_descriptor_list(self):
+        listdir = sandbox.os.listdir
+        def refuse(path):
+            raise PermissionError(path)
+        sandbox.os.listdir = refuse
+        try:
+            with self.assertRaisesRegex(ValueError, 'cannot list /proc/self/fd'):
+                sandbox.close_others([])
+        finally:
+            sandbox.os.listdir = listdir
+
+    def test_the_copy_reads_the_checked_descriptor_not_the_path_again(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = world(root)
+            world_fd = sandbox.open_world(source)
+            try:
+                # The path now names another tree.
+                source.rename(root / 'moved')
+                other = root / 'source'
+                other.mkdir()
+                (other / 'other.jsonc').write_bytes(b'{"other": true}\n')
+                destination = root / 'destination'
+                destination.mkdir(mode=0o700)
+                fd = sandbox.provision.directory(destination)
+                try:
+                    copied = sandbox.copy_from(world_fd, fd)
+                finally:
+                    os.close(fd)
+            finally:
+                os.close(world_fd)
+            self.assertEqual(copied, {'files': 2, 'bytes': 23})
+            self.assertEqual((destination / 'world.jsonc').read_bytes(), b'{"original": true}\n')
+            self.assertFalse((destination / 'other.jsonc').exists())
+            # The prototype helper's own opener is back.
+            self.assertIsNot(sandbox.provision.directory, None)
+            fd = sandbox.provision.directory(other)
+            try:
+                self.assertEqual(os.fstat(fd).st_ino, other.stat().st_ino)
+            finally:
+                os.close(fd)
 
 
 if __name__ == '__main__':

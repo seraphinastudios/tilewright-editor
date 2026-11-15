@@ -282,6 +282,21 @@ mod tests {
     use super::{MAXIMUM_MESSAGE_BYTES, Reply, clip};
 
     #[test]
+    fn a_proposal_refusal_names_its_step() {
+        // A proposal whose first step is malformed: the reader refuses it
+        // at that step, before any digest is checked.
+        let digest = "0".repeat(64);
+        let document = format!(
+            r#"{{"body":{{"actor":"agent:a","base":"{digest}","catalog":"{digest}","client":null,"editor":"1","receipt":"{digest}","result":"{digest}","steps":[{{}}]}},"body_sha256":"{digest}","format":"tilewright.editor-proposal/1"}}"#
+        );
+        let error = tilewright_editor_proposal::Proposal::decode(document.as_bytes()).unwrap_err();
+        assert_eq!(error.step(), Some(0), "{error}");
+        let reply = Reply::proposal_refused("submit", &error).text;
+        assert!(reply.contains(",\"step\":0,"), "{reply}");
+        assert!(reply.contains(",\"engine\":null,"), "{reply}");
+    }
+
+    #[test]
     fn messages_are_clipped_before_escaping() {
         let long = "\u{e9}".repeat(MAXIMUM_MESSAGE_BYTES);
         let reply = Reply::refused(None, "x.y", None, None, &long).text;

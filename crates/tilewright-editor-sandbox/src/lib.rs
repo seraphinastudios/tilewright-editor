@@ -34,7 +34,7 @@ use tilewright_editor_observe::line::{Line, read_line};
 use tilewright_editor_preview::{PreviewLimits, loader};
 use tilewright_editor_proposal::{Proposal, ProposalStore, hex};
 use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
-use tilewright_editor_ui::{Action, Actor, Session};
+use tilewright_editor_ui::{Action, Actor, RefusalCode, Session};
 use tilewright_source::SourceRoot;
 
 pub use request::{CODES, REQUESTS};
@@ -74,7 +74,14 @@ pub struct Sandbox<R> {
     reply_bytes: usize,
     /// Proposal files retained (or found already retained) by this run.
     submitted: usize,
+    /// Whether the recovery store refused a record in this run. The
+    /// durable store keeps refusing after any failure, so no later Accept
+    /// can succeed; the runner says so at once.
+    recovery_failed: bool,
 }
+
+/// The message of an Accept after the recovery store refused a record.
+const RECOVERY_LATCHED: &str = "the recovery store refused a record earlier in this run and refuses every later one: no accept can succeed in this sandbox; cancel, submit the steps so far and start a new sandbox";
 
 /// Why a sandbox did not open. The text names no path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,6 +173,7 @@ impl<R: RecoveryStore> Sandbox<R> {
             settings,
             reply_bytes: MAXIMUM_REPLY_BYTES,
             submitted: 0,
+            recovery_failed: false,
         })
     }
 
@@ -285,6 +293,7 @@ impl<R: RecoveryStore> Sandbox<R> {
         let (plane, layer, bounds) = catalog.view();
         reply.view(plane, layer, bounds);
         reply.number("proposals", self.submitted);
+        reply.boolean("recovery_failed", self.recovery_failed);
         self.finish(reply)
     }
 
@@ -315,7 +324,18 @@ impl<R: RecoveryStore> Sandbox<R> {
 
     fn accept(&mut self) -> String {
         let (undo, _) = self.session.history().depths();
+        if self.recovery_failed {
+            let code = RefusalCode::RecoveryFailed.as_str();
+            return self.finish(Reply::refused(
+                Some("accept"),
+                code,
+                Some(code),
+                None,
+                RECOVERY_LATCHED,
+            ));
+        }
         if let Err(error) = self.session.dispatch(Action::Accept, &mut self.recovery) {
+            self.recovery_failed |= error.code() == RefusalCode::RecoveryFailed;
             return self.finish(Reply::engine_refused("accept", &error));
         }
         let mut reply = Reply::ok("accept");

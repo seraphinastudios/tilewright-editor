@@ -251,6 +251,9 @@ fn a_failed_publication_blocks_the_run_and_unsubmitted_steps_stay_unsubmitted() 
     // after the inverse was retained.
     let chunk = layout.path("world/planes/main/layers/0");
     fs::set_permissions(&chunk, fs::Permissions::from_mode(0o500)).unwrap();
+    if !permissions_bind(&chunk) {
+        return;
+    }
     let failed = driver.simple("accept");
     fs::set_permissions(&chunk, fs::Permissions::from_mode(0o700)).unwrap();
     refused(&failed, "publish.failed");
@@ -278,6 +281,59 @@ fn a_failed_publication_blocks_the_run_and_unsubmitted_steps_stay_unsubmitted() 
         Layout::settings(None),
     );
     assert!(restarted.err().unwrap().0.contains("recovery"));
+}
+
+/// Whether a directory's write permission binds this process: as root it
+/// does not, and there is nothing to test.
+fn permissions_bind(directory: &std::path::Path) -> bool {
+    let probe = directory.join("probe");
+    if fs::write(&probe, b"").is_ok() {
+        fs::remove_file(&probe).unwrap();
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        eprintln!("skipped: permissions do not bind this process (root?)");
+        return false;
+    }
+    true
+}
+
+#[test]
+fn after_the_recovery_store_refuses_once_no_accept_can_succeed_but_submit_can() {
+    let layout = Layout::new(|_| {});
+    let mut driver = layout.open(None);
+    ok(driver.edit(move_marker(4, 2)));
+    ok(driver.simple("accept"));
+    ok(driver.edit(move_marker(5, 2)));
+    let recovery = layout.path("recovery");
+    fs::set_permissions(&recovery, fs::Permissions::from_mode(0o500)).unwrap();
+    if !permissions_bind(&recovery) {
+        return;
+    }
+    let failed = driver.simple("accept");
+    fs::set_permissions(&recovery, fs::Permissions::from_mode(0o700)).unwrap();
+    refused(&failed, "recovery.failed");
+    assert_eq!(failed["engine"], "recovery.failed");
+    // Not blocked: the change is still pending, and nothing was published.
+    assert_eq!(failed["state"]["phase"], "pending");
+    assert_eq!(failed["state"]["undo"], 1);
+    // The store keeps refusing, even with its access restored: the runner
+    // says so at once, and the status shows it.
+    let again = driver.simple("accept");
+    refused(&again, "recovery.failed");
+    assert_eq!(again["engine"], "recovery.failed");
+    assert!(
+        again["message"]
+            .as_str()
+            .unwrap()
+            .contains("start a new sandbox"),
+        "{again}"
+    );
+    assert_eq!(ok(driver.simple("status"))["recovery_failed"], true);
+    // The steps accepted so far can still be submitted.
+    ok(driver.simple("cancel"));
+    let submitted = ok(driver.simple("submit"));
+    assert_eq!(submitted["proposal"]["steps"], 1);
+    ok(driver.edit(move_marker(6, 2)));
+    refused(&driver.simple("accept"), "recovery.failed");
 }
 
 #[test]
