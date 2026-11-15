@@ -77,7 +77,8 @@ pub mod limits {
     /// reader allows, so a transaction carrying more could never have been
     /// accepted.
     pub const OBJECT_KEYS: usize = 256;
-    /// Most JSON values the reader takes in one proposal, keys included.
+    /// Most JSON values the reader takes in one proposal (object keys are
+    /// not values and are not counted).
     /// It follows from the other bounds: a step holds at most one action of
     /// [`CELLS`] cells (3 values each) or a field value of
     /// [`FIELD_VALUE_ENTRIES`] values, and fewer than 64 values more, and
