@@ -106,3 +106,11 @@ Decisions made with them (coordinator and PR worker, easy to revisit):
   engine's own review.
 - The bounded line reader moves from the MCP crate to the observe crate
   (`line`), unchanged, so both servers read lines the same way.
+- The runner confines what its requests can do, not a same-user process
+  with a shell or file tools; against that, safety rests on the person's
+  review when applying, as for proposals generally.
+- A failed publication blocks the run for good: steps not yet submitted
+  stay unsubmitted, and the sandbox cannot be restarted (its recovery store
+  has records). A new sandbox is the way forward, so agents submit after
+  each batch worth keeping. Refusals carry the engine's code in `engine`
+  whenever the engine decided them.

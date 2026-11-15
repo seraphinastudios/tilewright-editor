@@ -58,6 +58,15 @@ if grep -RnE --include='*.rs' \
   echo "the read-only observe crate or MCP server reaches editing, history, recovery, proposals, the sandbox or provisioning" >&2
   exit 1
 fi
+# The sandbox runner is held to the same import rule below: it reaches files
+# only through the World roots the binary hands it (`SourceRoot`, and the
+# world's path, which it passes to `WorldDocument::open_prototype`), and it
+# names no file, network or process module itself. It needs no allowance.
+sandbox=crates/tilewright-editor-sandbox/src
+test -d "${sandbox}" || {
+  echo "missing ${sandbox}" >&2
+  exit 1
+}
 # Nor do they name the standard library's file, network or process
 # modules, its file types, or a directory-creating call, however the import
 # is spelled. Each file is read with its comment lines dropped and its lines
@@ -76,7 +85,7 @@ while IFS= read -r -d '' file; do
     echo "${file} names file, network or process access" >&2
     exit 1
   fi
-done < <(find "${read_only[@]}" -name '*.rs' -print0 | sort -z)
+done < <(find "${read_only[@]}" "${sandbox}" -name '*.rs' -print0 | sort -z)
 # Nor do they write: `render` returns pixels, the binary writes the one
 # file `--out` names, and the MCP server returns the image in its reply. World's confined access writes only through a
 # directory it opens, and its lock creates a file in the root on Windows;
@@ -93,9 +102,15 @@ if grep -RnE --include='*.rs' \
   exit 1
 fi
 
-# The sandbox runner opens only the directories it is given: a request
-# carries no path, so the module that reads requests names no path, root
-# or OS string type.
+# The sandbox runner reads no environment, and opens only the directories
+# it is given: a request carries no path, so the module that reads requests
+# names no path, root or OS string type. The crate's tests pin each
+# request's members, which is what keeps paths out of requests.
+if grep -RnE --include='*.rs' '\benv[[:space:]]*(::|!|;|,|\}|as[[:space:]])' "${sandbox}" |
+  grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
+  echo "the sandbox runner reads the environment" >&2
+  exit 1
+fi
 sandbox_requests=crates/tilewright-editor-sandbox/src/request.rs
 test -f "${sandbox_requests}" || {
   echo "missing ${sandbox_requests}" >&2

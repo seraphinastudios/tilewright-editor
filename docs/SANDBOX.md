@@ -6,9 +6,19 @@ accepts steps through the same editing engine the desktop uses, and submits
 them as a proposal file. Only a person applies a proposal to their own
 world, one step at a time, through the normal Review and Accept
 ([docs/PROPOSALS.md](PROPOSALS.md), [ADR 0003](../decisions/0003-change-set-proposals.md)).
-Nothing here lets an agent reach the person's world: the runner opens
-nothing but the directories it is given, and Accept publishes into the
-sandbox's own copy.
+Nothing in the runner's protocol lets an agent reach the person's world:
+the runner opens nothing but the directories it is given, and Accept
+publishes into the sandbox's own copy.
+
+That confines what the runner's requests can do. It is not an
+operating-system sandbox: a process running as the same user with a shell
+or file tools can read and write the person's world, the sandbox's
+receipt, `recovery/` and `proposals/` directly, and start a runner of its
+own. Give such an agent only the runner (in PR 6c, its MCP tools). Safety
+against anything written outside the protocol rests on the person's review
+when applying: every step is dispatched again under the person's grants,
+on the exact base, and reviewed and accepted by the person
+([what the digests protect](PROPOSALS.md#what-the-digests-protect)).
 
 This page describes `tools/provision-sandbox.py`, which makes a sandbox and
 starts the runner in it, and the runner's line protocol
@@ -48,8 +58,8 @@ that starts its server: every start makes a new sandbox.
 The helper:
 
 1. checks the actor and the label, that the platform is Linux, that the
-   editor and the world exist, that the parent is not the world or inside
-   it, and that the parent is on persistent local storage (it refuses
+   editor exists, that the world opens as a directory and is not a link,
+   that the parent is not the world or inside it, and that the parent is on persistent local storage (it refuses
    tmpfs, ramfs, overlay, network and unknown file systems), before it
    creates anything;
 2. creates a new child `sandbox-<UTC time>-<16 random hex digits>` with
@@ -64,10 +74,14 @@ The helper:
 5. checks the directories' identities and mounts again, and replaces itself
    with `tilewright-editor sandbox`, passing `world/`, `recovery/` and
    `proposals/` as open descriptors, with the actor, the label and the
-   receipt's SHA-256. Every other descriptor it holds, the sandbox itself
-   and its parent among them, is closed on exec.
+   receipt's SHA-256. Nothing else crosses: the helper's own descriptors,
+   the sandbox itself and its parent among them, are close-on-exec, and it
+   closes every other descriptor from 3 up to the open-file limit that it
+   inherited from whoever started it (with `os.closerange` over the gaps
+   between the three, not by listing `/proc`).
 
-It prints nothing on standard output: that is the runner's protocol, and
+It prints nothing on standard output (only `--help`, which an operator
+asks for, does): that is the runner's protocol, and
 the runner's standard input and output are the helper's own. The line on
 standard error is `tilewright sandbox: ` and a JSON object with ASCII
 escapes, `{"sandbox": ..., "receipt": ..., "receipt_sha256": ...}`, at most
@@ -135,11 +149,35 @@ request's name, or `null` when the line named no known request) and
 a change is pending review; `undo` and `redo` History's depths. `undo` is
 also the number of steps a `submit` records.
 
-A refusal (`"ok":false`) has `code`, a stable code, and `message`, for
-people (at most 4 KiB before escaping; it may quote world text, as data).
-A refusal from the proposal crate (`submit`) also has `engine` (the
-engine's code, or `null`) and `step` (the step concerned, from 0, or
-`null`). A refusal changes nothing, and the session goes on.
+A refusal (`"ok":false`) has `code`, a stable code; `engine`, the engine's
+own code when the engine decided the refusal (the same as `code` for an
+engine refusal, the engine's code beside `proposal.step_refused`, and
+`null` for the runner's `request.*` codes and the proposal crate's own
+`proposal.*` codes); `step`, the proposal step concerned, from 0, or
+`null`; and `message`, for people (at most 4 KiB before escaping; it may
+quote world text, as data).
+
+A refusal changes nothing and the session goes on, with one exception: a
+refusal that leaves the session blocked. See below.
+
+### A blocked sandbox
+
+A publication that fails or cannot be verified after the inverse was
+retained (`publish.failed`, `publish.unverified`), or anything else that
+leaves World's history needing a reload, blocks the session: `state.phase`
+is `blocked`, and from then on every request but `status`, `review` and
+`quit` is refused with `session.blocked`, `submit` among them. The steps
+accepted since the last `submit` can then never be submitted from this
+sandbox, and the sandbox cannot be started again: its recovery store holds
+records, and the runner refuses a store that is not empty. The same holds
+for a runner killed during an `accept`, from the moment it begins to retain
+the inverse. The way forward is a new sandbox (and a new proposal); the
+old one is kept for inspection. A retention that fails before anything is
+staged (`recovery.failed`) does not block: the change stays pending.
+
+So an agent should `submit` after each batch of steps worth keeping: a
+later submit records every step from the start again, so nothing is lost
+by submitting often.
 
 | Request | Does | Reply members besides `ok`, `request`, `state` |
 |---|---|---|
@@ -187,9 +225,11 @@ pending), `pending.none` (accept with nothing pending),
 in the proposal format's form is refused with that format's own code,
 `proposal.invalid` (or `proposal.budget` for a string, stroke or value over
 its bound). `submit` is refused with the proposal crate's codes:
-`proposal.empty` with no step applied, `pending.exists`, `proposal.budget`
-past 256 steps or 16 MiB (undo steps and submit again), `proposal.store`
-when the file cannot be retained.
+`proposal.empty` with no step applied, `pending.exists`, `session.blocked`
+in a blocked sandbox, `proposal.budget` past 256 steps or 16 MiB (undo
+steps and submit again), `proposal.store` when the file cannot be
+retained. Every request but `status`, `review` and `quit` can be refused
+with `session.blocked`.
 
 The runner's own codes, for lines that are not a request it can read:
 
@@ -226,11 +266,18 @@ helper's as JSON with ASCII escapes.
 
 ## What the runner can touch
 
+These hold for what the runner's requests can do; as said at the top, a
+same-user process outside the protocol is not confined by them, and the
+person's review when applying is the safeguard against it.
+
 - **Only its sandbox.** It receives the three directories as descriptors
-  and opens no path a request names: no request carries a path, and
-  `tools/check-architecture.sh` refuses path, root and environment types in
-  the module that reads requests. It never sees the sandbox's parent or
-  receipt.
+  and opens no path a request names: no request carries a path (tests pin
+  each request's members, and refuse `path`, `file`, `root`, `fd` and any
+  other extra member), and `tools/check-architecture.sh` refuses path,
+  root and environment types in the module that reads requests and the
+  standard library's file, network and process modules and the
+  environment in the whole crate. It never sees the sandbox's parent or
+  receipt, nor any descriptor the helper inherited.
 - **Only a provisioned tree.** The recovery store refuses a directory that
   is not private, not on checked storage or not empty, and the proposal
   store one that is not private and checked, so pointing the runner at a

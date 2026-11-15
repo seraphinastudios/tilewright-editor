@@ -88,6 +88,25 @@ def fresh_child(parent_fd):
     raise ValueError('could not make a fresh sandbox name')
 
 
+def close_others(kept):
+    """Close every descriptor from 3 up to the open-file limit except
+    `kept`, without listing /proc: os.closerange over the gaps between
+    them (Linux's close_range where Python has it)."""
+    start = 3
+    for fd in sorted(kept):
+        os.closerange(start, fd)
+        start = fd + 1
+    os.closerange(start, os.sysconf('SC_OPEN_MAX'))
+
+
+def close_quietly(fd):
+    """Close `fd`; after close_others it may already be closed."""
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--destination-parent', type=Path, required=True,
@@ -102,6 +121,12 @@ def main():
     if sys.platform != 'linux':
         raise ValueError('sandbox editing is supported only on Linux')
     executable = args.editor.resolve(strict=True) if args.editor else None
+    # The world must open as the copy opens it, a directory and not a link,
+    # before anything is created.
+    try:
+        os.close(provision.directory(args.world))
+    except OSError as error:
+        raise ValueError('the world must be an existing readable directory, not a link') from error
     parent = args.destination_parent.resolve(strict=True)
     # A sandbox inside the world it copies would copy itself.
     if parent.is_relative_to(args.world.resolve(strict=True)):
@@ -157,16 +182,18 @@ def main():
                    '--actor', actor, '--receipt-sha256', digest]
         if label is not None:
             command += ['--client-label', label]
-        # Only the three children cross into the runner; every other
-        # descriptor this helper holds is close-on-exec.
+        # Only the standard streams and the three children cross into the
+        # runner. The helper's own descriptors are close-on-exec; any other
+        # descriptor it inherited from whoever started it is closed here.
         for fd in children.values():
             os.set_inheritable(fd, True)
+        close_others(children.values())
         sys.stdout.flush()
         os.execv(executable, command)
     finally:
         for fd in reversed(held):
-            os.close(fd)
-        os.close(parent_fd)
+            close_quietly(fd)
+        close_quietly(parent_fd)
 
 
 if __name__ == '__main__':

@@ -214,6 +214,96 @@ fn refusals_are_replies_with_the_engines_codes_and_change_nothing() {
 }
 
 #[test]
+fn warnings_with_hostile_world_text_are_escaped_in_replies() {
+    // A new zone's display name, which the review's notes quote.
+    let hostile = "Camp\u{1b}[31m\u{202e}\u{2028}\u{200b}\"\\";
+    let layout = Layout::new(|_| {});
+    let mut driver = layout.open(None);
+    let line = {
+        let action = json!({"kind": "create_zone", "plane": "main", "zone": "camp",
+            "name": hostile, "parent": null, "expected": driver.revision()});
+        json!({"request": "edit", "action": action}).to_string()
+    };
+    let (replies, _) = driver.serve(format!("{line}\n").as_bytes());
+    let raw = &replies[0];
+    for character in ['\u{1b}', '\u{202e}', '\u{2028}', '\u{200b}'] {
+        assert!(!raw.contains(character), "raw {character:?} in {raw}");
+    }
+    let reply = ok(common::reply(raw));
+    let warnings = reply["pending"]["warnings"].as_array().unwrap();
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.as_str().unwrap().contains("Camp\u{1b}[31m\u{202e}")),
+        "{reply}"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_failed_publication_blocks_the_run_and_unsubmitted_steps_stay_unsubmitted() {
+    let layout = Layout::new(|_| {});
+    let mut driver = layout.open(None);
+    ok(driver.edit(move_marker(4, 2)));
+    ok(driver.simple("accept"));
+    ok(driver.edit(move_marker(5, 2)));
+    // The chunk's directory can no longer be written: publication fails
+    // after the inverse was retained.
+    let chunk = layout.path("world/planes/main/layers/0");
+    fs::set_permissions(&chunk, fs::Permissions::from_mode(0o500)).unwrap();
+    let failed = driver.simple("accept");
+    fs::set_permissions(&chunk, fs::Permissions::from_mode(0o700)).unwrap();
+    refused(&failed, "publish.failed");
+    assert_eq!(failed["engine"], "publish.failed");
+    assert_eq!(failed["state"]["phase"], "blocked");
+    // From then on every change and every submit is refused, with the
+    // engine's code beside it, and the accepted step cannot be submitted.
+    for request in ["submit", "cancel", "accept", "undo", "redo"] {
+        let reply = driver.simple(request);
+        refused(&reply, "session.blocked");
+        assert_eq!(reply["engine"], "session.blocked", "{request}");
+        assert_eq!(reply["step"], Value::Null, "{request}");
+    }
+    refused(&driver.edit(move_marker(6, 2)), "session.blocked");
+    assert_eq!(ok(driver.simple("status"))["state"]["phase"], "blocked");
+    ok(driver.simple("review"));
+    assert!(layout.files("proposals").is_empty());
+    drop(driver);
+    // Nor can the sandbox be started again: its recovery store has records.
+    let restarted = Sandbox::open(
+        &layout.path("world"),
+        SourceRoot::new(&layout.path("recovery")),
+        SourceRoot::new(&layout.path("proposals")),
+        Actor::new(ACTOR).unwrap(),
+        Layout::settings(None),
+    );
+    assert!(restarted.err().unwrap().0.contains("recovery"));
+}
+
+#[test]
+fn engine_and_runner_refusals_name_their_source() {
+    let layout = Layout::new(|_| {});
+    let mut driver = layout.open(None);
+    let engine = driver.simple("accept");
+    refused(&engine, "pending.none");
+    assert_eq!(engine["engine"], "pending.none");
+    let empty = driver.simple("submit");
+    refused(&empty, "proposal.empty");
+    assert_eq!(empty["engine"], Value::Null);
+    let runner = driver.send("[]");
+    refused(&runner, "request.invalid");
+    assert_eq!(runner["engine"], Value::Null);
+    assert_eq!(runner["step"], Value::Null);
+    let codec = driver.edit(json!({"kind": "move"}));
+    refused(&codec, "proposal.invalid");
+    assert_eq!(codec["engine"], Value::Null);
+    ok(driver.edit(move_marker(4, 2)));
+    let pending = driver.simple("submit");
+    refused(&pending, "pending.exists");
+    assert_eq!(pending["engine"], "pending.exists");
+}
+
+#[test]
 fn malformed_oversized_and_unknown_lines_each_get_one_refusal_and_serving_goes_on() {
     let layout = Layout::new(|_| {});
     let mut driver = layout.open(None);

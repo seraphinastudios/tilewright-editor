@@ -189,7 +189,10 @@ pub fn reply(line: &str) -> Value {
         "raw control character in {line}"
     );
     assert!(
-        !line.contains('\u{202e}') && !line.contains('\u{200b}'),
+        !line.contains('\u{202e}')
+            && !line.contains('\u{200b}')
+            && !line.contains('\u{2028}')
+            && !line.contains('\u{2029}'),
         "raw invisible or bidirectional character in {line}"
     );
     let value: Value = serde_json::from_str(line).unwrap_or_else(|error| panic!("{error}: {line}"));
@@ -198,6 +201,11 @@ pub fn reply(line: &str) -> Value {
     if value["ok"] == false {
         assert!(value["code"].is_string(), "{line}");
         assert!(value["message"].is_string(), "{line}");
+        assert!(
+            value["engine"].is_string() || value["engine"].is_null(),
+            "{line}"
+        );
+        assert!(value["step"].is_u64() || value["step"].is_null(), "{line}");
     }
     value
 }

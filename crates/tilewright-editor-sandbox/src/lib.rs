@@ -257,8 +257,10 @@ impl<R: RecoveryStore> Sandbox<R> {
         reply.finish(&self.session)
     }
 
+    /// A refusal of a line the runner could not take as a request, or of
+    /// an action not in the proposal format's form: no engine code.
     fn refusal(&self, request: Option<&str>, code: &str, message: &str) -> String {
-        self.finish(Reply::refused(request, code, message))
+        self.finish(Reply::refused(request, code, None, None, message))
     }
 
     fn status(&self) -> String {
@@ -295,7 +297,7 @@ impl<R: RecoveryStore> Sandbox<R> {
                 self.pending(&mut reply);
                 self.finish(reply)
             }
-            Err(error) => self.refusal(Some(request), error.code().as_str(), error.message()),
+            Err(error) => self.finish(Reply::engine_refused(request, &error)),
         }
     }
 
@@ -314,7 +316,7 @@ impl<R: RecoveryStore> Sandbox<R> {
     fn accept(&mut self) -> String {
         let (undo, _) = self.session.history().depths();
         if let Err(error) = self.session.dispatch(Action::Accept, &mut self.recovery) {
-            return self.refusal(Some("accept"), error.code().as_str(), error.message());
+            return self.finish(Reply::engine_refused("accept", &error));
         }
         let mut reply = Reply::ok("accept");
         // An accepted edit or Redo adds a step; an accepted Undo removes one.

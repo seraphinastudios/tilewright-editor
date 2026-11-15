@@ -160,6 +160,17 @@ class SandboxProvisionTests(unittest.TestCase):
                 self.assertEqual(list(parent.iterdir()), [], case)
                 self.assertFalse((root / 'session').exists(), case)
             self.assertIsNotNone(sandbox.sandbox_actor('agent:' + 'x' * 250))
+            # A world that is a link or a file is refused before the
+            # sandbox is made.
+            link = root / 'world-link'
+            link.symlink_to(source, target_is_directory=True)
+            plain = source / 'world.jsonc'
+            for world_path in (link, plain, root / 'absent'):
+                result = run('--world', world_path, '--destination-parent', parent, '--actor', 'agent:tester')
+                self.assertNotEqual(result.returncode, 0, world_path)
+                self.assertIn(b'not a link', result.stderr)
+                self.assertEqual(result.stdout, b'')
+                self.assertEqual(list(parent.iterdir()), [], world_path)
             self.assertEqual(sandbox.client_label('x' * 256), 'x' * 256)
             self.assertEqual(sandbox.client_label('\u00e9' * 128), '\u00e9' * 128)
             for label in ('x' * 257, '\u00e9' * 128 + 'x', '\udcff'):
@@ -189,6 +200,43 @@ class SandboxProvisionTests(unittest.TestCase):
             self.assertIn(b'link or special file', refused.stderr)
             self.assertEqual(len(list(parent.iterdir())), 1)
             self.assertEqual((source / 'world.jsonc').read_bytes(), b'{"original": true}\n')
+
+    def test_the_notice_escapes_a_parent_path_that_is_not_ascii(self):
+        with persistent_root(self) as temporary:
+            root = Path(temporary)
+            source = world(root)
+            parent = root / 'sandboxes-\u202e\u2028\u00e9\x1b'
+            parent.mkdir()
+            result = run('--world', source, '--destination-parent', parent, '--actor', 'agent:tester')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(result.stderr.isascii(), result.stderr)
+            self.assertNotIn(b'\x1b', result.stderr)
+            reported = notice(result)
+            self.assertEqual(Path(reported['sandbox']).parent, parent)
+            self.assertTrue(Path(reported['sandbox']).is_dir())
+
+    def test_a_name_that_is_taken_is_never_adopted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            names = iter(['0' * 16, '0' * 16, '1' * 16])
+            original = (sandbox.secrets.token_hex, sandbox.time.strftime)
+            sandbox.secrets.token_hex = lambda size: next(names)
+            sandbox.time.strftime = lambda *arguments: '20261115T000000Z'
+            try:
+                taken = root / f'sandbox-20261115T000000Z-{"0" * 16}'
+                taken.mkdir()
+                (taken / 'kept').write_bytes(b'kept')
+                fd = sandbox.provision.directory(root)
+                try:
+                    name = sandbox.fresh_child(fd)
+                finally:
+                    os.close(fd)
+            finally:
+                sandbox.secrets.token_hex, sandbox.time.strftime = original
+            self.assertEqual(name, f'sandbox-20261115T000000Z-{"1" * 16}')
+            self.assertEqual(sorted(path.name for path in taken.iterdir()), ['kept'])
+            self.assertEqual(stat.S_IMODE((root / name).stat().st_mode), 0o700)
+            self.assertEqual(list((root / name).iterdir()), [])
 
     def test_volatile_tmpfs_is_refused_before_creating_a_sandbox(self):
         volatile = '/dev/shm' if Path('/dev/shm').is_dir() and os.access('/dev/shm', os.W_OK) else '/tmp'
@@ -223,11 +271,19 @@ class SandboxProvisionTests(unittest.TestCase):
             editor.chmod(0o700)
             report = root / 'report.json'
             requests = b'{"request":"status"}\n{"request":"quit"}\n'
-            result = subprocess.run(
-                [sys.executable, str(SCRIPT), '--world', str(source), '--destination-parent', str(parent),
-                 '--actor', 'agent:tester', '--client-label', 'a label', '--editor', str(editor)],
-                input=requests, capture_output=True, check=False,
-                env={**os.environ, 'FAKE_EDITOR_REPORT': str(report)})
+            # A descriptor the launcher leaks into the helper, here one on
+            # the source world's own file, at a number above the helper's.
+            leaked = os.open(source / 'world.jsonc', os.O_RDONLY)
+            high = os.dup2(leaked, 200)
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), '--world', str(source), '--destination-parent', str(parent),
+                     '--actor', 'agent:tester', '--client-label', 'a label', '--editor', str(editor)],
+                    input=requests, capture_output=True, check=False, pass_fds=(leaked, high),
+                    env={**os.environ, 'FAKE_EDITOR_REPORT': str(report)})
+            finally:
+                os.close(leaked)
+                os.close(high)
             self.assertEqual(result.returncode, 0, result.stderr)
             # Standard input reaches the runner, and its output is all
             # there is on standard output.
@@ -256,6 +312,13 @@ class SandboxProvisionTests(unittest.TestCase):
             self.assertNotIn(str(parent), targets)
             for child in ('world', 'recovery', 'proposals'):
                 self.assertIn(str(path / child), targets)
+            # Nor anything the helper inherited: only the standard streams
+            # and the three directories are open (and the descriptor the
+            # report's own listing used, which no longer resolves).
+            self.assertNotIn(str(source / 'world.jsonc'), targets)
+            self.assertNotIn('200', seen['opened'])
+            others = {fd for fd in map(int, seen['opened']) if fd > 2} - fds
+            self.assertEqual(others, set(), seen['opened'])
 
 
 if __name__ == '__main__':

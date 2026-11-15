@@ -72,6 +72,18 @@ impl Options {
         }
         Ok((value, PathBuf::from(format!("/proc/self/fd/{value}"))))
     }
+
+    /// The world, recovery and proposal directories: three distinct
+    /// provisioned descriptors.
+    fn directories(&self) -> Result<[PathBuf; 3], String> {
+        let (world_fd, world) = self.descriptor("--world-fd")?;
+        let (recovery_fd, recovery) = self.descriptor("--recovery-fd")?;
+        let (proposals_fd, proposals) = self.descriptor("--proposals-fd")?;
+        if world_fd == recovery_fd || world_fd == proposals_fd || recovery_fd == proposals_fd {
+            return Err("provisioned descriptor numbers must be distinct".into());
+        }
+        Ok([world, recovery, proposals])
+    }
 }
 
 /// 64 lowercase hexadecimal digits.
@@ -96,12 +108,7 @@ pub fn run(arguments: &[OsString]) -> Result<(), String> {
         return Err("the sandbox runner requires Linux; other platforms remain read-only".into());
     }
     let options = Options::read(arguments)?;
-    let (world_fd, world) = options.descriptor("--world-fd")?;
-    let (recovery_fd, recovery) = options.descriptor("--recovery-fd")?;
-    let (proposals_fd, proposals) = options.descriptor("--proposals-fd")?;
-    if world_fd == recovery_fd || world_fd == proposals_fd || recovery_fd == proposals_fd {
-        return Err("provisioned descriptor numbers must be distinct".into());
-    }
+    let [world, recovery, proposals] = options.directories()?;
     let actor = Actor::new(options.required("--actor")?).map_err(|error| error.to_string())?;
     let receipt = digest(options.required("--receipt-sha256")?)
         .ok_or("--receipt-sha256 is 64 lowercase hexadecimal digits")?;
@@ -157,6 +164,31 @@ mod tests {
         for value in ["0", "2", "-1", "x", ""] {
             let options = Options::read(&arguments(&["--world-fd", value])).unwrap();
             assert!(options.descriptor("--world-fd").is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn the_three_descriptors_must_be_distinct() {
+        let given = |world: &str, recovery: &str, proposals: &str| {
+            Options::read(&arguments(&[
+                "--world-fd",
+                world,
+                "--recovery-fd",
+                recovery,
+                "--proposals-fd",
+                proposals,
+            ]))
+            .unwrap()
+            .directories()
+        };
+        let paths = given("3", "4", "5").unwrap();
+        assert_eq!(paths[0].to_str(), Some("/proc/self/fd/3"));
+        assert_eq!(paths[2].to_str(), Some("/proc/self/fd/5"));
+        for (world, recovery, proposals) in [("3", "3", "4"), ("3", "4", "3"), ("4", "3", "3")] {
+            assert_eq!(
+                given(world, recovery, proposals).unwrap_err(),
+                "provisioned descriptor numbers must be distinct"
+            );
         }
     }
 

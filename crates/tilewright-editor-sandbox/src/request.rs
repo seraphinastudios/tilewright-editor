@@ -78,7 +78,9 @@ fn refused(
 
 /// Reads one request line, without its newline.
 pub fn read(line: &[u8]) -> Result<Request, Refused> {
-    // A line ending in CR LF is read as if it ended in LF.
+    // A line ending in CR LF is read as if it ended in LF. CR is JSON
+    // whitespace, so the reader would take it anyway; stripping it keeps
+    // the line the reader sees the same as the MCP server's.
     let line = line.strip_suffix(b"\r").unwrap_or(line);
     let text = std::str::from_utf8(line)
         .map_err(|_| refused(None, NOT_UTF8, "a request is UTF-8 text"))?;
@@ -154,6 +156,44 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
 #[cfg(test)]
 mod tests {
     use super::{CODES, REQUESTS, Request, read};
+
+    #[test]
+    fn each_request_has_exactly_its_members_and_none_names_a_file() {
+        let action = r#"{"kind":"remove","uid":"marker_1","expected":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+        for name in REQUESTS {
+            let own = if name == "edit" {
+                format!(r#""request":"edit","action":{action}"#)
+            } else {
+                format!(r#""request":"{name}""#)
+            };
+            assert!(read(format!("{{{own}}}").as_bytes()).is_ok(), "{name}");
+            for member in [
+                "path",
+                "file",
+                "root",
+                "fd",
+                "directory",
+                "world",
+                "actor",
+                "action",
+                "x",
+            ] {
+                if name == "edit" && member == "action" {
+                    continue;
+                }
+                let line = format!(r#"{{{own},"{member}":"/etc/passwd"}}"#);
+                let refused = read(line.as_bytes()).unwrap_err();
+                assert_eq!(refused.code, "request.invalid", "{name} {member}");
+                assert_eq!(refused.request, Some(name), "{name} {member}");
+            }
+        }
+        // An action takes exactly its kind's members, so it cannot carry a
+        // path either.
+        let with_path = action.replace("\"kind\"", "\"path\":\"/etc/passwd\",\"kind\"");
+        let refused =
+            read(format!(r#"{{"request":"edit","action":{with_path}}}"#).as_bytes()).unwrap_err();
+        assert_eq!(refused.code, "proposal.invalid");
+    }
 
     #[test]
     fn every_request_and_code_is_documented_once() {

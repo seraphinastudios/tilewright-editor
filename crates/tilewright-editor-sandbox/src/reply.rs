@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use tilewright_editor_observe::node::json_string;
 use tilewright_editor_proposal::{Proposal, ProposalError, StoredProposal, hex};
 use tilewright_editor_ui::review::{ChangeKind, PendingSummary};
-use tilewright_editor_ui::{AppliedStep, Session, SessionPhase};
+use tilewright_editor_ui::{AppliedStep, RefusalCode, Session, SessionError, SessionPhase};
 
 /// Most bytes of a message taken into a reply, before escaping.
 const MAXIMUM_MESSAGE_BYTES: usize = 4096;
@@ -60,35 +60,50 @@ impl Reply {
         reply
     }
 
-    /// A refusal with a stable `code` and a `message`, clipped.
-    pub fn refused(request: Option<&str>, code: &str, message: &str) -> Self {
+    /// A refusal with a stable `code`, the engine's code when the engine
+    /// decided it (`engine`), the proposal step it concerns, and a
+    /// `message`, clipped. Every refusal has all four members.
+    pub fn refused(
+        request: Option<&str>,
+        code: &str,
+        engine: Option<&str>,
+        step: Option<usize>,
+        message: &str,
+    ) -> Self {
         let mut reply = Self {
             text: String::from("{\"ok\":false"),
         };
         reply.optional_string("request", request);
         reply.string("code", code);
-        reply.string("message", clip(message, MAXIMUM_MESSAGE_BYTES));
-        reply
-    }
-
-    /// A refusal from the proposal crate: its code, the engine's code when
-    /// the engine refused, and the step concerned.
-    pub fn proposal_refused(request: &str, error: &ProposalError) -> Self {
-        let mut reply = Self::refused(Some(request), error.code().as_str(), error.message());
-        reply.optional_string(
-            "engine",
-            error
-                .engine_code()
-                .map(tilewright_editor_ui::RefusalCode::as_str),
-        );
+        reply.optional_string("engine", engine);
         reply.key("step");
-        match error.step() {
+        match step {
             Some(step) => {
                 let _ = write!(reply.text, "{step}");
             }
             None => reply.text.push_str("null"),
         }
+        reply.string("message", clip(message, MAXIMUM_MESSAGE_BYTES));
         reply
+    }
+
+    /// A refusal the engine gave.
+    pub fn engine_refused(request: &str, error: &SessionError) -> Self {
+        let code = error.code().as_str();
+        Self::refused(Some(request), code, Some(code), None, error.message())
+    }
+
+    /// A refusal from the proposal crate: its code, and the engine's: the
+    /// engine's own code beside `proposal.step_refused`, or the code itself
+    /// when it is one of the engine's (`session.blocked`,
+    /// `pending.exists`); `null` for the proposal crate's own codes.
+    pub fn proposal_refused(request: &str, error: &ProposalError) -> Self {
+        let code = error.code().as_str();
+        let engine = error
+            .engine_code()
+            .map(RefusalCode::as_str)
+            .or_else(|| (!code.starts_with("proposal.")).then_some(code));
+        Self::refused(Some(request), code, engine, error.step(), error.message())
     }
 
     fn key(&mut self, key: &str) {
@@ -269,10 +284,10 @@ mod tests {
     #[test]
     fn messages_are_clipped_before_escaping() {
         let long = "\u{e9}".repeat(MAXIMUM_MESSAGE_BYTES);
-        let reply = Reply::refused(None, "x.y", &long).text;
+        let reply = Reply::refused(None, "x.y", None, None, &long).text;
         let kept = reply.matches('\u{e9}').count();
         assert_eq!(kept, MAXIMUM_MESSAGE_BYTES / 2);
-        assert!(reply.len() < MAXIMUM_MESSAGE_BYTES + 64, "{}", reply.len());
+        assert!(reply.len() < MAXIMUM_MESSAGE_BYTES + 128, "{}", reply.len());
     }
 
     #[test]
