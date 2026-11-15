@@ -160,6 +160,11 @@ class SandboxProvisionTests(unittest.TestCase):
                 self.assertEqual(list(parent.iterdir()), [], case)
                 self.assertFalse((root / 'session').exists(), case)
             self.assertIsNotNone(sandbox.sandbox_actor('agent:' + 'x' * 250))
+            self.assertEqual(sandbox.client_label('x' * 256), 'x' * 256)
+            self.assertEqual(sandbox.client_label('\u00e9' * 128), '\u00e9' * 128)
+            for label in ('x' * 257, '\u00e9' * 128 + 'x', '\udcff'):
+                with self.assertRaises(ValueError):
+                    sandbox.client_label(label)
             inside = source / 'nested'
             result = run('--world', source, '--destination-parent', inside, '--actor', 'agent:tester')
             self.assertNotEqual(result.returncode, 0)

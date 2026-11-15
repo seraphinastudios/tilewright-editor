@@ -264,7 +264,16 @@ impl Reply {
 
 #[cfg(test)]
 mod tests {
-    use super::clip;
+    use super::{MAXIMUM_MESSAGE_BYTES, Reply, clip};
+
+    #[test]
+    fn messages_are_clipped_before_escaping() {
+        let long = "\u{e9}".repeat(MAXIMUM_MESSAGE_BYTES);
+        let reply = Reply::refused(None, "x.y", &long).text;
+        let kept = reply.matches('\u{e9}').count();
+        assert_eq!(kept, MAXIMUM_MESSAGE_BYTES / 2);
+        assert!(reply.len() < MAXIMUM_MESSAGE_BYTES + 64, "{}", reply.len());
+    }
 
     #[test]
     fn clips_end_on_a_character_boundary() {
