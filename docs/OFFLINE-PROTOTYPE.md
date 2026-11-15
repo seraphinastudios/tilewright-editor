@@ -43,6 +43,10 @@ python3 tools/provision-prototype.py --world samples/prototype-neutral \
   --font-pack "$(pwd)/font-pack"
 ```
 
+For an agent, `tools/provision-sandbox.py` makes a sandbox with the same
+copy rules under a fresh name each run and starts the headless runner in it
+([agent sandboxes](SANDBOX.md)); this helper and its output are unchanged.
+
 The helper never adopts existing state, changes permissions
 on owner directories or deletes failed sessions. Inspect and preserve them;
 choose a different new session directory for a new attempt.
