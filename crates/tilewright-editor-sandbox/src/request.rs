@@ -13,6 +13,15 @@ pub const REQUESTS: [&str; 9] = [
     "status", "edit", "review", "accept", "cancel", "undo", "redo", "submit", "quit",
 ];
 
+/// The runner's own refusal codes, for lines it cannot read as a request.
+pub const TOO_LARGE: &str = "request.too_large";
+pub const NOT_UTF8: &str = NOT_UTF8;
+pub const PARSE: &str = PARSE;
+pub const INVALID: &str = INVALID;
+pub const UNKNOWN: &str = UNKNOWN;
+/// Every one of them, in documentation order.
+pub const CODES: [&str; 5] = [TOO_LARGE, NOT_UTF8, PARSE, INVALID, UNKNOWN];
+
 /// The reader's limits for one request: one line of JSON without
 /// comments, large enough for every action the proposal format records (a
 /// stroke of 4,096 cells, a field value of 4,096 values nested 8 deep).
@@ -72,11 +81,11 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
     // A line ending in CR LF is read as if it ended in LF.
     let line = line.strip_suffix(b"\r").unwrap_or(line);
     let text = std::str::from_utf8(line)
-        .map_err(|_| refused(None, "request.not_utf8", "a request is UTF-8 text"))?;
+        .map_err(|_| refused(None, NOT_UTF8, "a request is UTF-8 text"))?;
     let document = Document::parse(text, &REQUEST_LIMITS).map_err(|error| {
         refused(
             None,
-            "request.parse",
+            PARSE,
             format!(
                 "a request is one JSON object on one line ({})",
                 error.code.as_str()
@@ -86,7 +95,7 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
     let members = document
         .root()
         .as_object()
-        .ok_or_else(|| refused(None, "request.invalid", "a request is a JSON object"))?;
+        .ok_or_else(|| refused(None, INVALID, "a request is a JSON object"))?;
     let name = document
         .root()
         .get("request")
@@ -94,14 +103,14 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
         .ok_or_else(|| {
             refused(
                 None,
-                "request.invalid",
+                INVALID,
                 "a request has a string member \"request\"",
             )
         })?;
     let Some(&known) = REQUESTS.iter().find(|known| **known == name) else {
         return Err(refused(
             None,
-            "request.unknown",
+            UNKNOWN,
             "unknown request; see docs/SANDBOX.md for the list",
         ));
     };
@@ -119,7 +128,7 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
     {
         return Err(refused(
             Some(known),
-            "request.invalid",
+            INVALID,
             if known == "edit" {
                 "an edit request has exactly the members request and action"
             } else {
@@ -150,7 +159,19 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, read};
+    use super::{CODES, REQUESTS, Request, read};
+
+    #[test]
+    fn every_request_and_code_is_documented_once() {
+        let documented = include_str!("../../../docs/SANDBOX.md");
+        for name in REQUESTS.iter().chain(&CODES) {
+            assert_eq!(
+                documented.matches(&format!("| `{name}` |")).count(),
+                1,
+                "{name} must be a row of docs/SANDBOX.md exactly once"
+            );
+        }
+    }
 
     #[test]
     fn requests_are_one_object_with_exactly_their_members() {

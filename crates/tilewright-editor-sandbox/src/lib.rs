@@ -37,7 +37,7 @@ use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
 use tilewright_editor_ui::{Action, Actor, Session};
 use tilewright_source::SourceRoot;
 
-pub use request::REQUESTS;
+pub use request::{CODES, REQUESTS};
 
 /// Most bytes of one request line, its newline and a CR before it not
 /// counted. A longer line is refused without being kept.
@@ -212,7 +212,7 @@ impl<R: RecoveryStore> Sandbox<R> {
                     (
                         self.refusal(
                             None,
-                            "request.too_large",
+                            request::TOO_LARGE,
                             "the request is longer than the runner reads (64 KiB)",
                         ),
                         false,

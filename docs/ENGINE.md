@@ -149,4 +149,6 @@ Messages are for people and may be reworded; codes are stable.
 
 A test checks that every code is listed here exactly once. The
 `proposal.*` codes are those of the `tilewright-editor-proposal` crate's
-refusals; [docs/PROPOSALS.md](PROPOSALS.md) says when each is given.
+refusals; [docs/PROPOSALS.md](PROPOSALS.md) says when each is given. The
+sandbox runner returns these codes as they are and adds its own `request.*`
+codes for lines it cannot read as a request ([docs/SANDBOX.md](SANDBOX.md)).
