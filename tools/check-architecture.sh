@@ -15,7 +15,7 @@ jq -e '
   deps("tilewright-editor-mcp") == ["serde_json","tempfile","tilewright-editor-document","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-testkit","tilewright-jsonc","tilewright-source"] and
   deps("tilewright-editor-preview") == ["serde_json","sha2","tempfile","tilewright-jsonc","tilewright-render-api","tilewright-render-resources","tilewright-render-testkit","tilewright-render-world","tilewright-scene","tilewright-source"] and
   deps("tilewright-editor-testkit") == ["serde_json","sha2","tilewright-editor-project","tilewright-source"] and
-  deps("tilewright-editor-proposal") == ["serde_json","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-preview","tilewright-editor-testkit","tilewright-editor-ui","tilewright-jsonc"] and
+  deps("tilewright-editor-proposal") == ["serde_json","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-preview","tilewright-editor-testkit","tilewright-editor-ui","tilewright-jsonc","tilewright-source"] and
   deps("tilewright-editor-recovery") == ["sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-testkit","tilewright-source"] and
   deps("tilewright-editor") == ["png","pollster","sdl3","serde_json","sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-mcp","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-recovery","tilewright-editor-testkit","tilewright-editor-ui","tilewright-render-api","tilewright-render-resources","tilewright-render-sdl3","tilewright-render-testkit","tilewright-render-ui","tilewright-render-wgpu","tilewright-render-world","tilewright-scene","tilewright-source"] and
   ([.packages[].name | select(test("(client|protocol|server)"; "i"))] | length == 0) and
@@ -46,7 +46,7 @@ for directory in "${read_only[@]}"; do
   }
 done
 if grep -RnE --include='*.rs' \
-  '\b(Session|History|DurableRecovery|RecoveryStore|Proposal)\b|tilewright_edit::|tilewright_editor_(commands|proposal|recovery|ui)\b|provision' \
+  '\b(Session|History|DurableRecovery|RecoveryStore|Proposal|ProposalStore)\b|tilewright_edit::|tilewright_editor_(commands|proposal|recovery|ui)\b|provision' \
   crates/tilewright-editor-mcp/src | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
   echo "the read-only MCP server reaches the ui crate, editing, history, recovery or provisioning" >&2
   exit 1
