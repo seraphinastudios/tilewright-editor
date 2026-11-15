@@ -31,6 +31,8 @@ class PackageAssetTests(unittest.TestCase):
             stage = Path(temporary)
             assets.package_assets(ROOT, stage)
             self.assertEqual((stage/'tools/provision-prototype.py').read_bytes(), (ROOT/'tools/provision-prototype.py').read_bytes())
+            # The sandbox helper loads the prototype helper from beside it.
+            self.assertEqual((stage/'tools/provision-sandbox.py').read_bytes(), (ROOT/'tools/provision-sandbox.py').read_bytes())
             self.assertTrue((stage/'samples/prototype-neutral/world.jsonc').is_file())
             self.assertFalse((stage/'samples/prototype-neutral/generate_assets.py').exists())
             self.assertFalse(any(stage.rglob('*.map')))

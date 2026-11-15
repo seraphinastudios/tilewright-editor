@@ -7,6 +7,7 @@ mod font_pack;
 mod native_input;
 mod prototype;
 mod render_command;
+mod sandbox_command;
 mod viewport;
 mod workspace_render;
 mod workspace_ui;
@@ -64,6 +65,10 @@ fn main() {
         "prototype" => {
             let arguments: Vec<String> = std::env::args().skip(2).collect();
             prototype::run(&arguments).unwrap_or_else(|error| fail(&error));
+        }
+        "sandbox" => {
+            let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(2).collect();
+            sandbox_command::run(&arguments).unwrap_or_else(|error| fail(&error));
         }
         "window" => {
             let sdl = sdl3::init().unwrap_or_else(|error| fail(&error));
@@ -134,7 +139,7 @@ fn mcp() {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: tilewright-editor [version | open ROOT | headless ROOT | window | mcp ROOT | prototype (use provision helper)]\n{}",
+        "usage: tilewright-editor [version | open ROOT | headless ROOT | window | mcp ROOT | prototype (use provision helper) | sandbox (use tools/provision-sandbox.py)]\n{}",
         tilewright_editor_observe::cli::USAGE
     );
     std::process::exit(2);

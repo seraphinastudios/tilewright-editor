@@ -89,6 +89,7 @@ cargo run --locked --package tilewright-editor -- open crates/tilewright-editor-
 cargo run --locked --package tilewright-editor -- headless crates/tilewright-editor-testkit/fixtures/meadow
 SDL_VIDEO_DRIVER=dummy cargo run --locked --package tilewright-editor -- window
 python3 tools/provision-prototype.py --world crates/tilewright-editor-testkit/fixtures/prototype-neutral --destination /absolute/private/new-session --editor target/debug/tilewright-editor
+python3 tools/provision-sandbox.py --world crates/tilewright-editor-testkit/fixtures/prototype-neutral --destination-parent /absolute/private/sandboxes --actor agent:example --editor target/debug/tilewright-editor
 tools/validate.sh
 ```
 
@@ -113,6 +114,16 @@ cargo run --locked --package tilewright-editor -- lint crates/tilewright-editor-
 cargo run --locked --package tilewright-editor -- render --out /absolute/path/outside/the/world/neutral.png crates/tilewright-editor-testkit/fixtures/prototype-neutral
 cargo run --locked --package tilewright-editor -- mcp crates/tilewright-editor-testkit/fixtures/prototype-neutral
 ```
+
+## Agent sandboxes
+
+An agent edits only in its own sandbox, a fresh private copy of a world that
+`tools/provision-sandbox.py` makes for each run (Linux only), and submits a
+proposal; only a person applies a proposal, step by step, through Review and
+Accept. The helper starts `tilewright-editor sandbox`, which reads one JSON
+request per line on standard input (`status`, `edit`, `review`, `accept`,
+`cancel`, `undo`, `redo`, `submit`, `quit`) and answers one JSON line each.
+See [agent sandboxes](docs/SANDBOX.md) and [proposals](docs/PROPOSALS.md).
 
 `tools/validate.sh` checks formatting, Clippy-as-errors, all tests/docs,
 dependency architecture/licenses/advisories, provenance/assets, path/inventory

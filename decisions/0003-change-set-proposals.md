@@ -63,6 +63,61 @@ library code):
 The digests detect corruption, not forgery by a same-user agent; safety
 comes from dispatching again under the person's grants, the strict base
 and the person's review of every step. [docs/PROPOSALS.md](../docs/PROPOSALS.md)
-describes the format. The provisioner's sandbox mode and a headless runner, MCP editing tools and the
-desktop's proposal review are later work, as are rebasing a proposal onto a
-newer world and reviewing it as one change.
+describes the format. MCP editing tools and the desktop's proposal review
+are later work, as are rebasing a proposal onto a newer world and
+reviewing it as one change.
+
+## Addendum: sandboxes and the headless runner (PR 6b, 2026-11-15)
+
+The provisioning helper's sandbox mode and the headless runner
+([docs/SANDBOX.md](../docs/SANDBOX.md)) implement owner decisions 3 and 4.
+Decisions made with them (coordinator and PR worker, easy to revisit):
+
+- The sandbox mode is a sibling entry point, `tools/provision-sandbox.py`,
+  that loads the prototype helper's directory, mount, identity and copy
+  code from beside it. `tools/provision-prototype.py` is unchanged, so the
+  prototype mode's behaviour and output are byte for byte what they were.
+- Each start makes a new child `sandbox-<UTC time>-<random>` of a fixed
+  parent, so one launch configuration can be started again and again;
+  sandboxes are never reused or deleted. A sandbox has `world/`,
+  `recovery/` and `proposals/`, and no `evidence/`: the runner writes no
+  evidence. The helper prints nothing on standard output and execs the
+  runner, so the runner's streams are the client's.
+- A sandbox actor must be `agent:` followed by a name; the helper and the
+  runner both refuse anything else, so a sandbox step can never carry a
+  person's or the prototype's actor. The client label is optional,
+  untrusted, 1 to 256 bytes.
+- The receipt digest reaches the runner as an argument from the trusted
+  helper, which hashes the exact bytes it wrote; the runner holds no
+  descriptor for the receipt.
+- The runner is its own crate, `tilewright-editor-sandbox`, which names
+  the session and the proposal crate; the read-only observe and MCP crates
+  cannot name it. The request reader names no path type
+  (`tools/check-architecture.sh`). Its line protocol is plain JSON lines,
+  not MCP; PR 6c wraps it. An edit's action is the proposal format's
+  Action form, so there is one wire form for Actions.
+- Undo and redo in the runner mirror the engine: each prepares a reviewed
+  change that `accept` publishes or `cancel` drops.
+- After a submit the session goes on. A later submit records every applied
+  step from the sandbox's start, a new proposal with a new digest; the
+  same steps give the same file again, written once.
+- Replies are capped at 256 KiB; lists that do not fit are cut from the
+  end and counted, with a `cut` flag. Accept is always gated on the
+  engine's own review.
+- The bounded line reader moves from the MCP crate to the observe crate
+  (`line`), unchanged, so both servers read lines the same way.
+- The runner confines what its requests can do, not a same-user process
+  with a shell or file tools; against that, safety rests on the person's
+  review when applying, as for proposals generally.
+- A failed publication blocks the run for good: steps not yet submitted
+  stay unsubmitted, and the sandbox cannot be restarted (its recovery store
+  has records). A new sandbox is the way forward, so agents submit after
+  each batch worth keeping. Refusals carry the engine's code in `engine`
+  whenever the engine decided them.
+- After the recovery store refuses one record it refuses every later one,
+  so the runner answers every later Accept at once with `recovery.failed`
+  and `status` shows `recovery_failed`; submit still works. Any run end
+  leaves a sandbox that cannot be restarted once a step was accepted.
+- The helper copies the world from the descriptor it checked before making
+  the sandbox, and closes every descriptor it holds or inherited but the
+  three, as `/proc/self/fd` lists them (failing closed without it).

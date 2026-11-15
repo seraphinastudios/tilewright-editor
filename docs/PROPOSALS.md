@@ -6,10 +6,13 @@ a proposal to their world, one step at a time, through the normal Review
 and Accept (issue #57, [ADR 0003](../decisions/0003-change-set-proposals.md)).
 This page describes the format, its bounds and checks, and how a proposal
 is applied, as the `tilewright-editor-proposal` crate implements them.
-Making sandboxes, submitting from an agent and opening a proposal in the
-desktop (what the person sees for each step: PR 6d) are later work;
-nothing described here lets an agent publish to a person's world, and
-nothing publishes except the person's own Accept.
+Sandboxes and submitting from an agent are in [docs/SANDBOX.md](SANDBOX.md):
+the provisioning helper's sandbox mode and the headless runner, whose
+`submit` builds a proposal with `Proposal::from_session` and retains it in
+the sandbox's `proposals/` directory. Opening a proposal in the desktop
+(what the person sees for each step: PR 6d) is later work; nothing
+described here lets an agent publish to a person's world, and nothing
+publishes except the person's own Accept.
 
 ## The document
 
@@ -38,12 +41,12 @@ The body, exactly these members:
 | Member | Value |
 |---|---|
 | `editor` | The version string the writing editor build reports for itself, as the caller passes it to `Proposal::from_session`: today the workspace crate version (0.1.0 in every release), not the release tag. 1 to 64 printable ASCII characters, no space. Informational; nothing checks it against the reader. |
-| `actor` | The actor of every step, a valid engine actor (1 to 256 printable ASCII characters). In a sandbox it comes from the operator's flag, never from the client. |
+| `actor` | The actor of every step, a valid engine actor (1 to 256 printable ASCII characters). In a sandbox it comes from the operator's flag (`agent:<name>`, [docs/SANDBOX.md](SANDBOX.md)), never from the client. |
 | `client` | `null`, or an untrusted label of at most 256 bytes, such as the name an MCP client gave itself. It is never an actor and is shown escaped (`Proposal::client_display`). |
 | `base` | The World revision the first step starts from. |
 | `result` | The World revision the last step ends at. |
 | `catalog` | The revision of the editor catalog (`preview.jsonc`) the steps were made under. |
-| `receipt` | The digest of the sandbox's provisioning receipt, recorded as given. |
+| `receipt` | The digest of the sandbox's provisioning receipt, recorded as given: in a sandbox, the SHA-256 of its `provision.json`. |
 | `steps` | The applied steps, oldest first: 1 to 256. |
 
 Each step, exactly these members:
@@ -292,7 +295,7 @@ step. Nothing in the crate publishes on its own.
 ## The store
 
 `ProposalStore::open(root)` takes a directory the caller already opened (in
-a sandbox, the `proposals/` directory the provisioner will pass): the
+a sandbox, the `proposals/` directory the provisioner passes): the
 current user's alone (mode 0700, no access control list) on a checked
 local file system, locked for as long as the store is held. Linux only:
 elsewhere it is refused with `proposal.store`, as recovery is.

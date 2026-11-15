@@ -26,6 +26,7 @@
 pub mod catalog;
 pub mod cli;
 pub mod limits;
+pub mod line;
 pub mod lint;
 pub mod node;
 pub mod overview;

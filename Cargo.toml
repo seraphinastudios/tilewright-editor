@@ -9,6 +9,7 @@ members = [
   "crates/tilewright-editor-project",
   "crates/tilewright-editor-proposal",
   "crates/tilewright-editor-recovery",
+  "crates/tilewright-editor-sandbox",
   "crates/tilewright-editor-testkit",
   "crates/tilewright-editor-ui",
 ]
@@ -30,6 +31,7 @@ tilewright-editor-preview = { path = "crates/tilewright-editor-preview", version
 tilewright-editor-project = { path = "crates/tilewright-editor-project", version = "=0.1.0" }
 tilewright-editor-proposal = { path = "crates/tilewright-editor-proposal", version = "=0.1.0" }
 tilewright-editor-recovery = { path = "crates/tilewright-editor-recovery", version = "=0.1.0" }
+tilewright-editor-sandbox = { path = "crates/tilewright-editor-sandbox", version = "=0.1.0" }
 tilewright-editor-testkit = { path = "crates/tilewright-editor-testkit", version = "=0.1.0" }
 tilewright-editor-ui = { path = "crates/tilewright-editor-ui", version = "=0.1.0" }
 tilewright-edit = "=0.2.0"
