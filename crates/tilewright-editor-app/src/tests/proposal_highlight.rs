@@ -557,6 +557,10 @@ fn the_persons_own_brush_preview_wins_on_a_shared_cell() {
         ("cell", [2, 1]),
     ]));
     assert_eq!(drawn(app), all);
+    // Nothing is drawn on a prepared scene of another frame.
+    app.view.frame_revision += 1;
+    assert!(drawn(app).is_empty());
+    app.view.frame_revision -= 1;
     app.control(Control::Terrain).unwrap();
     app.control(Control::Palette {
         grid: "floor".into(),
@@ -697,6 +701,7 @@ fn render(
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_highlight_changes_only_its_tiles_pixels_and_never_what_a_click_picks() {
     let mut twin = twin(1, |_| {}, |_| {}, None);
     open(&mut twin);
@@ -707,7 +712,36 @@ fn the_highlight_changes_only_its_tiles_pixels_and_never_what_a_click_picks() {
     assert!(app.tools.zones_visible());
     for pending in [false, true] {
         app.refresh_ui();
-        let with = render(crate::prototype::workspace_presentation(app).unwrap());
+        let composed = crate::prototype::workspace_presentation(app).unwrap();
+        // A highlight copy and a zone tint in one World slot: the highlight
+        // draws after (copies in a slot draw in identity order).
+        let is_highlight = |quad: &tilewright_scene::Quad| {
+            !quad.pickable && (quad.color == HIGHLIGHT_TINT || quad.color == HIGHLIGHT_FROM_TINT)
+        };
+        let is_zone = |quad: &tilewright_scene::Quad| {
+            !quad.pickable
+                && (0..tilewright_editor_ui::zones::TINTS.len()).any(|tint| {
+                    quad.color.map(f32::to_bits)
+                        == tilewright_editor_ui::zones::tint_color(tint).map(f32::to_bits)
+                })
+        };
+        let mut shared = 0;
+        for over in composed
+            .scene
+            .quads()
+            .iter()
+            .filter(|quad| is_highlight(quad))
+        {
+            for under in composed.scene.quads().iter().filter(|quad| {
+                is_zone(quad)
+                    && (quad.depth, quad.painter_order) == (over.depth, over.painter_order)
+            }) {
+                assert!(over.semantic_id.0 > under.semantic_id.0);
+                shared += 1;
+            }
+        }
+        assert!(shared > 0, "a highlighted tile has a zone tint");
+        let with = render(composed);
         // The same frame with the highlight taken out: what main draws.
         let kept = app.proposal.as_mut().unwrap().highlight.take();
         assert!(crate::prototype::proposal_overlay(app).is_empty());
