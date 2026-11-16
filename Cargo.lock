@@ -1457,6 +1457,7 @@ dependencies = [
  "tilewright-editor-commands",
  "tilewright-editor-document",
  "tilewright-editor-mcp",
+ "tilewright-editor-mcp-sandbox",
  "tilewright-editor-observe",
  "tilewright-editor-preview",
  "tilewright-editor-proposal",
@@ -1504,6 +1505,26 @@ dependencies = [
  "tilewright-editor-observe",
  "tilewright-editor-preview",
  "tilewright-editor-testkit",
+ "tilewright-jsonc",
+ "tilewright-source",
+]
+
+[[package]]
+name = "tilewright-editor-mcp-sandbox"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "tilewright-editor-commands",
+ "tilewright-editor-document",
+ "tilewright-editor-mcp",
+ "tilewright-editor-observe",
+ "tilewright-editor-preview",
+ "tilewright-editor-proposal",
+ "tilewright-editor-recovery",
+ "tilewright-editor-sandbox",
+ "tilewright-editor-testkit",
+ "tilewright-editor-ui",
  "tilewright-jsonc",
  "tilewright-source",
 ]

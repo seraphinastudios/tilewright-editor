@@ -1,0 +1,36 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "submit",
+      "code": "proposal.budget",
+      "engine": null,
+      "step": null,
+      "message": "a proposal holds at most 256 steps",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 257,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}

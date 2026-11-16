@@ -17,8 +17,9 @@ jq -e '
   deps("tilewright-editor-testkit") == ["serde_json","sha2","tilewright-editor-project","tilewright-source"] and
   deps("tilewright-editor-proposal") == ["serde_json","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-preview","tilewright-editor-testkit","tilewright-editor-ui","tilewright-jsonc","tilewright-source"] and
   deps("tilewright-editor-sandbox") == ["serde_json","tempfile","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-proposal","tilewright-editor-recovery","tilewright-editor-testkit","tilewright-editor-ui","tilewright-jsonc","tilewright-source"] and
+  deps("tilewright-editor-mcp-sandbox") == ["serde_json","tempfile","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-mcp","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-proposal","tilewright-editor-recovery","tilewright-editor-sandbox","tilewright-editor-testkit","tilewright-editor-ui","tilewright-jsonc","tilewright-source"] and
   deps("tilewright-editor-recovery") == ["sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-testkit","tilewright-source"] and
-  deps("tilewright-editor") == ["png","pollster","sdl3","serde_json","sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-mcp","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-proposal","tilewright-editor-recovery","tilewright-editor-sandbox","tilewright-editor-testkit","tilewright-editor-ui","tilewright-render-api","tilewright-render-resources","tilewright-render-sdl3","tilewright-render-testkit","tilewright-render-ui","tilewright-render-wgpu","tilewright-render-world","tilewright-scene","tilewright-source"] and
+  deps("tilewright-editor") == ["png","pollster","sdl3","serde_json","sha2","tempfile","tilewright-edit","tilewright-editor-commands","tilewright-editor-document","tilewright-editor-mcp","tilewright-editor-mcp-sandbox","tilewright-editor-observe","tilewright-editor-preview","tilewright-editor-proposal","tilewright-editor-recovery","tilewright-editor-sandbox","tilewright-editor-testkit","tilewright-editor-ui","tilewright-render-api","tilewright-render-resources","tilewright-render-sdl3","tilewright-render-testkit","tilewright-render-ui","tilewright-render-wgpu","tilewright-render-world","tilewright-scene","tilewright-source"] and
   ([.packages[].name | select(test("(client|protocol|server)"; "i"))] | length == 0) and
   all(.packages[].dependencies[];
     (.source // "") as $source |
@@ -67,6 +68,15 @@ test -d "${sandbox}" || {
   echo "missing ${sandbox}" >&2
   exit 1
 }
+# The MCP editing server reaches the sandbox only through the runner's
+# typed entry point and the world only through the observe tools: it is
+# held to the sandbox runner's import rule, and below it opens no root or
+# directory and writes nothing itself, as the read-only crates.
+mcp_editing=crates/tilewright-editor-mcp-sandbox/src
+test -d "${mcp_editing}" || {
+  echo "missing ${mcp_editing}" >&2
+  exit 1
+}
 # Nor do they name the standard library's file, network or process
 # modules, its file types, or a directory-creating call, however the import
 # is spelled. Each file is read with its comment lines dropped and its lines
@@ -85,7 +95,7 @@ while IFS= read -r -d '' file; do
     echo "${file} names file, network or process access" >&2
     exit 1
   fi
-done < <(find "${read_only[@]}" "${sandbox}" -name '*.rs' -print0 | sort -z)
+done < <(find "${read_only[@]}" "${sandbox}" "${mcp_editing}" -name '*.rs' -print0 | sort -z)
 # Nor do they write: `render` returns pixels, the binary writes the one
 # file `--out` names, and the MCP server returns the image in its reply. World's confined access writes only through a
 # directory it opens (`write`, or `create` for a file only made new), and
@@ -98,8 +108,8 @@ done < <(find "${read_only[@]}" "${sandbox}" -name '*.rs' -print0 | sort -z)
 # than loosening the pattern below.
 if grep -RnE --include='*.rs' \
   '\b(SourceRoot|SourceDirectory|SourceLock|canonicalize|make_directory)\b|\.(directory|lock)[[:space:]]*\(|(\.|::)(rename|remove_file|remove_directory|set_own_access|make_directory|write|create)[[:space:]]*\(' \
-  "${read_only[@]}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
-  echo "the read-only observe crate or MCP server opens a root or directory, locks, resolves a path or writes" >&2
+  "${read_only[@]}" "${mcp_editing}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
+  echo "the read-only observe crate, the MCP server or the MCP editing server opens a root or directory, locks, resolves a path or writes" >&2
   exit 1
 fi
 
@@ -107,9 +117,9 @@ fi
 # it is given: a request carries no path, so the module that reads requests
 # names no path, root or OS string type. The crate's tests pin each
 # request's members, which is what keeps paths out of requests.
-if grep -RnE --include='*.rs' '\benv[[:space:]]*(::|!|;|,|\}|as[[:space:]])' "${sandbox}" |
+if grep -RnE --include='*.rs' '\benv[[:space:]]*(::|!|;|,|\}|as[[:space:]])' "${sandbox}" "${mcp_editing}" |
   grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
-  echo "the sandbox runner reads the environment" >&2
+  echo "the sandbox runner or the MCP editing server reads the environment" >&2
   exit 1
 fi
 sandbox_requests=crates/tilewright-editor-sandbox/src/request.rs
@@ -120,5 +130,28 @@ test -f "${sandbox_requests}" || {
 if grep -nE '\b(Path|PathBuf|OsStr|OsString|SourceRoot|SourceDirectory)\b|std::(path|env)' \
   "${sandbox_requests}" | grep -vE '^[0-9]+:[[:space:]]*//' >/dev/null; then
   echo "the sandbox runner's requests name a path, root or environment" >&2
+  exit 1
+fi
+# Standard output belongs to the servers' protocols from the first byte:
+# the observe, MCP, sandbox and MCP editing crates write replies only to
+# the writer `serve` is given, and the binary alone opens the process's
+# streams. So none of their sources prints, debug-prints or names the
+# process's standard streams (tests aside).
+if grep -RnE --include='*.rs' --exclude-dir=tests --exclude=tests.rs \
+  '\b(e?print(ln)?|dbg)!|\b(stdout|stderr)[[:space:]]*\(' \
+  "${read_only[@]}" "${sandbox}" "${mcp_editing}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
+  echo "an observe, MCP, sandbox or MCP editing source writes to the process's standard streams" >&2
+  exit 1
+fi
+# Nor does the MCP editing server take a path from a tool call: the module
+# that reads tool arguments names no path, root or OS string type.
+mcp_editing_tools=crates/tilewright-editor-mcp-sandbox/src/tools.rs
+test -f "${mcp_editing_tools}" || {
+  echo "missing ${mcp_editing_tools}" >&2
+  exit 1
+}
+if grep -nE '\b(Path|PathBuf|OsStr|OsString|SourceRoot|SourceDirectory)\b|std::(path|env)' \
+  "${mcp_editing_tools}" "${mcp_editing}/action.rs" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
+  echo "the MCP editing server's tools name a path, root or environment" >&2
   exit 1
 fi

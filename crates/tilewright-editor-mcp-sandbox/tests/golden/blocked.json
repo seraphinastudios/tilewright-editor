@@ -1,0 +1,180 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "submit",
+      "code": "session.blocked",
+      "engine": "session.blocked",
+      "step": null,
+      "message": "the session is blocked; record nothing from it",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "blocked",
+        "pending": true,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "cancel",
+      "code": "session.blocked",
+      "engine": "session.blocked",
+      "step": null,
+      "message": "session blocked: inspect recovery and reopen explicitly",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "blocked",
+        "pending": true,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "accept",
+      "code": "session.blocked",
+      "engine": "session.blocked",
+      "step": null,
+      "message": "session blocked: inspect recovery and reopen explicitly",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "blocked",
+        "pending": true,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "undo",
+      "code": "session.blocked",
+      "engine": "session.blocked",
+      "step": null,
+      "message": "session blocked: inspect recovery and reopen explicitly",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "blocked",
+        "pending": true,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "redo",
+      "code": "session.blocked",
+      "engine": "session.blocked",
+      "step": null,
+      "message": "session blocked: inspect recovery and reopen explicitly",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "blocked",
+        "pending": true,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}

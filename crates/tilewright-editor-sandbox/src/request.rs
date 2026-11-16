@@ -134,15 +134,7 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
     }
     Ok(match known {
         "status" => Request::Status,
-        "edit" => {
-            let action = document.root().get("action").expect("members were checked");
-            let action = decode_action(action).map_err(|error| Refused {
-                request: Some("edit"),
-                code: error.code().as_str(),
-                message: format!("the action is not in the proposal format's form: {error}"),
-            })?;
-            Request::Edit(action)
-        }
+        "edit" => edit(document.root().get("action").expect("members were checked"))?,
         "review" => Request::Review,
         "accept" => Request::Accept,
         "cancel" => Request::Cancel,
@@ -151,6 +143,17 @@ pub fn read(line: &[u8]) -> Result<Request, Refused> {
         "submit" => Request::Submit,
         _ => Request::Quit,
     })
+}
+
+/// An edit of `action`, read by the proposal crate's decoder.
+pub fn edit(action: &Value) -> Result<Request, Refused> {
+    decode_action(action)
+        .map(Request::Edit)
+        .map_err(|error| Refused {
+            request: Some("edit"),
+            code: error.code().as_str(),
+            message: format!("the action is not in the proposal format's form: {error}"),
+        })
 }
 
 #[cfg(test)]

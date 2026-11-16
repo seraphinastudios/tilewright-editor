@@ -4,12 +4,13 @@
 Every start makes a new uniquely named child of --destination-parent with
 private world/, recovery/ and proposals/ directories, copies the world into
 it with the prototype provisioner's rules and limits, writes provision.json,
-and replaces itself with `tilewright-editor sandbox`, passing the three
+and replaces itself with `tilewright-editor sandbox` (or, with --mcp, the
+MCP editing server `tilewright-editor sandbox-mcp`), passing the three
 directories as open descriptors. Nothing is adopted, reused or deleted.
 
-Standard output belongs to the runner's line protocol: this helper prints
+Standard output belongs to the runner's protocol: this helper prints
 nothing there. It writes one escaped line to standard error naming the
-sandbox and its receipt. See docs/SANDBOX.md.
+sandbox and its receipt. See docs/SANDBOX.md and docs/MCP-EDITING.md.
 """
 # Copyright 2026 Seraphina Studios. SPDX-License-Identifier: MIT
 import argparse
@@ -144,7 +145,11 @@ def main():
     parser.add_argument('--actor', required=True, help='agent:<name>, the actor of every sandbox step')
     parser.add_argument('--client-label', help='untrusted label recorded in proposals, at most 256 bytes')
     parser.add_argument('--editor', type=Path, help='trusted built editor executable; omit to provision only')
+    parser.add_argument('--mcp', action='store_true',
+                        help='start the MCP editing server (sandbox-mcp) instead of the line runner; needs --editor')
     args = parser.parse_args()
+    if args.mcp and args.editor is None:
+        raise ValueError('--mcp starts the MCP editing server and needs --editor')
     actor = sandbox_actor(args.actor)
     label = client_label(args.client_label)
     if sys.platform != 'linux':
@@ -205,7 +210,7 @@ def main():
             raise ValueError('session identity or mount changed before launch')
         if executable is None:
             return 0
-        command = [str(executable), 'sandbox',
+        command = [str(executable), 'sandbox-mcp' if args.mcp else 'sandbox',
                    '--world-fd', str(children['world']),
                    '--recovery-fd', str(children['recovery']),
                    '--proposals-fd', str(children['proposals']),

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 //! `tilewright-editor sandbox`: the headless sandbox runner
-//! (`docs/SANDBOX.md`). Like `prototype`, it is a deployment seam, started
+//! (`docs/SANDBOX.md`), and `tilewright-editor sandbox-mcp`, the MCP
+//! editing server on the same kind of sandbox (`docs/MCP-EDITING.md`). Like `prototype`, it is a deployment seam, started
 //! only by the trusted provisioning helper (`tools/provision-sandbox.py`)
 //! with the sandbox's fresh directories as open descriptors; it takes no
 //! path at all.
@@ -103,7 +104,17 @@ fn digest(text: &str) -> Option<[u8; 32]> {
     Some(digest)
 }
 
-pub fn run(arguments: &[OsString]) -> Result<(), String> {
+/// The provisioned sandbox the options name, and the path that reaches
+/// its world copy.
+fn open(
+    arguments: &[OsString],
+) -> Result<
+    (
+        Sandbox<tilewright_editor_recovery::DurableRecovery>,
+        PathBuf,
+    ),
+    String,
+> {
     if !cfg!(target_os = "linux") {
         return Err("the sandbox runner requires Linux; other platforms remain read-only".into());
     }
@@ -117,7 +128,7 @@ pub fn run(arguments: &[OsString]) -> Result<(), String> {
         receipt,
         editor: env!("CARGO_PKG_VERSION").to_owned(),
     };
-    let mut sandbox = Sandbox::open(
+    let sandbox = Sandbox::open(
         &world,
         SourceRoot::new(&recovery),
         SourceRoot::new(&proposals),
@@ -125,20 +136,47 @@ pub fn run(arguments: &[OsString]) -> Result<(), String> {
         settings,
     )
     .map_err(|error| error.to_string())?;
-    match sandbox.serve(
-        std::io::stdin().lock(),
-        std::io::stdout().lock(),
-        &mut std::io::stderr(),
-    ) {
-        // A client that closes the runner's output is done with it.
+    Ok((sandbox, world))
+}
+
+/// A served run's end: a client that closes the output is done with it.
+fn ended(outcome: std::io::Result<()>) -> Result<(), String> {
+    match outcome {
         Err(error) if error.kind() != std::io::ErrorKind::BrokenPipe => Err(error.to_string()),
         _ => Ok(()),
     }
 }
 
+/// `sandbox`: the JSON-lines runner.
+pub fn run(arguments: &[OsString]) -> Result<(), String> {
+    let (mut sandbox, _) = open(arguments)?;
+    ended(sandbox.serve(
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+        &mut std::io::stderr(),
+    ))
+}
+
+/// `sandbox-mcp`: the MCP editing server on the same sandbox
+/// (`docs/MCP-EDITING.md`), with the same options.
+pub fn run_mcp(arguments: &[OsString]) -> Result<(), String> {
+    let (sandbox, world) = open(arguments)?;
+    let mut server = tilewright_editor_mcp_sandbox::server(
+        sandbox,
+        &world,
+        env!("CARGO_PKG_VERSION"),
+        crate::render_command::encode_with_digest,
+    );
+    ended(server.serve(
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+        &mut std::io::stderr(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Options, digest, run};
+    use super::{Options, digest, run, run_mcp};
     use std::ffi::OsString;
 
     fn arguments(text: &[&str]) -> Vec<OsString> {
@@ -260,6 +298,7 @@ mod tests {
             ],
         ] {
             assert!(run(&arguments(refused)).is_err(), "{refused:?}");
+            assert!(run_mcp(&arguments(refused)).is_err(), "{refused:?}");
         }
     }
 }

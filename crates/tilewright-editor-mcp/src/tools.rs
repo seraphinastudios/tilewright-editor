@@ -19,7 +19,7 @@ use crate::budget::{
 };
 use crate::schema::{Schema, Shape};
 use crate::snapshot::{Snapshot, State, Valid};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tilewright_editor_observe::node::{Map, Node, json_string, to_compact_json};
 use tilewright_editor_observe::world::load_failure_paged;
 use tilewright_editor_observe::{catalog, lint, overview, render, tile};
@@ -166,7 +166,7 @@ impl Tool {
             ),
             Self::Render => object(
                 format!(
-                    r#""region":{{"type":"array","prefixItems":[{{"type":"integer","minimum":-{MAXIMUM_COORDINATE},"maximum":{MAXIMUM_COORDINATE}}},{{"type":"integer","minimum":-{MAXIMUM_COORDINATE},"maximum":{MAXIMUM_COORDINATE}}},{{"type":"integer","minimum":1,"maximum":{MAXIMUM_COORDINATE}}},{{"type":"integer","minimum":1,"maximum":{MAXIMUM_COORDINATE}}}],"items":false,"minItems":4,"maxItems":4,"description":"Tiles [x, y, width, height] inside the catalog's view, width and height at least 1; the whole view by default."}},"scale":{{"type":"integer","minimum":1,"maximum":{MAXIMUM_SCALE},"default":1,"description":"Screen pixels per art pixel."}},{REVISION}"#
+                    r#""region":{{"type":"array","items":{{"type":"integer","minimum":-{MAXIMUM_COORDINATE},"maximum":{MAXIMUM_COORDINATE}}},"minItems":4,"maxItems":4,"description":"Tiles [x, y, width, height] inside the catalog's view; width and height must be at least 1, which the server checks; the whole view by default."}},"scale":{{"type":"integer","minimum":1,"maximum":{MAXIMUM_SCALE},"default":1,"description":"Screen pixels per art pixel."}},{REVISION}"#
                 ),
                 "",
             ),
@@ -181,28 +181,114 @@ impl Tool {
 /// in a fixed order.
 pub fn list() -> String {
     let mut result = String::from("\"tools\":[");
-    for (index, tool) in Tool::ALL.into_iter().enumerate() {
+    entries(&Tool::ALL, &mut result);
+    result.push(']');
+    result
+}
+
+/// The `tools/list` entries of `tools`, comma-separated.
+fn entries(tools: &[Tool], result: &mut String) {
+    for (index, tool) in tools.iter().copied().enumerate() {
         if index > 0 {
             result.push(',');
         }
         result.push_str("{\"name\":");
-        json_string(tool.name(), &mut result);
+        json_string(tool.name(), result);
         result.push_str(",\"title\":");
-        json_string(tool.title(), &mut result);
+        json_string(tool.title(), result);
         result.push_str(",\"description\":");
-        json_string(tool.description(), &mut result);
+        json_string(tool.description(), result);
         result.push_str(",\"inputSchema\":");
         result.push_str(&tool.input_schema());
         result.push_str(",\"outputSchema\":");
         result.push_str(&output(tool).to_json());
         result.push_str(",\"annotations\":{\"title\":");
-        json_string(tool.title(), &mut result);
+        json_string(tool.title(), result);
         result.push_str(
             ",\"readOnlyHint\":true,\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":false}}",
         );
     }
-    result.push(']');
-    result
+}
+
+/// The observe tools, without `refresh`: what another server may offer on
+/// a world through an [`Observer`], in `tools/list` order.
+pub const OBSERVE_TOOLS: [&str; 5] = ["overview", "tile", "catalog", "lint", "render"];
+
+/// The observe tools on one world: its snapshot, the root it was loaded
+/// from, and `render`'s encoder. The read-only server is one, with
+/// `refresh`; another server may hold one and reload it when it knows the
+/// world changed.
+pub struct Observer {
+    snapshot: Snapshot,
+    root: PathBuf,
+    encode: Encode,
+}
+
+impl Observer {
+    /// Loads the world at `root`, as the read-only server does at start.
+    #[must_use]
+    pub fn open(root: &Path, encode: Encode) -> Self {
+        Self {
+            snapshot: Snapshot::load(root),
+            root: root.to_path_buf(),
+            encode,
+        }
+    }
+
+    /// The revision of the snapshot, when the world loads.
+    #[must_use]
+    pub fn revision(&self) -> Option<&str> {
+        self.snapshot.revision()
+    }
+
+    /// Loads the world again, as `refresh` does (the old snapshot is
+    /// dropped first), and returns whether the snapshot changed; cursors
+    /// issued before then are stale.
+    pub fn reload(&mut self) -> bool {
+        let previous = std::mem::replace(&mut self.snapshot, Snapshot::empty());
+        let binding = previous.binding.clone();
+        drop(previous);
+        self.snapshot = Snapshot::load(&self.root);
+        self.snapshot.binding != binding
+    }
+
+    /// The `tools/list` entries of [`OBSERVE_TOOLS`], comma-separated, as
+    /// the read-only server lists them.
+    #[must_use]
+    pub fn entries() -> String {
+        let mut result = String::new();
+        entries(&Tool::ALL[..OBSERVE_TOOLS.len()], &mut result);
+        result
+    }
+
+    /// The members of a `tools/call` result of one of [`OBSERVE_TOOLS`]
+    /// after `resultType`, or `None` for any other name.
+    pub fn call(&mut self, name: &str, arguments: Option<&Value>) -> Option<String> {
+        Tool::named(name)
+            .filter(|tool| *tool != Tool::Refresh)
+            .map(|tool| self.call_tool(tool, arguments))
+    }
+
+    /// As [`Observer::call`], and `refresh` too.
+    pub(crate) fn call_any(&mut self, name: &str, arguments: Option<&Value>) -> Option<String> {
+        Tool::named(name).map(|tool| self.call_tool(tool, arguments))
+    }
+
+    fn call_tool(&mut self, tool: Tool, arguments: Option<&Value>) -> String {
+        call(tool, arguments, &mut self.snapshot, &self.root, self.encode)
+    }
+
+    /// One line on the snapshot for the log: this server's words and a
+    /// revision in hex, never world text.
+    pub fn status(&self) -> String {
+        match self.snapshot.revision() {
+            Some(revision) => format!("serving revision {revision}"),
+            None => format!(
+                "the world does not load ({} problem(s)); its tools report why",
+                self.snapshot.diagnostics().len()
+            ),
+        }
+    }
 }
 
 /// The output schema of the tool named `name`.
@@ -703,7 +789,7 @@ impl Success {
 }
 
 /// The fields of the `tools/call` result of `tool`, after `resultType`.
-pub fn call(
+fn call(
     tool: Tool,
     arguments: Option<&Value>,
     snapshot: &mut Snapshot,

@@ -38,14 +38,13 @@ pub use budget::{
     DEFAULT_LIMIT, MAXIMUM_CURSOR_BYTES, MAXIMUM_IMAGE_BYTES, MAXIMUM_IMAGE_PIXELS,
     MAXIMUM_IMAGE_SIDE, MAXIMUM_LIMIT, MAXIMUM_RESULT_BYTES, MAXIMUM_SCALE, cost, is_binding,
 };
-pub use schema::Schema;
-pub use tools::{TOOLS, load_failure_schema, output_schema};
+pub use schema::{Schema, Shape};
+pub use tools::{OBSERVE_TOOLS, Observer, TOOLS, load_failure_schema, output_schema};
 
-use snapshot::Snapshot;
 use std::{
     fmt::Write as _,
     io::{self, BufRead, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 use tilewright_editor_observe::line::{Line, read_line};
 use tilewright_editor_observe::node::json_string;
@@ -70,9 +69,9 @@ const TTL_MS: u32 = 3_600_000;
 /// next newline.
 pub const MAXIMUM_MESSAGE_BYTES: usize = 64 * 1024;
 
-/// The parser's limits for one message: JSON on one line, without
-/// comments, and small.
-const MESSAGE_LIMITS: Limits = Limits {
+/// The parser's limits for one message of the read-only server: JSON on
+/// one line, without comments, and small.
+pub const MESSAGE_LIMITS: Limits = Limits {
     max_input_bytes: MAXIMUM_MESSAGE_BYTES,
     max_depth: 32,
     max_values: 10_000,
@@ -160,38 +159,67 @@ impl Id {
     }
 }
 
-/// The MCP server: the root it serves, and the world's snapshot.
-pub struct Server {
-    root: PathBuf,
-    /// The `io.modelcontextprotocol/serverInfo` object.
-    info: String,
-    snapshot: Snapshot,
-    encode: Encode,
+/// What an [`Endpoint`] serves: its tools. The read-only [`Server`] is an
+/// endpoint over the observe tools and `refresh`; another crate may serve
+/// its own tools through the same protocol loop, and only through what
+/// this trait gives it: the endpoint parses, checks and answers every
+/// message, and hands a tool set nothing but a call's tool name and
+/// arguments.
+pub trait Tools {
+    /// The `instructions` of the `server/discover` result.
+    fn instructions(&self) -> &str;
+    /// The `tools` member of the `tools/list` result: `"tools":[...]`.
+    fn list(&self) -> String;
+    /// The members of a `tools/call` result after `resultType`, or `None`
+    /// for a tool this set does not have.
+    fn call(&mut self, name: &str, arguments: Option<&Value>) -> Option<String>;
+    /// One line for the log when serving starts: this server's words,
+    /// never world text.
+    fn status(&self) -> String;
 }
 
-impl Server {
-    /// Loads the world at `root`. A world that does not load still makes a
-    /// server, whose tools report why. `version` is the server's version
-    /// for its `serverInfo`; `encode` encodes `render`'s images.
+/// The protocol loop over a set of tools: revision 2026-07-28 over stdio,
+/// exactly as `docs/MCP.md` describes it, whatever the tools.
+pub struct Endpoint<T> {
+    tools: T,
+    /// The `io.modelcontextprotocol/serverInfo` object.
+    info: String,
+    /// The prefix of every log line.
+    log: &'static str,
+    limits: Limits,
+}
+
+impl<T: Tools> Endpoint<T> {
+    /// An endpoint named `tilewright-editor` with `title` and `version` in
+    /// its `serverInfo`, writing log lines that start with `log`, and
+    /// reading messages under `limits` (one line of at most
+    /// [`MAXIMUM_MESSAGE_BYTES`], whatever `limits` says).
     #[must_use]
-    pub fn open(root: &Path, version: &str, encode: Encode) -> Self {
-        let mut info = String::from(
-            "{\"name\":\"tilewright-editor\",\"title\":\"Tilewright editor (read-only)\",\"version\":",
-        );
+    pub fn new(tools: T, title: &str, version: &str, log: &'static str, limits: Limits) -> Self {
+        let mut info = String::from("{\"name\":\"tilewright-editor\",\"title\":");
+        json_string(title, &mut info);
+        info.push_str(",\"version\":");
         json_string(version, &mut info);
         info.push('}');
+        let limits = Limits {
+            max_input_bytes: limits.max_input_bytes.min(MAXIMUM_MESSAGE_BYTES),
+            max_line_bytes: limits.max_line_bytes.min(MAXIMUM_MESSAGE_BYTES),
+            max_lines: 1,
+            max_comments: 0,
+            max_comment_bytes: 0,
+            ..limits
+        };
         Self {
-            root: root.to_path_buf(),
+            tools,
             info,
-            snapshot: Snapshot::load(root),
-            encode,
+            log,
+            limits,
         }
     }
 
-    /// The revision of the snapshot, when the world loads.
-    #[must_use]
-    pub fn revision(&self) -> Option<&str> {
-        self.snapshot.revision()
+    /// The tools, read-only.
+    pub fn tools(&self) -> &T {
+        &self.tools
     }
 
     /// Serves messages from `input` until it ends, writing each reply as
@@ -206,7 +234,7 @@ impl Server {
         mut output: impl Write,
         log: &mut impl Write,
     ) -> io::Result<()> {
-        let _ = writeln!(log, "tilewright-editor mcp: {}", self.status());
+        let _ = writeln!(log, "{}: {}", self.log, self.tools.status());
         let mut line = Vec::new();
         loop {
             let reply = match read_line(&mut input, &mut line, MAXIMUM_MESSAGE_BYTES)? {
@@ -214,7 +242,8 @@ impl Server {
                 Line::TooLong => {
                     let _ = writeln!(
                         log,
-                        "tilewright-editor mcp: refused a message longer than {MAXIMUM_MESSAGE_BYTES} bytes"
+                        "{}: refused a message longer than {MAXIMUM_MESSAGE_BYTES} bytes",
+                        self.log
                     );
                     Some(error_reply(
                         None,
@@ -234,7 +263,6 @@ impl Server {
             }
         }
     }
-
     /// The reply to one message, if it gets one.
     fn handle(&mut self, line: &[u8]) -> Option<String> {
         // A line ending in CR LF is read as if it ended in LF.
@@ -251,7 +279,7 @@ impl Server {
         let Ok(text) = std::str::from_utf8(line) else {
             return parse_error("request.not_utf8");
         };
-        let document = match Document::parse(text, &MESSAGE_LIMITS) {
+        let document = match Document::parse(text, &self.limits) {
             Ok(document) => document,
             Err(error) => return parse_error(error.code.as_str()),
         };
@@ -378,7 +406,7 @@ impl Server {
                 fields.push_str(
                     ",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"instructions\":",
                 );
-                json_string(tools::INSTRUCTIONS, &mut fields);
+                json_string(self.tools.instructions(), &mut fields);
                 let _ = write!(fields, ",\"ttlMs\":{TTL_MS},\"cacheScope\":\"public\"");
                 Ok(fields)
             }
@@ -390,7 +418,7 @@ impl Server {
                         "this server lists every tool on one page and issues no cursor for tools/list",
                     ));
                 }
-                let mut fields = tools::list();
+                let mut fields = self.tools.list();
                 let _ = write!(fields, ",\"ttlMs\":{TTL_MS},\"cacheScope\":\"public\"");
                 Ok(fields)
             }
@@ -411,32 +439,79 @@ impl Server {
                         ));
                     }
                 };
-                let tool = tools::Tool::named(name).ok_or(failure(
+                self.tools.call(name, arguments).ok_or(failure(
                     ErrorCode::InvalidParams,
                     "tool.unknown",
                     "unknown tool: tools/list names the tools of this server",
-                ))?;
-                Ok(tools::call(
-                    tool,
-                    arguments,
-                    &mut self.snapshot,
-                    &self.root,
-                    self.encode,
                 ))
             }
         }
     }
+}
 
-    /// One line on the snapshot for the log: this server's words and a
-    /// revision in hex, never world text.
+/// The read-only MCP server: an [`Endpoint`] over the observe tools and
+/// `refresh`, on the world at one root.
+pub struct Server {
+    endpoint: Endpoint<ReadOnly>,
+}
+
+/// The read-only server's tools.
+struct ReadOnly(Observer);
+
+impl Tools for ReadOnly {
+    fn instructions(&self) -> &str {
+        tools::INSTRUCTIONS
+    }
+
+    fn list(&self) -> String {
+        tools::list()
+    }
+
+    fn call(&mut self, name: &str, arguments: Option<&Value>) -> Option<String> {
+        self.0.call_any(name, arguments)
+    }
+
     fn status(&self) -> String {
-        match self.snapshot.revision() {
-            Some(revision) => format!("serving revision {revision}"),
-            None => format!(
-                "the world does not load ({} problem(s)); its tools report why",
-                self.snapshot.diagnostics().len()
+        self.0.status()
+    }
+}
+
+impl Server {
+    /// Loads the world at `root`. A world that does not load still makes a
+    /// server, whose tools report why. `version` is the server's version
+    /// for its `serverInfo`; `encode` encodes `render`'s images.
+    #[must_use]
+    pub fn open(root: &Path, version: &str, encode: Encode) -> Self {
+        Self {
+            endpoint: Endpoint::new(
+                ReadOnly(Observer::open(root, encode)),
+                "Tilewright editor (read-only)",
+                version,
+                "tilewright-editor mcp",
+                MESSAGE_LIMITS,
             ),
         }
+    }
+
+    /// The revision of the snapshot, when the world loads.
+    #[must_use]
+    pub fn revision(&self) -> Option<&str> {
+        self.endpoint.tools().0.revision()
+    }
+
+    /// Serves messages from `input` until it ends, writing each reply as
+    /// one line to `output` and flushing it, and notes for people to `log`.
+    ///
+    /// # Errors
+    /// Returns an error when reading `input` or writing `output` fails;
+    /// a failure to write to `log` is ignored.
+    pub fn serve(
+        &mut self,
+        input: impl BufRead,
+        output: impl Write,
+        log: &mut impl Write,
+    ) -> io::Result<()> {
+        self.endpoint.serve(input, output, log)
     }
 }
 

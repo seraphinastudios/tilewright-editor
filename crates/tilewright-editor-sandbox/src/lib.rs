@@ -39,6 +39,43 @@ use tilewright_source::SourceRoot;
 
 pub use request::{CODES, REQUESTS};
 
+/// One request given as a value rather than a line, as the MCP editing
+/// server (`docs/MCP-EDITING.md`) gives them: every request but `quit`,
+/// which ends a run and has no counterpart there.
+#[derive(Clone, Copy, Debug)]
+pub enum Call<'a> {
+    Status,
+    /// An edit: its action as World's strict reader read it, in the
+    /// proposal format's form, decoded exactly as an `edit` line's.
+    Edit(&'a tilewright_jsonc::Value),
+    Review,
+    Accept,
+    Cancel,
+    Undo,
+    Redo,
+    Submit,
+}
+
+/// The reply the runner writes for a request, and whether it was done.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Answer {
+    /// The reply object, as the line protocol writes it, without its
+    /// newline.
+    pub reply: String,
+    /// Its `ok`: false for a refusal.
+    pub ok: bool,
+}
+
+impl Answer {
+    fn of(reply: String) -> Self {
+        Self {
+            // Every reply starts with its `ok` member (`Reply`).
+            ok: reply.starts_with("{\"ok\":true"),
+            reply,
+        }
+    }
+}
+
 /// Most bytes of one request line, its newline and a CR before it not
 /// counted. A longer line is refused without being kept.
 pub const MAXIMUM_REQUEST_BYTES: usize = 64 * 1024;
@@ -177,15 +214,26 @@ impl<R: RecoveryStore> Sandbox<R> {
         })
     }
 
-    /// Lowers the reply cap, for tests of how replies are cut. It is never
-    /// raised above [`MAXIMUM_REPLY_BYTES`].
+    /// Lowers the reply cap: for tests of how replies are cut, and for the
+    /// MCP editing server, whose results carry each reply twice. It is
+    /// never raised above [`MAXIMUM_REPLY_BYTES`].
     pub fn set_reply_limit(&mut self, bytes: usize) {
         self.reply_bytes = bytes.min(MAXIMUM_REPLY_BYTES);
+    }
+
+    /// The reply cap in force.
+    pub fn reply_limit(&self) -> usize {
+        self.reply_bytes
     }
 
     /// The session, read-only.
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// The sandbox world's committed revision.
+    pub fn revision(&self) -> [u8; 32] {
+        self.session.history().document().revision()
     }
 
     /// Serves requests from `input` until it ends or a `quit` request,
@@ -237,9 +285,37 @@ impl<R: RecoveryStore> Sandbox<R> {
         }
     }
 
+    /// Answers one request given as a value: exactly the reply its line
+    /// would get.
+    pub fn respond(&mut self, call: Call<'_>) -> Answer {
+        let request = match call {
+            Call::Status => Ok(request::Request::Status),
+            Call::Edit(action) => request::edit(action),
+            Call::Review => Ok(request::Request::Review),
+            Call::Accept => Ok(request::Request::Accept),
+            Call::Cancel => Ok(request::Request::Cancel),
+            Call::Undo => Ok(request::Request::Undo),
+            Call::Redo => Ok(request::Request::Redo),
+            Call::Submit => Ok(request::Request::Submit),
+        };
+        Answer::of(self.answer(request).0)
+    }
+
+    /// A refusal of `request` with the runner's `request.invalid` code and
+    /// `message`, closed with the session's state: for a request whose
+    /// members (an MCP call's arguments) are not the request's own.
+    pub fn refuse_invalid(&self, request: &'static str, message: &str) -> Answer {
+        Answer::of(self.refusal(Some(request), request::INVALID, message))
+    }
+
     /// The reply to one request line, and whether it was `quit`.
     fn handle(&mut self, line: &[u8]) -> (String, bool) {
-        match request::read(line) {
+        self.answer(request::read(line))
+    }
+
+    /// The reply to a request that was read, and whether it was `quit`.
+    fn answer(&mut self, request: Result<request::Request, request::Refused>) -> (String, bool) {
+        match request {
             Err(refused) => (
                 self.refusal(refused.request, refused.code, &refused.message),
                 false,
@@ -254,10 +330,6 @@ impl<R: RecoveryStore> Sandbox<R> {
             Ok(request::Request::Submit) => (self.submit(), false),
             Ok(request::Request::Quit) => (self.finish(Reply::ok("quit")), true),
         }
-    }
-
-    fn revision(&self) -> [u8; 32] {
-        self.session.history().document().revision()
     }
 
     /// Closes `reply` with the session's state.
