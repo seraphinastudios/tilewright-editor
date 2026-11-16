@@ -547,10 +547,6 @@ fn the_runner_replies_are_capped_for_two_copies() {
         client.endpoint.tools().sandbox().reply_limit(),
         tilewright_editor_mcp_sandbox::MAXIMUM_REPLY_BYTES
     );
-    assert!(
-        3 * tilewright_editor_mcp_sandbox::MAXIMUM_REPLY_BYTES + 1024
-            <= tilewright_editor_mcp::MAXIMUM_RESULT_BYTES
-    );
 }
 
 #[test]

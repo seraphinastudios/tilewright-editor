@@ -42,6 +42,11 @@ use tilewright_jsonc::{Limits, Value};
 /// result within that bound.
 pub const MAXIMUM_REPLY_BYTES: usize = 85 * 1024;
 
+// Three times the reply (once as sent, at most twice in the text copy) and
+// the members around it fit the result bound.
+const _: () =
+    assert!(3 * MAXIMUM_REPLY_BYTES + 1024 <= tilewright_editor_mcp::MAXIMUM_RESULT_BYTES);
+
 /// The parser's limits for one message: the read-only server's, widened
 /// so that every action the proposal format records fits as its tools
 /// take it (`params.arguments.action`, two levels deeper than the

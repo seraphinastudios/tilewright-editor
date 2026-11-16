@@ -255,7 +255,10 @@ again; otherwise it is reused. So:
 
 The snapshot follows the session only: a change made to the copy outside
 the protocol is not seen until the next accepted step, and may then make
-Accept fail (see below).
+Accept fail (see below). Should the copy ever stop loading, the observe
+tools report `world.invalid` as the read-only server does; its message
+names `refresh`, which this server does not offer: the snapshot is loaded
+again after the next accepted step.
 
 ## Errors
 
