@@ -2112,3 +2112,6 @@ mod portals;
 
 #[path = "proposal.rs"]
 mod proposal;
+
+#[path = "proposal_highlight.rs"]
+mod proposal_highlight;

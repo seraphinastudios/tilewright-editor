@@ -182,7 +182,7 @@ pub(super) struct Highlight {
 }
 
 impl Highlight {
-    fn of(step: usize, action: &Action, session: &Session) -> Self {
+    pub(super) fn of(step: usize, action: &Action, session: &Session) -> Self {
         let world = session.history().document().world();
         let catalog = session.catalog();
         let (concerns, found) = step_tiles(action, world, catalog);

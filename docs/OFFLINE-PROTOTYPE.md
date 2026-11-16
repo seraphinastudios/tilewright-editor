@@ -91,6 +91,17 @@ editable; structured values remain read-only. With a proposal open, a
 Proposal block sits above them and **G** (or its button) prepares the next
 step for the ordinary Review
 ([applying in the desktop](PROPOSALS.md#applying-in-the-desktop)).
+The tiles that step concerns are darkened on the map: black at 50 %, or 25 %
+for a tile something moves from. Like the zone tints, the highlight is made
+of unpickable copies of the prepared exact cell-reference quads placed in the
+World's draw order, so objects on the tile and nearer tiles cover it; it
+draws over a zone tint of the same tile, and a cell the person's own brush
+preview marks shows only the preview. Badges stay above both. Tiles on
+another plane or layer or outside the view are not drawn. The highlight
+needs the same draw-order slots as the zone tints: where they cannot be
+computed it is not drawn, and if the overlays would take the frame past the
+scene limits they are all left out and the status line says so ("Proposal
+highlight left out: too many cells for one frame." when it is the only one).
 
 Click an editable field or position and type. Place the caret by clicking
 (Shift-click extends), with the arrows (Shift extends), Home/End or

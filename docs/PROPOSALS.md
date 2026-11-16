@@ -342,6 +342,41 @@ or the world is escaped with the observe crate's set (controls,
 bidirectional and line separators, invisible characters) and a backslash,
 and cut at 48 characters.
 
+**The map highlight.** The tiles the panel's step concerns are darkened on
+the map, worked out like its words from the decoded Action and the person's
+committed world (never from the recorded transaction), when the proposal's
+state changes, not per frame:
+
+| `kind` | Highlighted |
+|---|---|
+| `move` | the object's tile now (`from`) and its destination (`to`), on the object's plane and layer |
+| `set_field`, `remove` | the object's tile (`object`) |
+| `set_portal` | the object's tile (`object`) and, when set, where the portal leads (`target`): the location, or the named anchor's tile |
+| `paint` | the cell (`cell`) |
+| `paint_stroke`, `paint_zones` | every cell of the stroke (`cell`) |
+| `place` | the tile it places on (`target`) |
+| `create_anchor`, `delete_anchor` | the anchor's tile (`anchor`); a new anchor is on the view's layer |
+| `move_anchor` | the anchor's tile now (`from`) and its destination (`to`) |
+| `create_zone`, `rename_zone`, `set_zone_parent`, `delete_zone` | nothing: the zone overlay shows zones |
+
+An object or anchor that is not in the person's world gives no tiles. It is
+shown for the step the panel offers to prepare (ready, undone, or refused)
+and for the step that is pending, where the map shows the pending world, so
+the highlight marks where the change is; there is none when every step is
+applied, after a Cancel, while the person's own change is pending, when the
+world moved or is at several places on the path, when the proposal does not
+apply, or while the session is blocked. The tint is black at 50 % over the
+tile (25 % for a `from` tile): it darkens, where the brush preview's white
+lightens and the zone tints colour, and selection is not drawn on the map.
+Only tiles on the active view's plane and layer and inside its bounds are
+drawn; the step's words already say "outside the view" for the others. The
+highlight draws after a zone tint of the same tile and is covered, as ground
+is, by objects on the tile and nearer tiles; on a cell the person's own
+running brush stroke previews, only the preview is drawn. It is unpickable:
+a click picks what it picked without it. A stroke's highlight holds at most
+4,096 tiles, the stroke bound; a tile named twice is highlighted once, with
+its first role.
+
 The block takes at most 240 logical pixels at the minimum 720×480 window,
 its control included, so an open text draft and the inspector rows below
 it stay on screen; a taller window gives it up to a third of the sidebar.
@@ -414,8 +449,13 @@ reads "Step k applied; its evidence record … could not be written: …",
 and the next record takes the next number; no number is reused. Frame
 captures gain a `proposal` member while a proposal is open: `proposal`
 (the digest), `steps`, `applied` (steps settled as applied), `state` (a
-key such as `ready`, `pending`, `refused`) and `pending_step` (whether the
-pending change is the proposal's step). `--demo-script --reference` with
+key such as `ready`, `pending`, `refused`), `pending_step` (whether the
+pending change is the proposal's step) and `highlight`: `null` when no step
+is highlighted, else the `step` (from 1), `concerns` (`tiles`, `no tiles`
+for a zone change, or `not placed`), the counts `in_view` and
+`outside_view`, and the first 8 `tiles`, each with its `role` (`from`, `to`,
+`object`, `cell`, `target` or `anchor`), escaped `plane`, `layer`, `x`, `y`
+and `in_view`. `--demo-script --reference` with
 a proposal runs the proposal instead of the demonstration: it captures
 `proposal-opened`, then prepares, captures `proposal-step-k-pending`,
 accepts as the scripted demonstration accepts its own edits, and captures
@@ -429,33 +469,38 @@ CPU frames. A person checks:
 1. Start the desktop with `--proposal SANDBOX/proposals/proposal-….json
    --actor human:<you>` as above. The window opens with the Proposal
    block at the top right; read it at 1280×800.
-2. Press **G** once: the Review shows the diff, and the status line reads
+2. Before pressing anything, the tiles of step 1 are darkened on the map
+   and match the step's words (a move: its tile now, lighter, and its
+   destination; a stroke: its cells; nothing for a zone change). They stay
+   darkened while the step is pending, and move to step 2's tiles after
+   Accept.
+3. Press **G** once: the Review shows the diff, and the status line reads
    "Step 1 of n matches its recording (recorded as agent:…)…". Hold G
    down: nothing repeats. With a proposal recorded by another editor
    version, the editor row starts "Recorded by another editor build" and
    ends "steps may diverge" (cut when the versions are long).
-3. Press G and then Enter as fast as you can: the step is accepted only
+4. Press G and then Enter as fast as you can: the step is accepted only
    once its diff has been drawn. Press Enter: the step is applied and the
    panel moves to step 2.
-4. Press G, then **Esc**: the panel says "Stopped by Cancel. Resume
+5. Press G, then **Esc**: the panel says "Stopped by Cancel. Resume
    continues it." and the button "Resume at step 2 (G)". Press G: nothing
    is prepared. Press G again: step 2 is prepared.
-5. Undo an applied step (Z, then Enter): the panel says "Step k undone:
+6. Undo an applied step (Z, then Enter): the panel says "Step k undone:
    prepare it again (or Redo)". Press G to prepare it again; or press Y
    and Enter to continue instead.
-6. Make an edit of your own between steps: the panel says "Your own change
+7. Make an edit of your own between steps: the panel says "Your own change
    is pending: the proposal waits"; after Enter, "The world moved: undo
    your own edits to continue". Undo it (Z, Enter) and continue.
-7. Make the window as small as it goes (720×480): the block, its button
+8. Make the window as small as it goes (720×480): the block, its button
    and some sidebar rows below are visible. Open a zone name draft (Zone,
    choose a zone, Name): its text field and buttons are visible below the
    block, and the caret is in the field, not on the Prepare button.
-8. Click the "Prepare step k (G)" button: the same as G. Click Accept: the
+9. Click the "Prepare step k (G)" button: the same as G. Click Accept: the
    same as Enter.
-9. Open `NEW-SESSION/evidence/proposal-open.json` and
+10. Open `NEW-SESSION/evidence/proposal-open.json` and
    `proposal-step-*.json`: your actor, one record per applied step, each
    naming a recovery record that is in `NEW-SESSION/recovery/`.
-10. Quit after applying some steps, then provision a new session from that
+11. Quit after applying some steps, then provision a new session from that
     session's `world/` with the same `--proposal`: the panel says "World:
     after step j of n" and offers step j+1.
 
