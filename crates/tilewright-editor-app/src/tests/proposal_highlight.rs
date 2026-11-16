@@ -5,7 +5,7 @@
 //! the decoded Action and the person's committed world, how they are drawn
 //! and what the frame evidence says, on the CPU scene path without a window.
 use super::proposal::{
-    AGENT, KINDS, RECEIPT, Twin, accept, edit_json, evidence, open, open_session,
+    AGENT, KINDS, RECEIPT, Twin, accept, edit_json, evidence, forged, open, open_session,
     person_application, prepare_and_accept, press_control, revision, scratch, state, twin,
 };
 use super::zone_manage::enter;
@@ -802,4 +802,44 @@ fn the_highlight_changes_only_its_tiles_pixels_and_never_what_a_click_picks() {
             assert_eq!(state(app), State::Pending { step: 0 });
         }
     }
+}
+
+#[test]
+fn a_refused_step_stays_highlighted_and_a_highlight_past_the_limits_is_reported() {
+    let mut twin = twin(2, |_| {}, |_| {}, None);
+    twin.proposal = forged(&twin.proposal, |body| {
+        body["steps"][1]["action"]["value"] = json!("Other");
+    });
+    open(&mut twin);
+    prepare_and_accept(&mut twin, 0);
+    acknowledge_ui(&mut twin.app);
+    assert!(route(&mut twin.app, &key(Keycode::G)).is_err());
+    assert!(matches!(state(&twin.app), State::Refused { step: 1, .. }));
+    let (concerns, expected) = expected_kind(1);
+    assert_eq!(shown(&mut twin.app), Some((1, concerns, expected.clone())));
+    assert_eq!(drawn(&twin.app), expected_tints(&expected));
+    // Room for the World and the interface (as laid out once the omission
+    // is reported) but not for the highlight: it is left out, and the
+    // status line says so.
+    let app = &mut twin.app;
+    app.preview_omitted = true;
+    app.refresh_ui();
+    let plain = crate::workspace_render::compose(
+        &mut app.text,
+        &app.ui,
+        &app.prepared.scene,
+        app.prepared.resources.clone(),
+    )
+    .unwrap();
+    app.frame_limits = tilewright_scene::SceneLimits {
+        maximum_quads: plain.scene.quads().len(),
+        ..tilewright_scene::SceneLimits::default()
+    };
+    assert_eq!(presented(app), 0);
+    assert!(app.preview_omitted);
+    assert!(!crate::prototype::proposal_overlay(app).is_empty());
+    assert_eq!(
+        app.status_label(),
+        "Proposal highlight left out: too many cells for one frame."
+    );
 }

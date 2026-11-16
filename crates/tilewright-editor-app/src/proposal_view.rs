@@ -189,10 +189,8 @@ impl Highlight {
         let mut seen = std::collections::BTreeSet::new();
         let mut tiles = Vec::new();
         let mut tints = std::collections::BTreeMap::new();
+        // `step_tiles` names at most `HIGHLIGHT_TILES`.
         for (role, plane, layer, at) in found {
-            if tiles.len() == HIGHLIGHT_TILES {
-                break;
-            }
             if !seen.insert((plane, layer, at)) {
                 continue;
             }

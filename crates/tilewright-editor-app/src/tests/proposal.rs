@@ -917,7 +917,7 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
 
 /// The proposal with its body changed by `change` and its transaction
 /// digests fixed up, as a writer who can recompute digests would.
-fn forged(proposal: &Proposal, change: impl FnOnce(&mut Value)) -> Proposal {
+pub(super) fn forged(proposal: &Proposal, change: impl FnOnce(&mut Value)) -> Proposal {
     let document: Value = serde_json::from_slice(proposal.bytes()).unwrap();
     let mut body = document["body"].clone();
     change(&mut body);
