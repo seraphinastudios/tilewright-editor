@@ -41,6 +41,9 @@ pub enum Schema {
     Object(Vec<Property>),
     /// An object that matches exactly one of these.
     OneOf(Vec<Schema>),
+    /// An object that matches at least one of these; its strings are those
+    /// of the first it matches.
+    AnyOf(Vec<Schema>),
 }
 
 /// A property of an [`Schema::Object`].
@@ -210,8 +213,12 @@ impl Schema {
                 }
                 output.push_str(r#"],"additionalProperties":false}"#);
             }
-            Self::OneOf(choices) => {
-                output.push_str(r#"{"type":"object","oneOf":["#);
+            Self::OneOf(choices) | Self::AnyOf(choices) => {
+                output.push_str(if matches!(self, Self::OneOf(_)) {
+                    r#"{"type":"object","oneOf":["#
+                } else {
+                    r#"{"type":"object","anyOf":["#
+                });
                 for (index, choice) in choices.iter().enumerate() {
                     if index > 0 {
                         output.push(',');
@@ -338,8 +345,33 @@ impl Schema {
                 strings.extend(found);
                 Ok(())
             }
+            Self::AnyOf(choices) => any_of(choices, value, at, strings),
         }
     }
+}
+
+/// Checks `value` against the first of `choices` it matches, taking that
+/// choice's strings.
+fn any_of(
+    choices: &[Schema],
+    value: &Value,
+    at: &str,
+    strings: &mut Vec<(String, bool)>,
+) -> Result<(), String> {
+    let mut reasons = String::new();
+    for choice in choices {
+        let mut found = Vec::new();
+        match choice.check_at(value, at, &mut found) {
+            Ok(()) => {
+                strings.extend(found);
+                return Ok(());
+            }
+            Err(reason) => {
+                let _ = write!(reasons, "; {reason}");
+            }
+        }
+    }
+    Err(format!("{at}: matches no choice{reasons}"))
 }
 
 #[cfg(test)]
@@ -393,10 +425,14 @@ mod tests {
         assert!(schema.check(&value(r#"{"k":"a"}"#)).is_ok());
         assert!(schema.check(&value(r#"{"k":"c"}"#)).is_err());
         assert!(
-            Schema::OneOf(vec![a.clone(), a])
+            Schema::OneOf(vec![a.clone(), a.clone()])
                 .check(&value(r#"{"k":"a"}"#))
                 .is_err()
         );
+        let any = Schema::AnyOf(vec![a.clone(), a]);
+        assert!(any.check(&value(r#"{"k":"a"}"#)).is_ok());
+        assert!(any.check(&value(r#"{"k":"b"}"#)).is_err());
+        assert!(any.to_json().starts_with(r#"{"type":"object","anyOf":["#));
         assert_eq!(Schema::Flag(true).to_json(), r#"{"const":true}"#);
         assert!(Schema::Flag(true).check(&value("true")).is_ok());
         for refused in ["false", "1", "\"true\""] {

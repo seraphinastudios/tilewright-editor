@@ -166,7 +166,7 @@ impl Tool {
             ),
             Self::Render => object(
                 format!(
-                    r#""region":{{"type":"array","prefixItems":[{{"type":"integer","minimum":-{MAXIMUM_COORDINATE},"maximum":{MAXIMUM_COORDINATE}}},{{"type":"integer","minimum":-{MAXIMUM_COORDINATE},"maximum":{MAXIMUM_COORDINATE}}},{{"type":"integer","minimum":1,"maximum":{MAXIMUM_COORDINATE}}},{{"type":"integer","minimum":1,"maximum":{MAXIMUM_COORDINATE}}}],"items":false,"minItems":4,"maxItems":4,"description":"Tiles [x, y, width, height] inside the catalog's view, width and height at least 1; the whole view by default."}},"scale":{{"type":"integer","minimum":1,"maximum":{MAXIMUM_SCALE},"default":1,"description":"Screen pixels per art pixel."}},{REVISION}"#
+                    r#""region":{{"type":"array","items":{{"type":"integer","minimum":-{MAXIMUM_COORDINATE},"maximum":{MAXIMUM_COORDINATE}}},"minItems":4,"maxItems":4,"description":"Tiles [x, y, width, height] inside the catalog's view; width and height must be at least 1, which the server checks; the whole view by default."}},"scale":{{"type":"integer","minimum":1,"maximum":{MAXIMUM_SCALE},"default":1,"description":"Screen pixels per art pixel."}},{REVISION}"#
                 ),
                 "",
             ),

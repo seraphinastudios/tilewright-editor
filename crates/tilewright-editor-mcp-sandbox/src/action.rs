@@ -63,7 +63,7 @@ fn layer() -> String {
 
 fn cell() -> String {
     format!(
-        r#"{{"type":"array","prefixItems":[{0},{0}],"items":false,"minItems":2,"maxItems":2}}"#,
+        r#"{{"type":"array","items":{0},"minItems":2,"maxItems":2}}"#,
         integer()
     )
 }
@@ -86,7 +86,7 @@ fn member(kind: &str, name: &str) -> String {
             limits::FIELD_VALUE_BYTES
         ),
         "target" => format!(
-            r#"{{"oneOf":[{{"type":"null"}},{{"type":"object","properties":{{"kind":{{"const":"anchor"}},"plane":{0},"anchor":{0}}},"required":["kind","plane","anchor"],"additionalProperties":false}},{{"type":"object","properties":{{"kind":{{"const":"location"}},"plane":{0},"layer":{1},"at":{2}}},"required":["kind","plane","layer","at"],"additionalProperties":false}}],"description":"Where the portal leads, or null to clear it."}}"#,
+            r#"{{"anyOf":[{{"type":"null"}},{{"type":"object","properties":{{"kind":{{"const":"anchor"}},"plane":{0},"anchor":{0}}},"required":["kind","plane","anchor"],"additionalProperties":false}},{{"type":"object","properties":{{"kind":{{"const":"location"}},"plane":{0},"layer":{1},"at":{2}}},"required":["kind","plane","layer","at"],"additionalProperties":false}}],"description":"Where the portal leads, or null to clear it."}}"#,
             text(),
             layer(),
             cell()
@@ -98,7 +98,10 @@ fn member(kind: &str, name: &str) -> String {
 }
 
 /// The schema of the `action` argument: one choice per kind, each with
-/// exactly its members, all required (`null` for an absent option).
+/// exactly its members, all required (`null` for an absent option). The
+/// choices are an `anyOf`, which more hosts take than `oneOf`; their `kind`
+/// consts already exclude each other. Fixed-length arrays are `items` with
+/// `minItems` and `maxItems`, which draft-07 and 2020-12 read alike.
 pub fn action_schema() -> String {
     let revision = r#"{"type":"string","pattern":"^[0-9a-f]{64}$","description":"The sandbox revision the action was made for: state.revision."}"#;
     let mut kinds = String::new();
@@ -123,7 +126,7 @@ pub fn action_schema() -> String {
         );
     }
     format!(
-        r#"{{"type":"object","properties":{{"kind":{{"enum":[{kinds}]}}}},"required":["kind","expected"],"oneOf":[{choices}],"description":"One Action in the proposal format's form (docs/PROPOSALS.md): kind and exactly that kind's members, every one present, null for an absent option. Strings count UTF-8 bytes on the server: at most {} bytes."}}"#,
+        r#"{{"type":"object","properties":{{"kind":{{"enum":[{kinds}]}}}},"required":["kind","expected"],"anyOf":[{choices}],"description":"One Action in the proposal format's form (docs/PROPOSALS.md): kind and exactly that kind's members, every one present, null for an absent option. Strings count UTF-8 bytes on the server: at most {} bytes."}}"#,
         limits::TEXT_BYTES
     )
 }
@@ -198,7 +201,7 @@ mod tests {
     #[test]
     fn the_kinds_are_the_decoders_and_the_schema_is_json() {
         let schema: serde_json::Value = serde_json::from_str(&action_schema()).unwrap();
-        let choices = schema["oneOf"].as_array().unwrap();
+        let choices = schema["anyOf"].as_array().unwrap();
         assert_eq!(choices.len(), KINDS.len());
         for ((kind, members), choice) in KINDS.iter().zip(choices) {
             assert_eq!(choice["properties"]["kind"]["const"], *kind);

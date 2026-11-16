@@ -539,6 +539,111 @@ fn a_failed_publication_blocks_every_change_with_session_blocked() {
     assert!(layout.files("proposals").is_empty());
 }
 
+/// Past the readers' depth limits the two front ends refuse a field value
+/// with different codes, as docs/MCP-EDITING.md gives them.
+#[test]
+fn deeply_nested_values_are_refused_by_both_with_the_codes_documented() {
+    let layout = Layout::new(|_| {});
+    let twin = Layout::new(|_| {});
+    let mut client = layout.open(None);
+    let mut runner = Sandbox::open(
+        &twin.path("world"),
+        SourceRoot::new(&twin.path("recovery")),
+        SourceRoot::new(&twin.path("proposals")),
+        Actor::new(ACTOR).unwrap(),
+        Layout::settings(None),
+    )
+    .unwrap();
+    let revision = client.revision();
+    let action = |depth: usize| {
+        let value = (0..depth).fold(json!(1), |value, _| json!([value]));
+        json!({"kind": "set_field", "uid": "marker_1", "field": "label", "value": value, "expected": revision})
+    };
+    let runner_code = |runner: &mut Sandbox<_>, depth: usize| {
+        let mut output = Vec::new();
+        let line = json!({"request": "edit", "action": action(depth)});
+        runner
+            .serve(
+                Cursor::new(format!("{line}\n")),
+                &mut output,
+                &mut Vec::new(),
+            )
+            .unwrap();
+        serde_json::from_slice::<Value>(&output).unwrap()["code"].clone()
+    };
+    for depth in [9, 10, 11, 28] {
+        let called = client.call("edit", &json!({ "action": action(depth) }));
+        called.refused("proposal.budget");
+        let expected = if depth <= 10 {
+            "proposal.budget"
+        } else {
+            "request.parse"
+        };
+        assert_eq!(runner_code(&mut runner, depth), expected, "{depth}");
+    }
+    let replies = client.session(&[call_line(1, "edit", &json!({ "action": action(29) }))]);
+    assert_eq!(replies[0].1["error"]["code"], -32700);
+}
+
+/// Every tool, through the endpoint, writes its reply to the writer
+/// `serve` is given and nothing to the process's standard output: this
+/// test runs itself again as a child with the harness's capture off, and
+/// the child's standard output must hold the harness's own lines only.
+#[test]
+fn no_tool_writes_to_the_process_standard_output() {
+    const CHILD: &str = "TILEWRIGHT_STDOUT_PROBE_CHILD";
+    const NAME: &str = "no_tool_writes_to_the_process_standard_output";
+    if std::env::var_os(CHILD).is_some() {
+        let layout = Layout::new(|_| {});
+        let mut client = layout.open(None);
+        let revision = client.revision();
+        let mut action = move_marker(4, 2);
+        action["expected"] = json!(revision);
+        let mut lines = vec![
+            request(1, "server/discover", json!({})),
+            request(2, "tools/list", json!({})),
+            call_line(3, "edit", &json!({ "action": action })),
+        ];
+        for (id, tool) in (4..).zip([
+            "review", "accept", "undo", "cancel", "undo", "accept", "redo", "accept", "submit",
+            "status", "overview", "catalog", "lint", "render",
+        ]) {
+            lines.push(call_line(id, tool, &json!({})));
+        }
+        lines.push(call_line(
+            30,
+            "tile",
+            &json!({"plane": "main", "layer": 0, "x": 4, "y": 2}),
+        ));
+        let replies = client.session(&lines);
+        // Exactly one reply line per request, each with its own ID.
+        assert_eq!(replies.len(), lines.len());
+        for ((_, reply), line) in replies.iter().zip(&lines) {
+            let sent: Value = serde_json::from_str(line).unwrap();
+            assert_eq!(reply["id"], sent["id"]);
+        }
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([NAME, "--exact", "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}");
+    let own = format!("test {NAME} ... ok");
+    for line in stdout.lines() {
+        assert!(
+            line.is_empty()
+                || line.starts_with("running ")
+                || line.starts_with("test result: ")
+                || line == own,
+            "a write to standard output: {line:?}"
+        );
+    }
+    assert!(stdout.contains(&own), "{stdout}");
+}
+
 #[test]
 fn the_runner_replies_are_capped_for_two_copies() {
     let layout = Layout::new(|_| {});

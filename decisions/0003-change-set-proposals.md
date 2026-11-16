@@ -124,6 +124,13 @@ Decisions made with them (coordinator and PR worker, easy to revisit):
 
 ## Addendum: the MCP editing server (PR 6c, 2026-11-15)
 
+Owner decisions this follows: 2026-11-14 (hand-written JSON-RPC over
+stdio, MCP revision 2026-07-28 only; agents edit and accept only in their
+own sandbox and submit proposals) and 2026-11-15 (sandboxes from the
+helper, one per run; the actor from the operator's flag). Decisions below
+are the PR worker's unless marked as the coordinator's; all are easy to
+revisit.
+
 - The editing tools are a separate server in a separate crate,
   `tilewright-editor-mcp-sandbox`, started by `tools/provision-sandbox.py
   --mcp` as `tilewright-editor sandbox-mcp` with the runner's options: the
@@ -143,15 +150,27 @@ Decisions made with them (coordinator and PR worker, easy to revisit):
   engine code, step and message). Arguments a tool does not take are the
   runner's `request.invalid`. There is no `quit` tool: closing standard
   input ends the session, and steps not submitted are lost.
-- `edit`'s input schema is a `oneOf` over the 15 kinds with exactly their
+- `edit`'s input schema is an `anyOf` over the 15 kinds with exactly their
   members; the proposal decoder stays the authority. The server writes a
   fraction-free number in an integer member as an integer before decoding,
   so schema and server agree on `3.0`; cell order, UTF-8 byte lengths and
   field value budgets are what the schema cannot express.
-- Annotations from the revision's definitions: `status`, `review` and the
-  observe tools read-only; `cancel` destructive (it drops an unkept
-  pending change); the others non-destructive (sandbox-only, additive or
-  retained with an inverse), and every tool idempotent and closed-world.
+- Annotations (coordinator, 2026-11-16): no tool is marked destructive,
+  because everything an editing tool changes is inside one disposable
+  sandbox copy (`cancel` drops only a pending change that can be prepared
+  again; `undo` reverses `accept`), the design's "sandbox only, undoable";
+  every tool idempotent and closed-world. The specification's stricter
+  reading, "only additive updates", would mark `accept` and `cancel`
+  destructive. Deviation from the brief, which said none of the editing
+  tools is read-only: `status` and `review` modify nothing and are marked
+  read-only (PR worker, kept by the coordinator).
+- Input schemas use only keywords draft-07 and 2020-12 read alike (review
+  of #81): `anyOf`, not `oneOf`, where choices already exclude each other
+  through consts (the action kinds, the portal target, an editing result's
+  success and refusal), and fixed-length arrays as `items` with
+  `minItems`/`maxItems`, not `prefixItems`. The read-only server's
+  `render.region` changes the same way; that width and height are at
+  least 1 is now said in its description and checked by the server only.
 - The observe tools run on the sandbox world, reloaded from the copy
   whenever the sandbox revision moved, and only when an observe tool is
   called; a pending change is not observed, cursors go stale after an

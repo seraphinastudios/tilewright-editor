@@ -15,7 +15,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -264,7 +264,7 @@
                 "kind",
                 "expected"
               ],
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "object",
                   "properties": {
@@ -414,19 +414,11 @@
                       "type": "array",
                       "items": {
                         "type": "array",
-                        "prefixItems": [
-                          {
-                            "type": "integer",
-                            "minimum": -9007199254740991,
-                            "maximum": 9007199254740991
-                          },
-                          {
-                            "type": "integer",
-                            "minimum": -9007199254740991,
-                            "maximum": 9007199254740991
-                          }
-                        ],
-                        "items": false,
+                        "items": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
                         "minItems": 2,
                         "maxItems": 2
                       },
@@ -477,19 +469,11 @@
                       "type": "array",
                       "items": {
                         "type": "array",
-                        "prefixItems": [
-                          {
-                            "type": "integer",
-                            "minimum": -9007199254740991,
-                            "maximum": 9007199254740991
-                          },
-                          {
-                            "type": "integer",
-                            "minimum": -9007199254740991,
-                            "maximum": 9007199254740991
-                          }
-                        ],
-                        "items": false,
+                        "items": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
                         "minItems": 2,
                         "maxItems": 2
                       },
@@ -896,7 +880,7 @@
                       "pattern": "^[^\\u0000]*$"
                     },
                     "target": {
-                      "oneOf": [
+                      "anyOf": [
                         {
                           "type": "null"
                         },
@@ -942,19 +926,11 @@
                             },
                             "at": {
                               "type": "array",
-                              "prefixItems": [
-                                {
-                                  "type": "integer",
-                                  "minimum": -9007199254740991,
-                                  "maximum": 9007199254740991
-                                },
-                                {
-                                  "type": "integer",
-                                  "minimum": -9007199254740991,
-                                  "maximum": 9007199254740991
-                                }
-                              ],
-                              "items": false,
+                              "items": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
                               "minItems": 2,
                               "maxItems": 2
                             }
@@ -995,7 +971,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -1264,7 +1240,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -1533,7 +1509,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -1730,7 +1706,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -1983,7 +1959,7 @@
         "annotations": {
           "title": "Cancel the pending change",
           "readOnlyHint": false,
-          "destructiveHint": true,
+          "destructiveHint": false,
           "idempotentHint": true,
           "openWorldHint": false
         }
@@ -1999,7 +1975,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -2268,7 +2244,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -2537,7 +2513,7 @@
         },
         "outputSchema": {
           "type": "object",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -6434,32 +6410,14 @@
           "properties": {
             "region": {
               "type": "array",
-              "prefixItems": [
-                {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 9007199254740991
-                }
-              ],
-              "items": false,
+              "items": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
               "minItems": 4,
               "maxItems": 4,
-              "description": "Tiles [x, y, width, height] inside the catalog's view, width and height at least 1; the whole view by default."
+              "description": "Tiles [x, y, width, height] inside the catalog's view; width and height must be at least 1, which the server checks; the whole view by default."
             },
             "scale": {
               "type": "integer",

@@ -142,7 +142,9 @@ followed by `<list>_cursor` as well as `<list>_more`.
   what they accept at their bounds (tested from the schemas sent): an
   `integer` may be written with a zero fraction (`3.0`), as JSON Schema
   allows, but not with another; string lengths count characters, as
-  `maxLength` does; `cursor` needs `section` (`dependentRequired`).
+  `maxLength` does; `cursor` needs `section` (`dependentRequired`). One
+  rule is the server's alone: `render`'s width and height are at least 1
+  (below).
 - `tile`: `plane` is a string of 1 to 256 characters, `layer` a 32-bit
   integer, `x` and `y` integers of magnitude at most 2^53 − 1 (the parser
   refuses larger integers, -32700).
@@ -151,8 +153,10 @@ followed by `<list>_cursor` as well as `<list>_more`.
   `--match`, it may start with `--`.
 - `lint`: its findings are computed once per snapshot, when the world is
   loaded, since they prepare the catalog's view; a call only lists them.
-- `render`: `region` is `[x, y, width, height]` in tiles (the schema's
-  `prefixItems`: four integers, width and height at least 1), inside the
+- `render`: `region` is `[x, y, width, height]` in tiles (in the schema,
+  four integers; that width and height are at least 1 the description
+  says and the server checks, since a per-item rule would need
+  `prefixItems`, which draft-07 hosts read differently), inside the
   catalog's view (the whole view by default); `scale` is 1 to 4 (default
   1). The region is framed and drawn exactly as `render` frames and draws
   it, and the image is encoded by the same encoder, so it is the PNG

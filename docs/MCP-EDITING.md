@@ -131,13 +131,23 @@ structured content is the runner's refusal, with `ok: false`, its stable
 `code`, the engine's code in `engine` when the engine decided it, the
 proposal `step` it concerns, the runner's `message` (which may quote world
 text, as data) and the session's `state`. Each editing tool's output schema
-is a `oneOf` of its success and its refusal.
+is an `anyOf` of its success and its refusal, which exclude each other
+through their `ok` consts.
 
 An argument a tool does not take (any argument but `action`, and `action`
 missing from `edit`) is refused the runner's way, with `request.invalid`,
 `engine` `null`. An `action` not in the proposal format's form is refused
 with `proposal.invalid` (or `proposal.budget` for a string, stroke or value
-over its bound), as the runner refuses it.
+over its bound), as the runner refuses it, within both readers' limits.
+Past them, both front ends refuse, but with different codes, because the
+runner reads a request line under narrower JSON limits (12 levels deep,
+12,352 values) than this server reads a message (32 levels, 22,288
+values): a field `value` nested 9 or 10 levels deep is refused by both
+with `proposal.budget`, one nested 11 to 28 levels deep here with
+`proposal.budget` and by the runner with `request.parse`, and one nested
+29 or more levels deep here by the parser (-32700). A test pins
+these depths. The byte-for-byte comparison with the runner holds for
+requests within both readers' limits.
 
 The observe tools are the read-only server's: the same reports, paging,
 cursors, `revision` argument, `render` image and caps, and errors, which
@@ -151,10 +161,14 @@ not offered: the snapshot follows the sandbox on its own (below).
 ([docs/PROPOSALS.md](PROPOSALS.md#actions)), the one wire form for edits:
 `kind` and exactly that kind's members, every one present, `null` for an
 absent option, and `expected`, the sandbox revision it was made for
-(`state.revision`). The input schema says this as a `oneOf` with one
+(`state.revision`). The input schema says this as an `anyOf` with one
 choice per kind (15), each listing exactly its members as required, with
 `additionalProperties: false`, and at the action's root the list of kinds
-and the two members every kind has. Strings are at most 4,096 characters
+and the two members every kind has. It uses only keywords that draft-07
+and 2020-12 read alike: `anyOf` rather than `oneOf` (the kinds' consts
+already exclude each other, and more hosts take `anyOf`), and a cell or a
+location's `at` as `items` with `minItems` and `maxItems` 2 rather than
+`prefixItems`, which a draft-07 reading would turn into "no item allowed". Strings are at most 4,096 characters
 and hold no NUL; `x`, `y` and a cell's coordinates are integers of
 magnitude at most 2^53 − 1; `layer` is a 32-bit integer; `cells` holds 1 to
 4,096 distinct `[x, y]` pairs; a portal `target` is `null`, an anchor or a
@@ -203,7 +217,7 @@ Clients must treat annotations as untrusted hints, as the revision says.
 | `edit` | false | false | true | false |
 | `review` | true | false | true | false |
 | `accept` | false | false | true | false |
-| `cancel` | false | true | true | false |
+| `cancel` | false | false | true | false |
 | `undo` | false | false | true | false |
 | `redo` | false | false | true | false |
 | `submit` | false | false | true | false |
@@ -213,25 +227,37 @@ Clients must treat annotations as untrusted hints, as the revision says.
 | `lint` | true | false | true | false |
 | `render` | true | false | true | false |
 
-- `status`, `review` and the observe tools change nothing, so they are
-  read-only.
-- `edit`, `undo` and `redo` add a pending change and write nothing; a
-  second identical call is refused (`pending.exists`, or `revision.stale`
-  once the first was accepted) and changes nothing.
-- `accept` publishes into the sandbox copy and keeps the inverse of every
-  step it publishes, so `undo` restores the sandbox exactly; nothing
-  outside the sandbox changes. It is marked non-destructive on that ground:
-  within its environment, every update it makes is retained and reversible.
-  A second call finds nothing pending (`pending.none`).
-- `cancel` drops the pending change, which nothing keeps: that is the one
-  update here that loses something, so it is marked destructive (an `edit`
-  with the same action prepares the change again). A second call finds
-  nothing pending and does nothing.
-- `submit` creates a proposal file and never replaces one; the same steps
-  give the same file again (`existed: true`, nothing written), so it is
-  additive and idempotent.
+Everything an editing tool changes is inside one disposable sandbox copy
+that the person's world never sees, so no tool is marked destructive.
+This is the project's reading (the change-set design's "sandbox only,
+undoable"); **the specification's stricter reading**, "false means only
+additive updates", **would mark `accept` and `cancel` destructive**. Per
+tool:
+
+- `status`: changes nothing, so it is read-only.
+- `edit`: adds a pending change and writes nothing; an identical retry is
+  refused (`pending.exists`, or `revision.stale` once the first was
+  accepted).
+- `review`: changes nothing, so it is read-only.
+- `accept`: publishes into the sandbox copy only, and `undo` reverses it
+  exactly; a retry finds nothing pending (`pending.none`).
+- `cancel`: drops only a pending change, which the agent can prepare again
+  with the same `edit`; a retry does nothing.
+- `undo`, `redo`: prepare a pending change, as `edit` does; a retry while
+  it is pending is refused (`pending.exists`).
+- `submit`: creates a proposal file and never replaces one; a retry gives
+  the same file (`existed: true`, nothing written).
+- The observe tools: read the copy; loading the snapshot again changes
+  nothing.
 - Nothing reaches anything outside the sandbox, so every tool is
   closed-world.
+
+**After a lost reply.** Because a retry has no second effect, it can be
+refused although the first call worked. A retried `accept` refused with
+`pending.none`, or a retried `edit`, `undo` or `redo` refused with
+`pending.exists`, means the first call took effect: `state.undo` and
+`state.revision` in that refusal, `status` and `review` tell which change
+is now published or pending.
 
 ## Observing the sandbox
 
@@ -241,9 +267,9 @@ observe call, when the sandbox's revision moved since the snapshot was
 loaded (an accepted step, an accepted undo or redo), the snapshot is loaded
 again; otherwise it is reused. So:
 
-- every observe result names the sandbox's current revision
-  (`state.revision` of the editing tools), and the `revision` argument
-  compares against it;
+- the observe tools answer from the last snapshot loaded: normally the
+  sandbox's current revision (`state.revision` of the editing tools),
+  which every result names and the `revision` argument compares against;
 - a pending change is not observed: it is not published until `accept`;
 - cursors are bound to the snapshot, so a cursor issued before an accept is
   `cursor.stale` after it, as after `refresh` in the read-only server;
@@ -255,10 +281,13 @@ again; otherwise it is reused. So:
 
 The snapshot follows the session only: a change made to the copy outside
 the protocol is not seen until the next accepted step, and may then make
-Accept fail (see below). Should the copy ever stop loading, the observe
-tools report `world.invalid` as the read-only server does; its message
-names `refresh`, which this server does not offer: the snapshot is loaded
-again after the next accepted step.
+Accept fail (see below). In a blocked session the snapshot is the last
+one loaded, which need not be what is on disk after a publication that
+could not be verified. Should the copy ever stop loading, the observe
+tools report `world.invalid` as the read-only server does; its message is
+the read-only server's and names `refresh`, which this server does not
+offer (calling it is `tool.unknown`): the snapshot is loaded again after
+the next accepted step.
 
 ## Errors
 
@@ -271,7 +300,7 @@ thirteen, `quit` and `refresh` among them. Tool errors:
 | The engine's codes ([docs/ENGINE.md](ENGINE.md#refusal-codes)) | As the runner returns them: `grant.missing`, `revision.stale` (an `expected` that is not the current revision), `pending.exists` (an edit, undo, redo or submit while a change is pending), `pending.none` (accept with nothing pending), `review.incomplete` (accept while the engine's review is incomplete), `history.nothing_to_undo`, and others. |
 | `proposal.invalid`, `proposal.budget` | `edit`: an action not in the proposal format's form, or over a bound. `submit`: `proposal.empty` with no step applied, `proposal.budget` past 256 steps or 16 MiB (undo steps and submit again), `proposal.store` when the file cannot be retained. |
 | `request.invalid` | An argument the tool does not take, or `edit` without `action`. |
-| `session.blocked` | A publication failed or could not be verified (`publish.failed`, `publish.unverified`) or World's history needs a reload: every editing tool but `status` and `review` is refused from then on, `submit` among them. The steps not submitted can never be submitted; start a new sandbox. The observe tools still answer, on what was published. |
+| `session.blocked` | A publication failed or could not be verified (`publish.failed`, `publish.unverified`) or World's history needs a reload: every editing tool but `status` and `review` is refused from then on, `submit` among them. The steps not submitted can never be submitted; start a new sandbox. The observe tools still answer, from the last snapshot loaded: after a publication that could not be verified, the copy on disk may differ from it. |
 | `recovery.failed` | The recovery store refused a record (at its 1,024 records or 64 MiB too). The change stays pending and the session is not blocked, but the store refuses every later record, so every later `accept` is refused at once with this code and says so, and `status` reports `recovery_failed: true`. Cancel, submit the steps so far, start a new sandbox. |
 | `output.budget` | Never expected: a runner reply too large for the result bound (below) is refused rather than sent. |
 
@@ -341,7 +370,10 @@ Within the protocol:
   dependencies, refuses the standard library's file, network and process
   modules, the environment, roots, directories, locks and writes in its
   source, and path and environment types in the modules that read tool
-  arguments.
+  arguments. It also refuses print macros and the process's standard
+  streams in the observe, MCP, sandbox and editing crates, so nothing but
+  a reply reaches standard output, and a test runs every tool in a child
+  process with capture off and finds nothing else there.
 - **Edits go through the runner.** Every editing tool is one runner
   request through its typed entry point (`Sandbox::respond`), so the
   runner's checks, the engine's grants and review gate, and its stores'
@@ -359,8 +391,10 @@ and its refusals against a golden, each editing tool's results against the
 line runner's on a twin sandbox, the observe tools after accepts and
 undos, cursors going stale, arguments refused, `review.incomplete`,
 `proposal.budget`, the recovery latch and a blocked session against
-goldens, the log), `schema.rs` (the `action` schema against the server, and
-what the schema cannot say), `hostile.rs` (world-text marking, and random
+goldens, the readers' depth limits against the runner's, nothing on the
+process's standard output, the log), `schema.rs` (the `action` schema
+against the server, and what the schema cannot say; its evaluator knows
+no `oneOf` or `prefixItems`), `hostile.rs` (world-text marking, and random
 and mutated messages that each get exactly the replies the rules give).
 `crates/tilewright-editor-app/tests/mcp_sandbox.rs` runs the provisioner
 with `--mcp` and the binary, edits with undo and redo, observes and

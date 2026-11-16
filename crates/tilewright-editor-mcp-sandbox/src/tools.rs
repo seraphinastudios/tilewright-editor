@@ -105,17 +105,13 @@ impl Tool {
         }
     }
 
-    /// The annotations' hints, as the revision defines them:
-    /// `readOnlyHint`, `destructiveHint`, `idempotentHint`; every tool is
-    /// closed-world. `docs/MCP-EDITING.md` gives the reason for each.
-    const fn hints(self) -> (bool, bool, bool) {
-        match self {
-            Self::Status | Self::Review => (true, false, true),
-            Self::Cancel => (false, true, true),
-            Self::Edit | Self::Accept | Self::Undo | Self::Redo | Self::Submit => {
-                (false, false, true)
-            }
-        }
+    /// Whether the tool is read-only, the one annotation hint that differs
+    /// between tools. No tool is destructive (everything an editing tool
+    /// changes is inside the sandbox copy, and undoable or prepared again),
+    /// every tool is idempotent and closed-world; `docs/MCP-EDITING.md`
+    /// gives the reason for each, and the stricter reading it sets aside.
+    const fn read_only(self) -> bool {
+        matches!(self, Self::Status | Self::Review)
     }
 
     fn input_schema(self) -> String {
@@ -150,10 +146,10 @@ pub fn list() -> String {
         result.push_str(&output(tool).to_json());
         result.push_str(",\"annotations\":{\"title\":");
         json_string(tool.title(), &mut result);
-        let (read_only, destructive, idempotent) = tool.hints();
         let _ = write!(
             result,
-            ",\"readOnlyHint\":{read_only},\"destructiveHint\":{destructive},\"idempotentHint\":{idempotent},\"openWorldHint\":false}}}}"
+            ",\"readOnlyHint\":{},\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":false}}}}",
+            tool.read_only()
         );
     }
     result.push(',');
@@ -279,7 +275,9 @@ fn refusal(tool: Tool) -> Schema {
 }
 
 fn output(tool: Tool) -> Schema {
-    Schema::OneOf(vec![success(tool), refusal(tool)])
+    // `ok`'s consts already exclude each other: `anyOf` is the same
+    // constraint, and more hosts take it.
+    Schema::AnyOf(vec![success(tool), refusal(tool)])
 }
 
 /// The members of the `tools/call` result of `tool` after `resultType`:

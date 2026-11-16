@@ -5,9 +5,11 @@
 //! server: for every action kind, at and past each bound, a missing or
 //! extra member and an unknown kind, the schema and the server agree on
 //! whether the action has the proposal format's form. The schema is
-//! evaluated by a small JSON Schema 2020-12 evaluator of the keywords the
-//! schema uses, which refuses any other keyword, so the schema cannot grow
-//! a keyword the test does not check.
+//! evaluated by a small JSON Schema evaluator of the keywords the schema
+//! uses, which refuses any other keyword, so the schema cannot grow a
+//! keyword the test does not check. It knows no `oneOf` and no
+//! `prefixItems`: the schema uses only keywords draft-07 and 2020-12 read
+//! alike.
 #![cfg(target_os = "linux")]
 
 mod common;
@@ -63,34 +65,14 @@ fn matches(schema: &Value, value: &Value) -> bool {
                     .as_object()
                     .is_none_or(|members| members.keys().all(|name| known.contains_key(name)))
             }
-            "oneOf" => {
-                argument
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|choice| matches(choice, value))
-                    .count()
-                    == 1
-            }
             "anyOf" => argument
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|choice| matches(choice, value)),
-            "prefixItems" => value.as_array().is_none_or(|items| {
-                argument
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .zip(items)
-                    .all(|(schema, item)| matches(schema, item))
-            }),
-            "items" => value.as_array().is_none_or(|items| {
-                let skip = keywords
-                    .get("prefixItems")
-                    .map_or(0, |prefix| prefix.as_array().unwrap().len());
-                items.iter().skip(skip).all(|item| matches(argument, item))
-            }),
+            "items" => value
+                .as_array()
+                .is_none_or(|items| items.iter().all(|item| matches(argument, item))),
             "minItems" => value
                 .as_array()
                 .is_none_or(|items| items.len() as u64 >= argument.as_u64().unwrap()),

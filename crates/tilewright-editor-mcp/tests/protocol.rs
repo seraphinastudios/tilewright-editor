@@ -918,19 +918,28 @@ fn the_input_schemas_accept_exactly_what_the_server_accepts_at_their_bounds() {
             false,
         ));
     }
-    // `region`: each item's own bounds, from the schema's `prefixItems`.
+    // `region`: four integers, each within the `items` bounds. The schema
+    // cannot say per item that width and height are at least 1 (it uses
+    // no `prefixItems`, which draft-07 reads differently); the server
+    // refuses less, and the description says so.
     let region = schema("render")["properties"]["region"].clone();
-    assert_eq!(region["items"], json!(false));
+    assert!(region.get("prefixItems").is_none());
     assert_eq!(
         (region["minItems"].as_i64(), region["maxItems"].as_i64()),
         (Some(4), Some(4))
     );
-    let items = region["prefixItems"].as_array().unwrap().clone();
-    assert_eq!(items.len(), 4);
-    for (index, item) in items.iter().enumerate() {
-        assert_eq!(item["type"], "integer", "{index}");
-        let least = item["minimum"].as_i64().unwrap();
-        let most = item["maximum"].as_i64().unwrap();
+    assert!(
+        region["description"]
+            .as_str()
+            .unwrap()
+            .contains("width and height must be at least 1")
+    );
+    let item = region["items"].clone();
+    assert_eq!(item["type"], "integer");
+    let least = item["minimum"].as_i64().unwrap();
+    let most = item["maximum"].as_i64().unwrap();
+    let mut beyond_the_schema = Vec::new();
+    for index in 0..4 {
         let with = |value: i64| {
             let mut region = [0_i64, 0, 1, 1];
             region[index] = value;
@@ -939,13 +948,17 @@ fn the_input_schemas_accept_exactly_what_the_server_accepts_at_their_bounds() {
         // The server's own refusals at the edges: a region off the view is
         // `target.unknown`, a too-large one `output.budget`, neither an
         // argument error.
-        cases.push(("render", with(least), true));
         cases.push(("render", with(most), true));
-        if index >= 2 {
-            assert_eq!(least, 1, "width and height are at least 1");
-            cases.push(("render", with(least - 1), false));
-            cases.push(("render", with(-5), false));
+        if index < 2 {
+            cases.push(("render", with(least), true));
+        } else {
+            beyond_the_schema.push(with(0));
+            beyond_the_schema.push(with(-5));
         }
+    }
+    for arguments in beyond_the_schema {
+        let called = call(&mut server, "render", &arguments);
+        assert!(arguments_refused(&called), "{arguments}");
     }
     for length in [3, 5] {
         cases.push(("render", json!({"region": vec![1; length]}), false));

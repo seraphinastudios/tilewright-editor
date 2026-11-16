@@ -132,6 +132,17 @@ if grep -nE '\b(Path|PathBuf|OsStr|OsString|SourceRoot|SourceDirectory)\b|std::(
   echo "the sandbox runner's requests name a path, root or environment" >&2
   exit 1
 fi
+# Standard output belongs to the servers' protocols from the first byte:
+# the observe, MCP, sandbox and MCP editing crates write replies only to
+# the writer `serve` is given, and the binary alone opens the process's
+# streams. So none of their sources prints, debug-prints or names the
+# process's standard streams (tests aside).
+if grep -RnE --include='*.rs' --exclude-dir=tests --exclude=tests.rs \
+  '\b(e?print(ln)?|dbg)!|\b(stdout|stderr)[[:space:]]*\(' \
+  "${read_only[@]}" "${sandbox}" "${mcp_editing}" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' >/dev/null; then
+  echo "an observe, MCP, sandbox or MCP editing source writes to the process's standard streams" >&2
+  exit 1
+fi
 # Nor does the MCP editing server take a path from a tool call: the module
 # that reads tool arguments names no path, root or OS string type.
 mcp_editing_tools=crates/tilewright-editor-mcp-sandbox/src/tools.rs
