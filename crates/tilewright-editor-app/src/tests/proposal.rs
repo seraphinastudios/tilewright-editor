@@ -321,9 +321,13 @@ fn panel(app: &mut Application) -> Vec<String> {
         .as_ref()
         .unwrap()
         .rows(&app.session, app.blocked.is_some());
-    let laid = sidebar_texts(app).concat();
+    let laid: String = sidebar_texts(app)
+        .concat()
+        .chars()
+        .filter(|c| *c != ' ')
+        .collect();
     for row in &rows {
-        let start: String = row.chars().take(40).collect();
+        let start: String = row.chars().filter(|c| *c != ' ').take(40).collect();
         assert!(laid.contains(&start), "{row:?} is not laid out in {laid:?}");
     }
     rows
@@ -383,8 +387,17 @@ fn prepare_and_accept(twin: &mut Twin, step: usize) {
     assert_eq!(state(app), State::Ready { step });
     let before = revision(&app.session);
     let undo = app.session.history().depths().0;
+    let words = |app: &mut Application| {
+        panel(app)
+            .into_iter()
+            .find(|row| row.starts_with(&format!("Step {} of", step + 1)))
+    };
+    let offered = words(app);
+    assert!(offered.is_some());
     press_control(app);
     assert_eq!(state(app), State::Pending { step });
+    // The words still describe the committed world the step changes.
+    assert_eq!(words(app), offered);
     // Preparing changed nothing: the session is where it was until Accept.
     assert_eq!(revision(&app.session), before);
     assert_eq!(app.session.history().depths().0, undo);

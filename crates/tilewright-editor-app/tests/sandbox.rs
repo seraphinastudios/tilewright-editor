@@ -5,8 +5,10 @@
 //! sandbox from a copy of the neutral fixture and starts the runner in
 //! it; a script drives the runner over its standard input and output and
 //! submits a proposal; a second provisioned copy, the person's world,
-//! applies that proposal step by step under another actor; the two copies
-//! end byte-identical and the source tree is untouched.
+//! applies that proposal step by step under another actor; a third, the
+//! desktop provisioned with `--proposal` and `--actor`, applies it through
+//! its own panel and Accept in the scripted reference run; the copies end
+//! byte-identical and the source tree is untouched.
 //!
 //! The provisioner refuses volatile storage: run with
 //! `TILEWRIGHT_CHECKED_TEST_ROOT` (or `TMPDIR`) on persistent local
@@ -313,11 +315,124 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         assert_eq!(applied.origin.unwrap().actor().as_str(), PERSON);
     }
     assert_eq!(tree(&person.join("world")), tree(&sandbox.join("world")));
+    // The desktop: a third copy, provisioned with the proposal and the
+    // person's actor, applies every step in the scripted reference run
+    // through its own panel, Review and Accept.
+    let desktop = root.join("desktop");
+    let proposal_file = sandbox.join("proposals").join(&name);
+    let proposal_bytes = std::fs::read(&proposal_file).unwrap();
+    // Not isolated (-I): the helper imports its font pack checks from
+    // beside itself, through the script's directory on the path.
+    let ran = Command::new("python3")
+        .arg(repository().join("tools/provision-prototype.py"))
+        .arg("--world")
+        .arg(&source)
+        .arg("--destination")
+        .arg(&desktop)
+        .arg("--editor")
+        .arg(env!("CARGO_BIN_EXE_tilewright-editor"))
+        .arg("--font-pack")
+        .arg(
+            std::env::var_os("TILEWRIGHT_UNICODE_FONT_ROOT")
+                .expect("the desktop pass needs the font pack: set TILEWRIGHT_UNICODE_FONT_ROOT"),
+        )
+        .args([
+            "--demo-script",
+            "--reference",
+            "--actor",
+            PERSON,
+            "--proposal",
+        ])
+        .arg(&proposal_file)
+        .output()
+        .unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        ran.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&ran.stderr),
+        &output[output.len().saturating_sub(2000)..]
+    );
+    assert_eq!(tree(&desktop.join("world")), tree(&sandbox.join("world")));
+    // The session holds its own copy; the sandbox's file is as it was.
+    assert_eq!(
+        std::fs::read(desktop.join("proposal").join(&name)).unwrap(),
+        proposal_bytes
+    );
+    assert_eq!(std::fs::read(&proposal_file).unwrap(), proposal_bytes);
+    let receipt: Value =
+        serde_json::from_slice(&std::fs::read(desktop.join("provision.json")).unwrap()).unwrap();
+    assert_eq!(receipt["actor"], PERSON);
+    assert_eq!(receipt["proposal"]["name"], name.as_str());
+    assert_eq!(
+        receipt["proposal"]["sha256"],
+        tilewright_editor_proposal::hex(&sha256(&proposal_bytes)).as_str()
+    );
+    let evidence = |name: &str| -> Value {
+        serde_json::from_slice(&std::fs::read(desktop.join("evidence").join(name)).unwrap())
+            .unwrap()
+    };
+    let opened = evidence("proposal-open.json");
+    assert_eq!(opened["opened"], json!({"begun": true}));
+    assert_eq!(opened["agent"], AGENT);
+    assert_eq!(opened["person"], PERSON);
+    assert!(!opened.to_string().contains('\u{202e}'));
+    for step in 1..=7 {
+        let record = evidence(&format!("proposal-step-{step:06}.json"));
+        assert_eq!(record["step"], step);
+        assert_eq!(record["actor"], PERSON);
+        assert_eq!(
+            record["recorded_transaction_sha256"],
+            tilewright_editor_proposal::hex(&proposal.steps()[step - 1].transaction_sha256())
+                .as_str()
+        );
+        assert!(record["recovery"]["name"].is_string(), "{record}");
+        assert_eq!(
+            evidence(&format!("proposal-step-{step}-pending.json"))["proposal"]["state"],
+            "pending"
+        );
+        assert_eq!(
+            evidence(&format!("proposal-step-{step}-applied.json"))["pending"],
+            false
+        );
+    }
+    assert_eq!(
+        evidence("proposal-step-7-applied.json")["proposal"]["state"],
+        "finished"
+    );
+    assert!(!desktop.join("evidence/proposal-step-000008.json").exists());
+    // One recovery record per Accept, each named by its step's evidence.
+    let retained = tree(&desktop.join("recovery"));
+    let named: Vec<String> = (1..=7)
+        .map(|step| {
+            evidence(&format!("proposal-step-{step:06}.json"))["recovery"]["name"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    for name in &named {
+        assert!(retained.contains_key(name), "{name} {:?}", retained.keys());
+    }
+    assert_eq!(
+        named
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        7
+    );
+
     // Neither the source nor the fixture changed.
     assert_eq!(tree(&source), original);
     assert_eq!(tree(&fixture_world("prototype-neutral")), fixture);
     // Every directory the provisioners made is private.
-    for directory in [&sandbox, &sandbox.join("proposals"), &person] {
+    for directory in [
+        &sandbox,
+        &sandbox.join("proposals"),
+        &person,
+        &desktop,
+        &desktop.join("proposal"),
+    ] {
         let mode = std::fs::metadata(directory).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700, "{}", directory.display());
     }

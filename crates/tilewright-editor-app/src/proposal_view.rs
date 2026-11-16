@@ -417,7 +417,12 @@ impl OpenProposal {
             _ => Some(next),
         };
         if let Some(step) = current.filter(|step| *step < steps) {
-            rows.push(self.step_words(step, session.world(), session.catalog()));
+            // The committed world: a pending step is not yet in it.
+            rows.push(self.step_words(
+                step,
+                session.history().document().world(),
+                session.catalog(),
+            ));
         }
         rows.push(self.state_words(state));
         if self.progress.is_some() {
@@ -753,7 +758,7 @@ impl Application {
     /// demonstration accepts its own edits, and captured applied. It runs
     /// only with `--reference --demo-script`, which never opens a window.
     pub(super) fn proposal_demo(&mut self) -> Result<()> {
-        self.capture("proposal-open")?;
+        self.capture("proposal-opened")?;
         loop {
             let Some(open) = &self.proposal else {
                 return Ok(());
@@ -780,7 +785,8 @@ impl Application {
     }
 }
 
-/// Up to [`WRAPPED_ROWS`] rows of `text` wrapped to `width`, the last cut
+/// Up to [`WRAPPED_ROWS`] rows of `text` wrapped to `width` between
+/// words (a word too wide alone is broken where it must be), the last cut
 /// with an ellipsis when more remained.
 fn wrapped(
     system: &mut tilewright_render_ui::TextSystem,
@@ -788,15 +794,37 @@ fn wrapped(
     width: u32,
     height: u32,
 ) -> Vec<String> {
-    let mut lines = crate::workspace_render::wrap_text(system, text, width, height);
+    let fits = |system: &mut tilewright_render_ui::TextSystem, line: &str| {
+        crate::workspace_render::fit_text(system, line, width, height) == line
+    };
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_inclusive(' ') {
+        let candidate = format!("{line}{word}");
+        if line.is_empty() || fits(system, candidate.trim_end()) {
+            line = candidate;
+            continue;
+        }
+        lines.push(std::mem::take(&mut line).trim_end().to_owned());
+        word.clone_into(&mut line);
+    }
+    lines.push(line.trim_end().to_owned());
+    // A word wider than the row alone is broken where it must be.
+    let mut lines: Vec<String> = lines
+        .into_iter()
+        .flat_map(|line| {
+            if fits(system, &line) {
+                vec![line]
+            } else {
+                crate::workspace_render::wrap_text(system, &line, width, height)
+            }
+        })
+        .collect();
     if lines.len() > WRAPPED_ROWS {
-        let mut rest = lines.split_off(WRAPPED_ROWS - 1).concat();
+        let mut rest = lines.split_off(WRAPPED_ROWS - 1).join(" ");
         rest.push_str(" ...");
         // The ordinary fit path cuts it at the end when laid out.
         lines.push(rest);
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
     }
     lines
 }
