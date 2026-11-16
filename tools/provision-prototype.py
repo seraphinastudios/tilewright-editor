@@ -9,6 +9,7 @@ to the app, avoiding a pathname reopen after verification.
 # Copyright 2026 Seraphina Studios. SPDX-License-Identifier: MIT
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -221,7 +222,12 @@ def main():
     if args.editor and args.font_pack is None:
         raise ValueError('editor launch requires explicit --font-pack')
     if args.font_pack is not None:
-        import font_pack
+        # Loaded from beside this helper by path, so `python3 -I` works and
+        # nothing on the module path can stand in for it.
+        spec = importlib.util.spec_from_file_location(
+            'tilewright_font_pack', Path(__file__).resolve().with_name('font_pack.py'))
+        font_pack = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(font_pack)
         if not args.font_pack.is_absolute():
             raise ValueError('font pack must be an explicit absolute directory')
         manifest = font_pack.read_regular(args.font_pack / 'manifest.json', font_pack.MAX_MANIFEST)

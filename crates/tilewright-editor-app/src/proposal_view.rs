@@ -27,16 +27,24 @@ pub(super) const STEP_FORMAT: &str = "tilewright.prototype-proposal-step/1";
 /// The most characters of an identifier, name or value shown in a step's
 /// words; longer ones are cut with an ellipsis.
 pub(super) const TEXT_CHARACTERS: usize = 48;
-/// The most characters of one panel row before it is laid out (the layout
-/// then fits it to the sidebar's width).
-pub(super) const ROW_CHARACTERS: usize = 160;
-/// The most rows a step's words or the state line wrap to.
-const WRAPPED_ROWS: usize = 3;
+/// The most lines a step's words wrap to; the state line wraps to two and
+/// every other row is one fitted line.
+pub(super) const WRAPPED_ROWS: usize = 3;
+const STATE_ROWS: usize = 2;
 /// Panel rows: compact, in the smaller type.
 pub(super) const ROW_HEIGHT: u32 = 20;
 const ROW_GAP: u32 = 2;
 /// The control row's height.
 const BUTTON_HEIGHT: u32 = 26;
+/// The most logical pixels the whole Proposal block takes, its control and
+/// the space after it included, at every window size. At the minimum
+/// 720x480 window the sidebar runs from y=56 to 480: this leaves 184 px for
+/// an open text draft (its field, hint and Review/Discard buttons, 96 px)
+/// and the inspector rows below it.
+pub(super) const PANEL_HEIGHT: u32 = 240;
+/// The text lines that fit in [`PANEL_HEIGHT`] beside the control.
+pub(super) const PANEL_LINES: usize =
+    ((PANEL_HEIGHT - BUTTON_HEIGHT - ROW_GAP - 6) / (ROW_HEIGHT + ROW_GAP)) as usize;
 /// This editor's version, as a proposal's `editor` member records one.
 pub(super) const EDITOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -51,8 +59,12 @@ pub(super) struct OpenProposal {
     /// How it was opened: begun at the base, resumed after a step, or why it
     /// does not apply.
     pub(super) opened: Opened,
-    /// The last refusal or undo to show, until something else happens.
+    /// The last refusal or undo to show, until the person's next action.
     pub(super) last: Last,
+    /// What the last settle read: kept so the panel never settles (or
+    /// copies the prepared transaction) to lay itself out. Only the
+    /// funnel changes the session, and it settles after every action.
+    pub(super) reading: Reading,
     /// The sequence number of the last step record written.
     pub(super) records: u64,
 }
@@ -76,10 +88,70 @@ pub(super) enum Last {
         code: RefusalCode,
         engine: Option<RefusalCode>,
     },
-    /// Step `step` was accepted and undone.
+    /// Step `step` was accepted and undone before the progress settled it.
+    /// Defensive: the funnel settles right after the Accept, so the desktop
+    /// sees an undo of a settled step instead (`State::Undone` from the
+    /// world's position).
     Undone {
         step: usize,
     },
+}
+
+/// What [`Progress::settle`] last read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Reading {
+    /// Nothing prepared, or the prepared step settled.
+    Idle,
+    /// The prepared step is pending.
+    Pending(usize),
+    /// Defensive: another change pending while a step is prepared, or a
+    /// prepared step whose world moved. The engine fences preparing over a
+    /// pending change, so the desktop cannot reach either.
+    OtherPending,
+    Stale,
+}
+
+/// The kinds of panel rows, for the block's height cap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Row {
+    Header,
+    Label,
+    Caveat,
+    Editor,
+    Where,
+    Step,
+    State,
+    Counts,
+    Notice,
+}
+
+impl Row {
+    /// The most lines this row may take.
+    fn lines(self) -> usize {
+        match self {
+            Self::Step => WRAPPED_ROWS,
+            Self::State => STATE_ROWS,
+            _ => 1,
+        }
+    }
+    /// The rank of its line `line` when the block is short of room: lower
+    /// is kept first.
+    fn rank(self, line: usize) -> usize {
+        match (self, line) {
+            (Self::Header, _) => 0,
+            (Self::Step, 0) => 1,
+            (Self::State, 0) => 2,
+            (Self::Label, _) => 3,
+            (Self::Caveat, _) => 4,
+            (Self::Editor, _) => 5,
+            (Self::Where, _) => 6,
+            (Self::Step, 1) => 7,
+            (Self::State, _) => 8,
+            (Self::Step, _) => 9,
+            (Self::Counts, _) => 10,
+            (Self::Notice, _) => 11,
+        }
+    }
 }
 
 /// What the panel shows: derived from the progress and the session each
@@ -116,6 +188,10 @@ pub(super) enum State {
     Moved {
         resume: Option<usize>,
     },
+    /// The world is at several positions of a chain that revisits a
+    /// revision, after the person undid a step: a resume would be
+    /// ambiguous, and Redo continues.
+    Several,
 }
 
 impl State {
@@ -132,6 +208,7 @@ impl State {
             Self::Undone { .. } => "undone",
             Self::Ready { .. } => "ready",
             Self::Moved { .. } => "moved",
+            Self::Several => "several",
         }
     }
 }
@@ -161,6 +238,7 @@ impl OpenProposal {
             notices,
             opened,
             last: Last::Nothing,
+            reading: Reading::Idle,
             records: 0,
         }
     }
@@ -201,17 +279,17 @@ impl OpenProposal {
         let Some(progress) = &self.progress else {
             return State::DoesNotApply;
         };
-        // Read the prepared step without settling the real progress: the
-        // funnel settles that after every action.
-        match progress.clone().settle(&self.proposal, session) {
-            Ok(Settled::Pending { step }) => return State::Pending { step },
-            Ok(Settled::OtherPending { .. }) => return State::OtherPending,
-            Err(_) => {
+        // What the funnel's last settle read: the session has not changed
+        // since.
+        match self.reading {
+            Reading::Pending(step) => return State::Pending { step },
+            Reading::OtherPending => return State::OtherPending,
+            Reading::Stale => {
                 return State::Moved {
                     resume: self.position(session),
                 };
             }
-            Ok(_) => {}
+            Reading::Idle => {}
         }
         let pending = session.history().pending().is_some();
         if progress.stopped() {
@@ -228,13 +306,17 @@ impl OpenProposal {
             tilewright_editor_proposal::ProposalStep::before,
         );
         if session.history().document().revision() != expected {
-            return match self.position(session) {
+            return match self.positions(session).as_slice() {
                 // The person undid applied steps: the first undone one can
                 // be prepared again (a Redo continues too).
-                Some(position) if position < next => State::Undone { step: position },
+                [position] if *position < next => State::Undone { step: *position },
+                [position] => State::Moved {
+                    resume: Some(*position),
+                },
                 // Every step applied, and the person edited after them.
-                None if next == self.steps() => State::Finished,
-                resume => State::Moved { resume },
+                [] if next == self.steps() => State::Finished,
+                [] => State::Moved { resume: None },
+                _ => State::Several,
             };
         }
         if next == self.steps() {
@@ -293,7 +375,7 @@ impl OpenProposal {
             State::DoesNotApply => "Does not apply to this world; nothing can be prepared.".into(),
             State::Stopped { resume: Some(_) } => "Stopped by Cancel. Resume continues it.".into(),
             State::Stopped { resume: None } => {
-                "Stopped by Cancel; the world is not on its path.".into()
+                "Stopped by Cancel; it cannot resume from where the world is.".into()
             }
             State::Finished => format!("All {steps} steps applied."),
             State::Pending { step } => format!(
@@ -305,7 +387,7 @@ impl OpenProposal {
                 code: RefusalCode::ProposalStepDiverged,
                 ..
             } => format!(
-                "Diverged: the step prepared another change than recorded (recorded by editor {}). Nothing changed.",
+                "Diverged from its recording (recorded by editor {}). Nothing changed. Preparing again will give the same result unless the world or catalog changes.",
                 shown(self.proposal.editor())
             ),
             State::Refused { code, engine, .. } => match engine {
@@ -327,6 +409,9 @@ impl OpenProposal {
             }
             State::Moved { resume: None } => {
                 "The world moved: undo your own edits to continue.".into()
+            }
+            State::Several => {
+                "The world is at several places on its path: Redo continues the proposal.".into()
             }
         }
     }
@@ -361,21 +446,40 @@ impl OpenProposal {
         )
     }
 
-    /// The panel's rows, before they are wrapped to the sidebar's width.
-    pub(super) fn rows(&self, session: &Session, blocked: bool) -> Vec<String> {
+    /// The panel's rows for `state`, before they are wrapped to the
+    /// sidebar's width, each cut at `characters` (what its lines can hold).
+    pub(super) fn rows(
+        &self,
+        session: &Session,
+        state: State,
+        characters: usize,
+    ) -> Vec<(Row, String)> {
         let proposal = &self.proposal;
-        let state = self.state(session, blocked);
         let steps = self.steps();
+        let actor = proposal.actor().as_str();
         let mut rows = vec![
-            format!(
-                "Proposal {} by {}",
-                &revision_hex(&proposal.body_sha256())[..8],
-                shown(proposal.actor().as_str())
+            (
+                Row::Header,
+                format!(
+                    "Proposal {} by {} (as recorded)",
+                    &revision_hex(&proposal.body_sha256())[..8],
+                    shown(actor)
+                ),
             ),
-            proposal.client().map_or_else(
-                || "Client label: none".into(),
-                |label| format!("Client label (unverified): {}", shown(label)),
+            (
+                Row::Label,
+                proposal.client().map_or_else(
+                    || "Client label: none".into(),
+                    |label| format!("Client label (unverified): {}", shown(label)),
+                ),
             ),
+        ];
+        // The format allows any actor; the sandbox helper records agent:.
+        if !actor.starts_with("agent:") {
+            rows.push((Row::Caveat, "Recorded actor is not an agent actor".into()));
+        }
+        rows.push((
+            Row::Editor,
             if proposal.editor() == EDITOR_VERSION {
                 format!(
                     "Recorded by editor {} (this editor too)",
@@ -387,26 +491,29 @@ impl OpenProposal {
                     shown(proposal.editor())
                 )
             },
-        ];
+        ));
         if let Opened::DoesNotApply(code) = self.opened {
-            rows.push(format!("Does not apply here ({code})"));
-            rows.push(format!(
-                "Its base: {}",
-                &revision_hex(&proposal.base())[..16]
+            rows.push((Row::Where, format!("Does not apply here ({code})")));
+            rows.push((
+                Row::Where,
+                format!("Its base: {}", &revision_hex(&proposal.base())[..16]),
             ));
-            rows.push(format!(
-                "This world: {}",
-                &revision_hex(&session.history().document().revision())[..16]
+            rows.push((
+                Row::Where,
+                format!(
+                    "This world: {}",
+                    &revision_hex(&session.history().document().revision())[..16]
+                ),
             ));
         } else {
-            rows.push(self.where_words(session));
+            rows.push((Row::Where, self.where_words(session)));
         }
         let next = self.progress.as_ref().map_or(0, Progress::next);
         let current = match state {
-            State::Pending { step } | State::Refused { step, .. } | State::Undone { step } => {
-                Some(step)
-            }
-            State::Ready { step } => Some(step),
+            State::Pending { step }
+            | State::Refused { step, .. }
+            | State::Undone { step }
+            | State::Ready { step } => Some(step),
             State::Stopped {
                 resume: Some(resume),
             }
@@ -418,28 +525,35 @@ impl OpenProposal {
         };
         if let Some(step) = current.filter(|step| *step < steps) {
             // The committed world: a pending step is not yet in it.
-            rows.push(self.step_words(
-                step,
-                session.history().document().world(),
-                session.catalog(),
+            rows.push((
+                Row::Step,
+                self.step_words(
+                    step,
+                    session.history().document().world(),
+                    session.catalog(),
+                ),
             ));
         }
-        rows.push(self.state_words(state));
+        rows.push((Row::State, self.state_words(state)));
         if self.progress.is_some() {
-            rows.push(format!(
-                "Applied {next} of {steps}, remaining {}",
-                steps.saturating_sub(next)
+            rows.push((
+                Row::Counts,
+                format!(
+                    "Applied {next} of {steps}, remaining {}",
+                    steps.saturating_sub(next)
+                ),
             ));
         }
         for notice in &self.notices {
             match notice {
-                Notice::CatalogDiffers { .. } => {
-                    rows.push("Catalog differs from the recording: your grants apply".into());
-                }
+                Notice::CatalogDiffers { .. } => rows.push((
+                    Row::Notice,
+                    "Catalog differs from the recording: your grants apply".into(),
+                )),
             }
         }
         rows.into_iter()
-            .map(|text| clipped(&text, ROW_CHARACTERS))
+            .map(|(kind, text)| (kind, clipped(&text, characters)))
             .collect()
     }
 
@@ -527,7 +641,7 @@ impl Application {
         if let Some(reason) = &self.blocked {
             return Err(format!("rendering blocked editing: {reason}"));
         }
-        self.funnel(false, |app| {
+        self.funnel(false, true, |app| {
             let Some(open) = app.proposal.as_mut() else {
                 return Err("no proposal is open".into());
             };
@@ -540,9 +654,9 @@ impl Application {
                     Ok(())
                 }
                 Err(error) => {
-                    // A refusal of the step itself is shown until something
-                    // else happens; the others (a world that moved, a change
-                    // pending) the panel reads from the session.
+                    // A refusal of the step itself is shown until the
+                    // person's next action; the others (a world that moved,
+                    // a change pending) the panel reads from the session.
                     if matches!(
                         error.code(),
                         RefusalCode::ProposalStepRefused | RefusalCode::ProposalStepDiverged
@@ -577,6 +691,7 @@ impl Application {
         open.progress = Some(progress);
         open.notices = notices;
         open.last = Last::Nothing;
+        open.reading = Reading::Idle;
         self.presented_generation = None;
         Ok(())
     }
@@ -606,26 +721,51 @@ impl Application {
 
     /// Settles the progress after an action and writes a step record when
     /// the person's Accept applied a step. `accepted` holds the number of
-    /// recovery records before the action, when the action was an Accept.
-    pub(super) fn settle_proposal(&mut self, accepted: Option<usize>) -> Result<()> {
+    /// recovery records before the action, when the action was an Accept;
+    /// `prepared` tells whether the action was preparing a step (any other
+    /// action of the person clears a shown refusal).
+    pub(super) fn settle_proposal(
+        &mut self,
+        accepted: Option<usize>,
+        prepared: bool,
+    ) -> Result<()> {
         let Some(open) = self.proposal.as_mut() else {
             return Ok(());
         };
         let Some(progress) = open.progress.as_mut() else {
             return Ok(());
         };
-        match progress.settle(&open.proposal, &self.session) {
+        if !prepared && matches!(open.last, Last::Refused { .. }) {
+            open.last = Last::Nothing;
+        }
+        let settled = progress.settle(&open.proposal, &self.session);
+        open.reading = match settled {
+            Ok(Settled::Pending { step }) => Reading::Pending(step),
+            Ok(Settled::OtherPending { .. }) => Reading::OtherPending,
+            Err(_) => Reading::Stale,
+            Ok(_) => Reading::Idle,
+        };
+        match settled {
             Ok(Settled::Applied { step }) => {
                 open.last = Last::Nothing;
+                // The sequence advances before the write, so a failed write
+                // never makes a later record reuse its number.
                 open.records += 1;
                 let sequence = open.records;
                 let record = self.step_record(step, sequence, accepted);
-                self.evidence.retain(
-                    &format!("proposal-step-{sequence:06}.json"),
-                    record.as_bytes(),
-                )
+                let name = format!("proposal-step-{sequence:06}.json");
+                // The step is applied whatever happens to its record.
+                self.evidence
+                    .retain(&name, record.as_bytes())
+                    .map_err(|error| {
+                        format!(
+                            "Step {} applied; its evidence record {name} could not be written: {error}",
+                            step + 1
+                        )
+                    })
             }
             Ok(Settled::NotApplied { step }) => {
+                // Defensive: see `Last::Undone`.
                 open.last = Last::Undone { step };
                 Ok(())
             }
@@ -633,8 +773,8 @@ impl Application {
                 open.last = Last::Nothing;
                 Ok(())
             }
-            // Pending, the person's own change, nothing prepared, or a world
-            // that moved: the panel reads these from the session.
+            // Pending, nothing prepared, or (defensive) another change
+            // pending or a world that moved: the panel reads these.
             Ok(_) | Err(_) => Ok(()),
         }
     }
@@ -646,9 +786,9 @@ impl Application {
         };
         let recorded = &open.proposal.steps()[step];
         let applied = self.session.applied_steps().last();
-        // The record the person's Accept retained, when this Accept is
-        // what applied the step; a step found applied later (after the
-        // person undid an edit of their own) names none.
+        // The record the person's Accept retained. Defensive `null`: the
+        // funnel settles right after the Accept that applies a step, and
+        // every such Accept retains exactly one record.
         let recovery = accepted
             .filter(|before| self.recovery.records().len() == before + 1)
             .and_then(|_| self.recovery.records().last())
@@ -676,9 +816,9 @@ impl Application {
     /// step; `None` otherwise (the person's own change keeps today's).
     pub(super) fn proposal_review_status(&self) -> Option<String> {
         let open = self.proposal.as_ref()?;
-        match open.state(&self.session, self.blocked.is_some()) {
+        match self.proposal_state()? {
             State::Pending { step } => Some(format!(
-                "Proposal step {} of {} by {}: matches its recording. Accept applies it; Cancel stops the proposal.",
+                "Proposal step {} of {} recorded as {}: matches its recording. Accept applies it; Cancel stops the proposal.",
                 step + 1,
                 open.proposal.steps().len(),
                 shown(open.proposal.actor().as_str())
@@ -687,40 +827,50 @@ impl Application {
         }
     }
 
+    /// The panel's state: the one computed for this layout, else now.
+    pub(super) fn proposal_state(&self) -> Option<State> {
+        self.proposal_layout.or_else(|| {
+            self.proposal
+                .as_ref()
+                .map(|open| open.state(&self.session, self.blocked.is_some()))
+        })
+    }
+
     /// The proposal block at the top of the sidebar, from logical `y`;
-    /// returns the next free row. Every row goes through the ordinary
-    /// fit-and-clip path when the interface is laid out.
+    /// returns the next free row. The block never takes more than
+    /// [`PANEL_HEIGHT`]: when its rows need more lines than
+    /// [`PANEL_LINES`], the least important lines go first (see
+    /// `Row::rank`) and a row cut short ends in "...". Every line goes
+    /// through the ordinary fit-and-clip path when the interface is laid
+    /// out.
     pub(super) fn proposal_panel(
         &mut self,
         ui: &mut crate::workspace_ui::WorkspaceUi,
         mut y: u32,
     ) -> u32 {
-        let Some(open) = &self.proposal else {
+        let (Some(open), Some(state)) = (&self.proposal, self.proposal_state()) else {
             return y;
         };
         let x = ui.sidebar_x();
         let width = ui.sidebar_width();
-        let blocked = self.blocked.is_some();
-        let rows = open.rows(&self.session, blocked);
-        let state = open.state(&self.session, blocked);
-        let ready = !blocked && self.session.can_prepare();
+        let characters = row_characters(&mut self.text, width);
+        let rows = open.rows(&self.session, state, characters);
+        let ready = self.blocked.is_none() && self.session.can_prepare();
         let control = open.control(state, ready);
-        for text in rows {
-            for line in wrapped(&mut self.text, &text, width, ROW_HEIGHT) {
-                ui.widget(
-                    crate::workspace_ui::Rect {
-                        x,
-                        y,
-                        width,
-                        height: ROW_HEIGHT,
-                    },
-                    line,
-                    None,
-                    true,
-                    false,
-                );
-                y += ROW_HEIGHT + ROW_GAP;
-            }
+        for line in panel_lines(&mut self.text, &rows, width) {
+            ui.widget(
+                crate::workspace_ui::Rect {
+                    x,
+                    y,
+                    width,
+                    height: ROW_HEIGHT,
+                },
+                line,
+                None,
+                true,
+                false,
+            );
+            y += ROW_HEIGHT + ROW_GAP;
         }
         if let Some((label, control, enabled)) = control {
             ui.widget(
@@ -743,7 +893,7 @@ impl Application {
     /// The frame evidence's `proposal` member, while a proposal is open.
     pub(super) fn proposal_frame(&self) -> Option<serde_json::Value> {
         let open = self.proposal.as_ref()?;
-        let state = open.state(&self.session, self.blocked.is_some());
+        let state = self.proposal_state()?;
         Some(serde_json::json!({
             "proposal": revision_hex(&open.proposal.body_sha256()),
             "steps": open.proposal.steps().len(),
@@ -785,14 +935,81 @@ impl Application {
     }
 }
 
-/// Up to [`WRAPPED_ROWS`] rows of `text` wrapped to `width` between
-/// words (a word too wide alone is broken where it must be), the last cut
-/// with an ellipsis when more remained.
+/// The most characters three lines of the sidebar can hold, from the
+/// narrowest advance the layout's font gives a visible character (a full
+/// stop) at the row size: an upper bound, so the cut before layout never
+/// hides what the lines could show; the layout cuts what does not fit.
+pub(super) fn row_characters(system: &mut tilewright_render_ui::TextSystem, width: u32) -> usize {
+    let size = crate::workspace_render::text_size(ROW_HEIGHT);
+    let available = f64::from(width.saturating_sub(8));
+    let advance = system
+        .layout("..........", size, None)
+        .map_or(0.0, |layout| f64::from(layout.size()[0]) / 10.0);
+    if advance <= 0.0 {
+        return TEXT_CHARACTERS * WRAPPED_ROWS;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let line = (available / advance).floor() as usize;
+    WRAPPED_ROWS * line.max(1)
+}
+
+/// The block's lines: each row wrapped to at most its own number of lines,
+/// then at most [`PANEL_LINES`] in all, keeping the best-ranked lines; a
+/// row that loses lines ends in "...", and a row that loses all is left
+/// out.
+pub(super) fn panel_lines(
+    system: &mut tilewright_render_ui::TextSystem,
+    rows: &[(Row, String)],
+    width: u32,
+) -> Vec<String> {
+    let wrapped: Vec<Vec<String>> = rows
+        .iter()
+        .map(|(kind, text)| {
+            if kind.lines() == 1 {
+                vec![text.clone()]
+            } else {
+                wrapped(system, text, width, ROW_HEIGHT, usize::MAX)
+            }
+        })
+        .collect();
+    let mut ranked: Vec<(usize, usize, usize)> = rows
+        .iter()
+        .zip(&wrapped)
+        .enumerate()
+        .flat_map(|(index, ((kind, _), lines))| {
+            (0..lines.len().min(kind.lines())).map(move |line| (kind.rank(line), index, line))
+        })
+        .collect();
+    ranked.sort_unstable();
+    let mut kept = vec![0; rows.len()];
+    for (_, index, _) in ranked.into_iter().take(PANEL_LINES) {
+        kept[index] += 1;
+    }
+    let mut lines = Vec::new();
+    for (mut row, kept) in wrapped.into_iter().zip(kept) {
+        if kept == 0 {
+            continue;
+        }
+        if row.len() > kept {
+            let mut rest = row.split_off(kept - 1).join(" ");
+            rest.push_str(" ...");
+            // The ordinary fit path cuts it at the end when laid out.
+            row.push(rest);
+        }
+        lines.extend(row);
+    }
+    lines
+}
+
+/// Up to `limit` rows of `text` wrapped to `width` between words (a word
+/// too wide alone is broken where it must be), the last cut with an
+/// ellipsis when more remained.
 fn wrapped(
     system: &mut tilewright_render_ui::TextSystem,
     text: &str,
     width: u32,
     height: u32,
+    limit: usize,
 ) -> Vec<String> {
     let fits = |system: &mut tilewright_render_ui::TextSystem, line: &str| {
         crate::workspace_render::fit_text(system, line, width, height) == line
@@ -801,7 +1018,9 @@ fn wrapped(
     let mut line = String::new();
     for word in text.split_inclusive(' ') {
         let candidate = format!("{line}{word}");
-        if line.is_empty() || fits(system, candidate.trim_end()) {
+        // A word too wide for a line of its own stays on this one and is
+        // broken where it must be below, instead of leaving a short line.
+        if line.is_empty() || fits(system, candidate.trim_end()) || !fits(system, word.trim_end()) {
             line = candidate;
             continue;
         }
@@ -820,10 +1039,9 @@ fn wrapped(
             }
         })
         .collect();
-    if lines.len() > WRAPPED_ROWS {
-        let mut rest = lines.split_off(WRAPPED_ROWS - 1).join(" ");
+    if lines.len() > limit {
+        let mut rest = lines.split_off(limit - 1).join(" ");
         rest.push_str(" ...");
-        // The ordinary fit path cuts it at the end when laid out.
         lines.push(rest);
     }
     lines
@@ -876,9 +1094,18 @@ fn tile(catalog: &PreviewCatalog, plane: &str, layer: i32, [x, y]: [i64; 2]) -> 
     }
 }
 
-/// Where object `uid` is in the person's world: plane, layer and plane
-/// tile, for a placed object.
-fn object_place(world: &World, uid: &str) -> Option<(String, i32, Option<[i64; 2]>, String)> {
+/// Object `uid` in the person's world: its plane, layer, plane tile (for a
+/// placed object), prototype and how many objects it carries (its whole
+/// inventory, nested ones included).
+struct Found {
+    plane: String,
+    layer: i32,
+    at: Option<[i64; 2]>,
+    proto: String,
+    carried: usize,
+}
+
+fn object_place(world: &World, uid: &str) -> Option<Found> {
     let location = world.object_location(uid)?;
     let object = world.object(uid)?;
     let (layer, cx, cy) = location.chunk;
@@ -889,13 +1116,27 @@ fn object_place(world: &World, uid: &str) -> Option<(String, i32, Option<[i64; 2
             cy.checked_mul(size)?.checked_add(i64::from(at[1]))?,
         ])
     });
-    Some((location.plane.clone(), layer, at, object.proto.clone()))
+    let mut carried = 0;
+    let mut pending: Vec<&tilewright_source::Object> = object.inventory.iter().collect();
+    while let Some(held) = pending.pop() {
+        carried += 1;
+        pending.extend(&held.inventory);
+    }
+    Some(Found {
+        plane: location.plane.clone(),
+        layer,
+        at,
+        proto: object.proto.clone(),
+        carried,
+    })
 }
 
-/// A step's Action in words: its kind and key arguments, and facts about
-/// the person's current world where they help (where an object or anchor
-/// being moved or deleted is now, and whether a tile is outside the view).
-/// Every string from the Action or the world is escaped and cut.
+/// A step's Action in words: what it does, to which id, and where to (the
+/// facts that decide, first, so a cut row keeps them), then the rest; with
+/// facts from the person's committed world where they help (where an
+/// object or anchor being moved or deleted is now, what a deleted object
+/// carries, and whether a tile is outside the view). Every string from the
+/// Action or the world is escaped and cut.
 #[allow(clippy::too_many_lines)]
 pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCatalog) -> String {
     let anchor_at = |plane: &str, anchor: &str| {
@@ -907,25 +1148,30 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
     };
     match action {
         Action::Move { uid, x, y, .. } => match object_place(world, uid) {
-            Some((plane, layer, Some(at), _)) => format!(
-                "Move {} on {}/{layer} from {} to {}",
+            Some(Found {
+                plane,
+                layer,
+                at: Some(at),
+                ..
+            }) => format!(
+                "Move {} to {}, from {}, on {}/{layer}",
                 shown(uid),
-                shown(&plane),
+                tile(catalog, &plane, layer, [*x, *y]),
                 tile(catalog, &plane, layer, at),
-                tile(catalog, &plane, layer, [*x, *y])
+                shown(&plane)
             ),
             _ => format!(
-                "Move {} (not placed in this world) to ({x}, {y})",
+                "Move {} to ({x}, {y}) (not placed in this world)",
                 shown(uid)
             ),
         },
         Action::SetField {
             uid, field, value, ..
         } => format!(
-            "Set {} of {} to {}",
+            "Set {} to {} on {}",
             shown(field),
-            shown(uid),
-            shown(&value.to_string())
+            shown(&value.to_string()),
+            shown(uid)
         ),
         Action::Paint {
             plane,
@@ -936,11 +1182,11 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             proto,
             ..
         } => format!(
-            "Paint {} on {}/{layer} {} with {}",
+            "Paint {} with {} ({} on {}/{layer})",
             tile(catalog, plane, *layer, [*x, *y]),
-            shown(plane),
+            shown(proto),
             shown(grid),
-            shown(proto)
+            shown(plane)
         ),
         Action::PaintStroke {
             plane,
@@ -950,12 +1196,12 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             proto,
             ..
         } => format!(
-            "Paint {} on {}/{layer} {} with {}{}",
+            "Paint {}{} with {} ({} on {}/{layer})",
             cells_words(cells.len()),
-            shown(plane),
-            shown(grid),
+            outside(catalog, plane, *layer, cells),
             shown(proto),
-            outside(catalog, plane, *layer, cells)
+            shown(grid),
+            shown(plane)
         ),
         Action::PaintZones {
             plane,
@@ -964,28 +1210,31 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             zone,
             ..
         } => format!(
-            "Paint {} on {}/{layer} {}{}",
+            "Paint {}{} {} (on {}/{layer})",
             cells_words(cells.len()),
-            shown(plane),
+            outside(catalog, plane, *layer, cells),
             zone.as_ref().map_or_else(
                 || "back to the default zone".to_owned(),
                 |zone| format!("into zone {}", shown(zone))
             ),
-            outside(catalog, plane, *layer, cells)
+            shown(plane)
         ),
         Action::Remove { uid, .. } => match object_place(world, uid) {
-            Some((plane, layer, Some(at), proto)) => format!(
-                "Delete {} ({}) on {}/{layer} at {}",
+            Some(found) => format!(
+                "Delete {}{}{} ({} on {}/{})",
                 shown(uid),
-                shown(&proto),
-                shown(&plane),
-                tile(catalog, &plane, layer, at)
-            ),
-            Some((plane, layer, None, proto)) => format!(
-                "Delete {} ({}) on {}/{layer}",
-                shown(uid),
-                shown(&proto),
-                shown(&plane)
+                found.at.map_or_else(String::new, |at| format!(
+                    " at {}",
+                    tile(catalog, &found.plane, found.layer, at)
+                )),
+                match found.carried {
+                    0 => String::new(),
+                    1 => " and the 1 object it carries".into(),
+                    carried => format!(" and the {carried} objects it carries"),
+                },
+                shown(&found.proto),
+                shown(&found.plane),
+                found.layer
             ),
             None => format!("Delete {} (not in this world)", shown(uid)),
         },
@@ -997,19 +1246,19 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             proto,
             ..
         } => format!(
-            "Place {} on {}/{layer} at {}",
+            "Place {} at {} on {}/{layer}",
             shown(proto),
-            shown(plane),
-            tile(catalog, plane, *layer, [*x, *y])
+            tile(catalog, plane, *layer, [*x, *y]),
+            shown(plane)
         ),
         Action::RenameZone {
             plane, zone, name, ..
         } => match name {
             Some(name) => format!(
-                "Rename zone {} on {} to {}",
+                "Rename zone {} to {} on {}",
                 shown(zone),
-                shown(plane),
-                shown(name)
+                shown(name),
+                shown(plane)
             ),
             None => format!("Clear the name of zone {} on {}", shown(zone), shown(plane)),
         },
@@ -1020,10 +1269,10 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             ..
         } => match parent {
             Some(parent) => format!(
-                "Put zone {} on {} under {}",
+                "Put zone {} under {} on {}",
                 shown(zone),
-                shown(plane),
-                shown(parent)
+                shown(parent),
+                shown(plane)
             ),
             None => format!("Make zone {} on {} top level", shown(zone), shown(plane)),
         },
@@ -1034,15 +1283,15 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             parent,
             ..
         } => format!(
-            "Create zone {} on {}{}{}",
+            "Create zone {}{}{} on {}",
             shown(zone),
-            shown(plane),
-            name.as_ref()
-                .map_or_else(String::new, |name| format!(" named {}", shown(name))),
             parent.as_ref().map_or_else(
                 || " at the top level".to_owned(),
                 |parent| format!(" under {}", shown(parent))
-            )
+            ),
+            name.as_ref()
+                .map_or_else(String::new, |name| format!(", named {},", shown(name))),
+            shown(plane)
         ),
         Action::DeleteZone { plane, zone, .. } => {
             format!("Delete zone {} on {}", shown(zone), shown(plane))
@@ -1054,10 +1303,10 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             y,
             ..
         } => format!(
-            "Create anchor {} on {} at {}",
+            "Create anchor {} at {} on {}",
             shown(anchor),
-            shown(plane),
-            tile(catalog, plane, catalog.view().1, [*x, *y])
+            tile(catalog, plane, catalog.view().1, [*x, *y]),
+            shown(plane)
         ),
         Action::MoveAnchor {
             plane,
@@ -1072,16 +1321,16 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
                 .and_then(|source| source.anchors.get(anchor.as_str()))
                 .map_or(catalog.view().1, |found| found.layer);
             format!(
-                "Move anchor {} on {} from {} to {}",
+                "Move anchor {} to {}, from {}, on {}",
                 shown(anchor),
-                shown(plane),
+                tile(catalog, plane, layer, [*x, *y]),
                 anchor_at(plane, anchor).unwrap_or_else(|| "nowhere (not in this world)".into()),
-                tile(catalog, plane, layer, [*x, *y])
+                shown(plane)
             )
         }
         Action::DeleteAnchor { plane, anchor, .. } => match anchor_at(plane, anchor) {
             Some(at) => format!(
-                "Delete anchor {} on {} at {at}",
+                "Delete anchor {} at {at} on {}",
                 shown(anchor),
                 shown(plane)
             ),

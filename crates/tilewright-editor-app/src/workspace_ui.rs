@@ -267,6 +267,7 @@ impl WorkspaceUi {
         bounds: Rect,
         snapshot: tilewright_editor_ui::text_input::TextInputSnapshot,
     ) {
+        let before = self.widgets.len();
         self.widget(
             bounds,
             snapshot.display_text.clone(),
@@ -274,7 +275,11 @@ impl WorkspaceUi {
             true,
             true,
         );
-        if let Some(widget) = self.widgets.last_mut() {
+        // A field outside the window is not laid out: its snapshot (caret,
+        // input-method geometry) must never land on another widget.
+        if self.widgets.len() > before
+            && let Some(widget) = self.widgets.last_mut()
+        {
             widget.editable = Some(snapshot);
         }
     }
@@ -318,6 +323,52 @@ impl WorkspaceUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_outside_the_window_attaches_its_snapshot_to_no_widget() {
+        let mut ui = WorkspaceUi::new((720, 480), (720, 480));
+        let button = Rect {
+            x: 410,
+            y: 452,
+            width: 300,
+            height: 26,
+        };
+        ui.widget(
+            button,
+            "Prepare step 2 (G)",
+            Some(Control::ProposalPrepare),
+            true,
+            false,
+        );
+        let snapshot = tilewright_editor_ui::text_input::TextInput::new("draft".into())
+            .unwrap()
+            .snapshot();
+        ui.editable(
+            Rect {
+                x: 410,
+                y: 490,
+                width: 300,
+                height: 30,
+            },
+            snapshot.clone(),
+        );
+        assert_eq!(ui.widgets.len(), 1);
+        assert!(ui.widgets[0].editable.is_none());
+        assert_eq!(ui.hit(500, 460), Hit::Control(Control::ProposalPrepare));
+        // A field inside the window is laid out with its snapshot, as before.
+        ui.editable(
+            Rect {
+                x: 410,
+                y: 400,
+                width: 300,
+                height: 30,
+            },
+            snapshot.clone(),
+        );
+        assert_eq!(ui.widgets.len(), 2);
+        assert_eq!(ui.widgets[1].editable, Some(snapshot));
+        assert_eq!(ui.widgets[1].control, Some(Control::EditDraft));
+    }
 
     #[test]
     fn dpi_and_panel_offset_preserve_absolute_mask_pixels() {

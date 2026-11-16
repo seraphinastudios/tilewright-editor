@@ -96,6 +96,7 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
         proposal: None,
+        proposal_layout: None,
     };
     (temporary, app)
 }

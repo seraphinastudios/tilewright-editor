@@ -9,7 +9,10 @@ use super::zone_manage::{enter, row_enabled};
 use super::zones::{button, key, route, sidebar_texts, zone_application};
 use super::{acknowledge_ui, copy_private};
 use crate::prototype::Application;
-use crate::prototype::proposal_view::{ROW_CHARACTERS, State, shown};
+use crate::prototype::proposal_view::{
+    PANEL_HEIGHT, PANEL_LINES, Row, State, WRAPPED_ROWS, action_words, panel_lines, row_characters,
+    shown,
+};
 use crate::workspace_ui::Control;
 use sdl3::keyboard::Keycode;
 use serde_json::{Value, json};
@@ -313,24 +316,32 @@ fn files(root: &Path) -> BTreeMap<String, Vec<u8>> {
     found
 }
 
-/// The panel's rows, each checked to be laid out in the sidebar (wrapped
-/// to its width: the start of a long one).
+/// The panel's rows, as built for the sidebar's width; the header, the
+/// step's words and the state line, which the height cap never drops, are
+/// checked to be laid out (the start of each).
 fn panel(app: &mut Application) -> Vec<String> {
-    let rows = app
-        .proposal
-        .as_ref()
-        .unwrap()
-        .rows(&app.session, app.blocked.is_some());
+    let rows = panel_rows(app);
     let laid: String = sidebar_texts(app)
         .concat()
         .chars()
         .filter(|c| *c != ' ')
         .collect();
-    for row in &rows {
-        let start: String = row.chars().filter(|c| *c != ' ').take(40).collect();
-        assert!(laid.contains(&start), "{row:?} is not laid out in {laid:?}");
+    for (kind, row) in &rows {
+        if matches!(kind, Row::Header | Row::Step | Row::State) {
+            let start: String = row.chars().filter(|c| *c != ' ').take(24).collect();
+            assert!(laid.contains(&start), "{row:?} is not laid out in {laid:?}");
+        }
     }
-    rows
+    rows.into_iter().map(|(_, text)| text).collect()
+}
+
+fn panel_rows(app: &mut Application) -> Vec<(Row, String)> {
+    let state = app.proposal_state().unwrap();
+    let characters = row_characters(&mut app.text, app.ui.sidebar_width());
+    app.proposal
+        .as_ref()
+        .unwrap()
+        .rows(&app.session, state, characters)
 }
 
 /// Press the panel's control with the pointer, as the person would.
@@ -405,7 +416,7 @@ fn prepare_and_accept(twin: &mut Twin, step: usize) {
     assert_eq!(
         app.status_label(),
         format!(
-            "Proposal step {} of {steps} by {}: matches its recording. Accept applies it; Cancel stops the proposal.",
+            "Proposal step {} of {steps} recorded as {}: matches its recording. Accept applies it; Cancel stops the proposal.",
             step + 1,
             shown(AGENT)
         )
@@ -472,7 +483,7 @@ fn every_step_applies_through_prepare_and_the_persons_accept() {
     assert!(
         texts
             .iter()
-            .any(|text| text == "Step 1 of 15: Move marker_1 on main/0 from (3, 2) to (4, 2)"),
+            .any(|text| text == "Step 1 of 15: Move marker_1 to (4, 2), from (3, 2), on main/0"),
         "{texts:?}"
     );
     assert!(
@@ -868,6 +879,23 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
         assert_eq!(control(&mut twin.app).map(|control| control.2), Some(true));
     }
     assert_eq!(files(&twin.person.path().join("world")), world);
+    // Any action of the person's own clears the refusal, and it does not
+    // come back after an edit and its undo.
+    let expected = revision(&twin.app.session);
+    twin.app
+        .action(Action::Move {
+            uid: "marker_2".into(),
+            x: 2,
+            y: 5,
+            expected,
+        })
+        .unwrap();
+    for keycode in [Keycode::Return, Keycode::Z, Keycode::Return] {
+        acknowledge_ui(&mut twin.app);
+        route(&mut twin.app, &key(keycode)).unwrap();
+    }
+    assert_eq!(revision(&twin.app.session), before);
+    assert_eq!(state(&twin.app), State::Ready { step: 2 });
 }
 
 /// The proposal with its body changed by `change` and its transaction
@@ -909,7 +937,7 @@ fn a_diverged_step_is_refused_and_changes_nothing() {
     assert!(
         texts
             .iter()
-            .any(|text| text == "Step 2 of 2: Set label of marker_1 to \"Other\""),
+            .any(|text| text == "Step 2 of 2: Set label to \"Other\" on marker_1"),
         "{texts:?}"
     );
     let before = revision(&twin.app.session);
@@ -931,6 +959,12 @@ fn a_diverged_step_is_refused_and_changes_nothing() {
     assert_eq!(files(&twin.person.path().join("world")), world);
     let texts = panel(&mut twin.app).concat();
     assert!(texts.contains("Diverged"), "{texts}");
+    assert!(
+        texts.contains(
+            "Preparing again will give the same result unless the world or catalog changes."
+        ),
+        "{texts}"
+    );
     assert!(texts.contains("9.9.9-other"), "{texts}");
 }
 
@@ -1081,9 +1115,10 @@ fn hostile_labels_and_action_text_reach_no_row_unescaped() {
     open(&mut twin);
     let rows = panel(&mut twin.app);
     assert!(
-        rows.iter()
-            .any(|text| text
-                .starts_with("Step 1 of 1: Set f\\u{2028}\\u{200b} of u\\u{202e}\\u{1b}xxx")),
+        rows.iter().any(
+            |text| text.starts_with("Step 1 of 1: Set f\\u{2028}\\u{200b} to {")
+                && text.contains(" on u\\u{202e}\\u{1b}xxx")
+        ),
         "{rows:?}"
     );
     assert!(
@@ -1092,6 +1127,7 @@ fn hostile_labels_and_action_text_reach_no_row_unescaped() {
         )),
         "{rows:?}"
     );
+    let bound = row_characters(&mut twin.app.text, twin.app.ui.sidebar_width());
     for scroll in 0..2 {
         twin.app.sidebar_scroll = scroll;
         let texts = sidebar_texts(&mut twin.app);
@@ -1100,7 +1136,7 @@ fn hostile_labels_and_action_text_reach_no_row_unescaped() {
                 !text.chars().any(tilewright_editor_observe::node::escaped),
                 "a raw character in {text:?}"
             );
-            assert!(text.chars().count() <= ROW_CHARACTERS, "{}", text.len());
+            assert!(text.chars().count() <= bound, "{}", text.len());
         }
     }
     let opened =
@@ -1126,7 +1162,7 @@ fn every_kind_reads_as_words_from_its_action_and_the_persons_world() {
     let twin = twin(KINDS, |_| {}, |_| {}, None);
     let words: Vec<String> = (0..KINDS)
         .map(|step| {
-            crate::prototype::proposal_view::action_words(
+            action_words(
                 twin.proposal.steps()[step].action(),
                 twin.app.session.world(),
                 twin.app.session.catalog(),
@@ -1136,20 +1172,20 @@ fn every_kind_reads_as_words_from_its_action_and_the_persons_world() {
     assert_eq!(
         words,
         [
-            "Move marker_1 on main/0 from (3, 2) to (4, 2)",
-            "Set label of marker_1 to \"Renamed\"",
-            "Paint (0, 0) on main/0 floor with sand",
-            "Paint 2 cells on main/0 floor with sand",
-            "Paint 1 cell on main/0 into zone path",
-            "Delete marker_2 (marker) on main/0 at (1, 4)",
-            "Place marker on main/0 at (2, 2)",
-            "Rename zone path on main to Trail",
-            "Put zone path on main under meadow",
-            "Create zone camp on main named Camp at the top level",
+            "Move marker_1 to (4, 2), from (3, 2), on main/0",
+            "Set label to \"Renamed\" on marker_1",
+            "Paint (0, 0) with sand (floor on main/0)",
+            "Paint 2 cells with sand (floor on main/0)",
+            "Paint 1 cell into zone path (on main/0)",
+            "Delete marker_2 at (1, 4) (marker on main/0)",
+            "Place marker at (2, 2) on main/0",
+            "Rename zone path to Trail on main",
+            "Put zone path under meadow on main",
+            "Create zone camp at the top level, named Camp, on main",
             "Delete zone spare on main",
-            "Create anchor camp on main at (2, 2)",
-            "Move anchor arrival on main from (7, 3) to (6, 3)",
-            "Delete anchor lookout on main at (-2, 0), outside the view",
+            "Create anchor camp at (2, 2) on main",
+            "Move anchor arrival to (6, 3), from (7, 3), on main",
+            "Delete anchor lookout at (-2, 0), outside the view on main",
             "Point the portal of gate_west to anchor arrival on main",
         ]
     );
@@ -1166,20 +1202,14 @@ fn outside_the_view_is_said_where_the_world_has_it() {
         });
     });
     let expected = revision(&app.session);
-    let words = |action: &Action| {
-        crate::prototype::proposal_view::action_words(
-            action,
-            app.session.world(),
-            app.session.catalog(),
-        )
-    };
+    let words = |action: &Action| action_words(action, app.session.world(), app.session.catalog());
     assert_eq!(
         words(&Action::DeleteAnchor {
             plane: "main".into(),
             anchor: "far".into(),
             expected
         }),
-        "Delete anchor far on main at (400, 3), outside the view"
+        "Delete anchor far at (400, 3), outside the view on main"
     );
     assert_eq!(
         words(&Action::DeleteAnchor {
@@ -1197,7 +1227,7 @@ fn outside_the_view_is_said_where_the_world_has_it() {
             zone: None,
             expected
         }),
-        "Paint 2 cells on main/0 back to the default zone, some outside the view"
+        "Paint 2 cells, some outside the view back to the default zone (on main/0)"
     );
     assert_eq!(
         words(&Action::Move {
@@ -1206,7 +1236,7 @@ fn outside_the_view_is_said_where_the_world_has_it() {
             y: 1,
             expected
         }),
-        "Move missing (not placed in this world) to (1, 1)"
+        "Move missing to (1, 1) (not placed in this world)"
     );
     assert_eq!(
         words(&Action::SetPortal {
@@ -1252,7 +1282,7 @@ fn a_long_proposal_shows_counts_only() {
     let (_person, mut app) = person_application(|_| {});
     let name = proposal.file_name();
     app.open_proposal(Some((proposal, name))).unwrap();
-    let rows = app.proposal.as_ref().unwrap().rows(&app.session, false);
+    let rows = panel_rows(&mut app);
     assert!(rows.len() <= 8, "{rows:?}");
     let texts = panel(&mut app);
     assert!(
@@ -1285,26 +1315,585 @@ fn a_long_proposal_shows_counts_only() {
     );
 }
 
+/// The 720x480 window, the camera and the scene resized to it.
+fn smallest_window(app: &mut Application) {
+    app.ui = crate::workspace_ui::WorkspaceUi::new((720, 480), (720, 480));
+    app.view.camera.width = 720;
+    app.view.camera.height = 480;
+    app.rebuild().unwrap();
+}
+
+/// The widest legal panel: a long agent actor, a 256-byte client label, a
+/// 64-character editor version, the catalog notice and a refused step.
+fn widest_proposal() -> Proposal {
+    let agent_root = tempfile::tempdir_in(scratch()).unwrap();
+    let world = agent_root.path().join("world");
+    copy_private(&fixture_world("prototype-neutral"), &world);
+    spare_zone(&world);
+    let mut session = open_session(&world, &format!("agent:{}", "a".repeat(60)));
+    for kind in 0..2 {
+        let expected = revision(&session);
+        accept(&mut session, edit(kind, expected));
+    }
+    let label = "c".repeat(256);
+    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, Some(&label)).unwrap();
+    forged(&proposal, |body| {
+        body["steps"][0]["action"]["uid"] = json!("u".repeat(4000));
+        body["editor"] = json!(format!("9.9.9-{}", "e".repeat(58)));
+        body["catalog"] = json!("ab".repeat(32));
+    })
+}
+
 #[test]
+#[allow(clippy::too_many_lines)]
 fn the_panel_fits_the_smallest_window() {
+    let proposal = widest_proposal();
+    assert_eq!(proposal.editor().len(), 64);
+    let (_person, mut app) = person_application(spare_zone);
+    smallest_window(&mut app);
+    let name = proposal.file_name();
+    app.open_proposal(Some((proposal, name))).unwrap();
+    acknowledge_ui(&mut app);
+    // The step is refused (no object has that uid): a refusal and the
+    // catalog notice are on the panel too.
+    let error = try_press_control(&mut app).unwrap_err();
+    assert!(error.contains("proposal.step_refused"), "{error}");
+    acknowledge_ui(&mut app);
+    let rows = panel_rows(&mut app);
+    assert!(
+        rows.iter().any(|(kind, _)| *kind == Row::Notice),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|(_, text)| text.starts_with("Refused:")),
+        "{rows:?}"
+    );
+    app.refresh_ui();
+    let x = app.ui.sidebar_x();
+    let sidebar: Vec<_> = app
+        .ui
+        .widgets
+        .iter()
+        .filter(|widget| widget.layout.x >= x && widget.layout.y >= 56)
+        .cloned()
+        .collect();
+    // The block stays within its cap, its control included; the long rows
+    // are one fitted line each, cut with a visible "...".
+    let button = sidebar
+        .iter()
+        .find(|widget| widget.control == Some(Control::ProposalPrepare))
+        .expect("the control is laid out");
+    assert!(button.layout.y + button.layout.height <= 56 + PANEL_HEIGHT);
+    let block: Vec<_> = sidebar
+        .iter()
+        .filter(|widget| widget.layout.y < button.layout.y)
+        .collect();
+    assert!(
+        block.len() <= PANEL_LINES,
+        "{:?}",
+        block
+            .iter()
+            .map(|widget| (widget.layout.y, &widget.text))
+            .collect::<Vec<_>>()
+    );
+    for start in [
+        "Proposal ",
+        "Client label (unverified): ccc",
+        "Recorded by editor 9.9.9-eee",
+    ] {
+        let line = block
+            .iter()
+            .find(|widget| widget.text.starts_with(start))
+            .unwrap_or_else(|| panic!("{start}"));
+        assert!(line.text.ends_with("..."), "{}", line.text);
+    }
+    // The step's words keep their three lines, the destination included.
+    let first = block
+        .iter()
+        .position(|widget| widget.text.starts_with("Step 1 of 2: Move uuu"))
+        .expect("the step row is laid out");
+    let step: String = block[first..first + WRAPPED_ROWS]
+        .iter()
+        .map(|widget| widget.text.as_str())
+        .collect();
+    assert!(step.contains("to (4, 2)"), "{step}");
+    // The rest of the sidebar is laid out below the block.
+    assert!(sidebar.iter().any(|widget| widget.text == "Inspector"));
+    // An open text draft: its field, hint and Review/Discard buttons are
+    // laid out under the block and hit-testable; nothing else has its text.
+    app.control(Control::Zone).unwrap();
+    app.control(Control::ZonePalette(
+        tilewright_editor_ui::tools::ZoneChoice::Zone("meadow".into()),
+    ))
+    .unwrap();
+    app.control(Control::ZoneName).unwrap();
+    acknowledge_ui(&mut app);
+    app.refresh_ui();
+    let editable: Vec<_> = app
+        .ui
+        .widgets
+        .iter()
+        .filter(|widget| widget.editable.is_some())
+        .cloned()
+        .collect();
+    assert_eq!(editable.len(), 1);
+    assert_eq!(editable[0].control, Some(Control::EditDraft));
+    let below = app
+        .ui
+        .widgets
+        .iter()
+        .find(|widget| widget.control == Some(Control::ProposalPrepare))
+        .map(|widget| widget.layout.y + widget.layout.height)
+        .unwrap();
+    assert!(below <= 56 + PANEL_HEIGHT);
+    for control in [
+        Control::EditDraft,
+        Control::ApplyDraft,
+        Control::CancelDraft,
+    ] {
+        let widget = app
+            .ui
+            .widgets
+            .iter()
+            .find(|widget| widget.control.as_ref() == Some(&control))
+            .unwrap_or_else(|| panic!("{control:?} is not laid out"));
+        assert!(
+            widget.layout.y >= below,
+            "{control:?} {} {below}",
+            widget.layout.y
+        );
+        assert!(widget.layout.y + widget.layout.height <= 480);
+        let hit = app.ui.hit(
+            widget.bounds.x + widget.bounds.width / 2,
+            widget.bounds.y + widget.bounds.height / 2,
+        );
+        assert_eq!(hit, crate::workspace_ui::Hit::Control(control));
+    }
+    let prepare = app
+        .ui
+        .widgets
+        .iter()
+        .find(|widget| widget.control == Some(Control::ProposalPrepare))
+        .unwrap();
+    assert!(prepare.editable.is_none());
+}
+
+#[test]
+fn an_ordinary_proposal_keeps_every_row_at_the_smallest_window() {
     let mut twin = twin(2, |_| {}, |_| {}, Some(LABEL));
-    twin.app.ui = crate::workspace_ui::WorkspaceUi::new((720, 480), (720, 480));
-    twin.app.view.camera.width = 720;
-    twin.app.view.camera.height = 480;
-    twin.app.rebuild().unwrap();
+    smallest_window(&mut twin.app);
     open(&mut twin);
-    // Every row of the block and its control is laid out above the bottom.
     assert_eq!(
         row_enabled(&mut twin.app, &Control::ProposalPrepare),
         Some(true)
     );
-    let texts = panel(&mut twin.app);
-    assert!(
-        texts.iter().any(|text| text.starts_with("Step 1 of 2")),
-        "{texts:?}"
-    );
+    let texts = sidebar_texts(&mut twin.app).concat();
+    for row in panel(&mut twin.app) {
+        let start: String = row.chars().take(12).collect();
+        assert!(texts.contains(&start), "{row} in {texts}");
+    }
     press_control(&mut twin.app);
     assert_eq!(state(&twin.app), State::Pending { step: 0 });
+}
+
+#[test]
+fn a_cut_row_keeps_its_deciding_facts_and_every_bound_holds() {
+    let (_person, mut app) = person_application(|_| {});
+    let width = app.ui.sidebar_width();
+    let expected = revision(&app.session);
+    let long = "x".repeat(100);
+    let words = |action: &Action, app: &Application| {
+        action_words(action, app.session.world(), app.session.catalog())
+    };
+    // The 48-character cut of every string from the proposal.
+    let set = words(
+        &Action::SetField {
+            uid: "marker_1".into(),
+            field: "label".into(),
+            value: json!(long),
+            expected,
+        },
+        &app,
+    );
+    assert_eq!(
+        set,
+        format!("Set label to \"{}… on marker_1", "x".repeat(46))
+    );
+    // A long move keeps its destination, and a new zone its parent, in the
+    // three lines the step row has.
+    let laid = |text: String, app: &mut Application| {
+        panel_lines(&mut app.text, &[(Row::Step, text)], width)
+    };
+    let moved = format!(
+        "Step 1 of 1: {}",
+        words(
+            &Action::Move {
+                uid: long.clone(),
+                x: 4,
+                y: 900,
+                expected
+            },
+            &app
+        )
+    );
+    let lines = laid(moved, &mut app);
+    assert_eq!(lines.len(), WRAPPED_ROWS);
+    assert!(lines.concat().contains("to (4, 900)"), "{lines:?}");
+    let created = format!(
+        "Step 1 of 1: {}",
+        words(
+            &Action::CreateZone {
+                plane: long.clone(),
+                zone: long.clone(),
+                name: Some(long.clone()),
+                parent: Some(format!("parent{long}")),
+                expected,
+            },
+            &app
+        )
+    );
+    let lines = laid(created, &mut app);
+    assert_eq!(lines.len(), WRAPPED_ROWS, "{lines:?}");
+    assert!(lines.concat().contains("under parentxxx"), "{lines:?}");
+    assert!(lines[WRAPPED_ROWS - 1].ends_with("..."), "{lines:?}");
+    // The row bound is what three lines hold: that many full stops wrap to
+    // three lines, a dozen more to four.
+    let characters = row_characters(&mut app.text, width);
+    let dots = |count: usize, app: &mut Application| {
+        crate::workspace_render::wrap_text(&mut app.text, &".".repeat(count), width, 20).len()
+    };
+    assert!(dots(characters, &mut app) <= WRAPPED_ROWS);
+    assert!(dots(characters + 12, &mut app) > WRAPPED_ROWS);
+    // And rows are cut to it, with a visible ellipsis.
+    let twin = twin(1, |_| {}, |_| {}, Some(&"l".repeat(200)));
+    let mut twin = twin;
+    open(&mut twin);
+    let state = state(&twin.app);
+    let rows = twin
+        .app
+        .proposal
+        .as_ref()
+        .unwrap()
+        .rows(&twin.app.session, state, 40);
+    let label = &rows.iter().find(|(kind, _)| *kind == Row::Label).unwrap().1;
+    assert_eq!(label.chars().count(), 40);
+    assert!(label.ends_with('…'));
+    // A one-line row stays one line; the state line wraps to two.
+    let lines = panel_lines(
+        &mut twin.app.text,
+        &[
+            (Row::Header, "h ".repeat(200)),
+            (Row::State, "s ".repeat(200)),
+        ],
+        width,
+    );
+    assert_eq!(lines.len(), 3, "{lines:?}");
+}
+
+#[test]
+fn a_chain_that_revisits_a_revision_says_redo_continues_after_an_undo() {
+    let agent_root = tempfile::tempdir_in(scratch()).unwrap();
+    let world = agent_root.path().join("world");
+    copy_private(&fixture_world("prototype-neutral"), &world);
+    let mut session = open_session(&world, AGENT);
+    for x in [4, 3] {
+        let expected = revision(&session);
+        accept(
+            &mut session,
+            Action::Move {
+                uid: "marker_1".into(),
+                x,
+                y: 2,
+                expected,
+            },
+        );
+    }
+    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    assert_eq!(proposal.base(), proposal.result());
+    let (_person, mut app) = person_application(|_| {});
+    let name = proposal.file_name();
+    app.open_proposal(Some((proposal, name))).unwrap();
+    acknowledge_ui(&mut app);
+    press_control(&mut app);
+    enter(&mut app);
+    for keycode in [Keycode::Z, Keycode::Return] {
+        acknowledge_ui(&mut app);
+        route(&mut app, &key(keycode)).unwrap();
+    }
+    assert_eq!(state(&app), State::Several);
+    assert_eq!(control(&mut app), None);
+    let texts = panel(&mut app);
+    assert!(
+        texts.iter().any(|text| text
+            == "The world is at several places on its path: Redo continues the proposal."),
+        "{texts:?}"
+    );
+    for keycode in [Keycode::Y, Keycode::Return] {
+        acknowledge_ui(&mut app);
+        route(&mut app, &key(keycode)).unwrap();
+    }
+    assert_eq!(state(&app), State::Ready { step: 1 });
+    press_control(&mut app);
+    enter(&mut app);
+    assert_eq!(state(&app), State::Finished);
+}
+
+#[test]
+fn a_recorded_actor_that_is_not_an_agent_is_shown_with_a_caveat() {
+    let agent_root = tempfile::tempdir_in(scratch()).unwrap();
+    let world = agent_root.path().join("world");
+    copy_private(&fixture_world("prototype-neutral"), &world);
+    let mut session = open_session(&world, "human:x");
+    let expected = revision(&session);
+    accept(&mut session, edit(0, expected));
+    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let (_person, mut app) = person_application(|_| {});
+    let name = proposal.file_name();
+    app.open_proposal(Some((proposal, name))).unwrap();
+    acknowledge_ui(&mut app);
+    let texts = panel(&mut app);
+    assert!(texts[0].ends_with(" by human:x (as recorded)"), "{texts:?}");
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "Recorded actor is not an agent actor"),
+        "{texts:?}"
+    );
+    press_control(&mut app);
+    assert!(
+        app.status_label()
+            .starts_with("Proposal step 1 of 1 recorded as human:x: matches its recording."),
+        "{}",
+        app.status_label()
+    );
+    // Not refused: the person decides.
+    enter(&mut app);
+    assert_eq!(state(&app), State::Finished);
+    // An agent actor has no caveat.
+    let mut twin = twin(1, |_| {}, |_| {}, None);
+    open(&mut twin);
+    assert!(
+        !panel(&mut twin.app)
+            .iter()
+            .any(|text| text.contains("not an agent actor"))
+    );
+}
+
+#[test]
+fn a_delete_says_what_the_object_carries() {
+    let (_person, app) = person_application(|root| {
+        edit_json(root, "planes/main/layers/0/0_0.jsonc", |chunk| {
+            chunk["objects"][1]["inventory"] = json!([
+                {"proto": "crate", "inventory": [{"proto": "marker"}]},
+                {"proto": "marker"}
+            ]);
+        });
+    });
+    let expected = revision(&app.session);
+    let words = |uid: &str| {
+        action_words(
+            &Action::Remove {
+                uid: uid.into(),
+                expected,
+            },
+            app.session.world(),
+            app.session.catalog(),
+        )
+    };
+    assert_eq!(
+        words("marker_2"),
+        "Delete marker_2 at (1, 4) and the 3 objects it carries (marker on main/0)"
+    );
+    assert_eq!(
+        words("marker_1"),
+        "Delete marker_1 at (3, 2) (marker on main/0)"
+    );
+}
+
+#[test]
+fn a_record_that_cannot_be_written_still_leaves_the_step_applied() {
+    let mut twin = twin(2, |_| {}, |_| {}, None);
+    open(&mut twin);
+    // Something already holds the first record's name.
+    fs::write(
+        twin.person
+            .path()
+            .join("evidence/proposal-step-000001.json"),
+        b"{}",
+    )
+    .unwrap();
+    press_control(&mut twin.app);
+    acknowledge_ui(&mut twin.app);
+    let error = route(&mut twin.app, &key(Keycode::Return)).unwrap_err();
+    assert!(
+        error.starts_with(
+            "Step 1 applied; its evidence record proposal-step-000001.json could not be written: "
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        revision(&twin.app.session),
+        twin.proposal.steps()[0].after()
+    );
+    assert_eq!(state(&twin.app), State::Ready { step: 1 });
+    prepare_and_accept(&mut twin, 1);
+    // The next record takes the next number; the first is never reused.
+    assert_eq!(evidence(&twin, "proposal-step-000002.json")["step"], 2);
+    assert_eq!(evidence(&twin, "proposal-step-000001.json"), json!({}));
+}
+
+#[test]
+fn g_then_enter_before_the_frame_is_presented_is_refused() {
+    let mut twin = twin(2, |_| {}, |_| {}, None);
+    open(&mut twin);
+    acknowledge_ui(&mut twin.app);
+    let before = revision(&twin.app.session);
+    route(&mut twin.app, &key(Keycode::G)).unwrap();
+    assert_eq!(state(&twin.app), State::Pending { step: 0 });
+    let error = route(&mut twin.app, &key(Keycode::Return)).unwrap_err();
+    assert!(error.contains("waits"), "{error}");
+    assert_eq!(revision(&twin.app.session), before);
+    assert!(twin.app.session.history().pending().is_some());
+    // The Accept button likewise waits for the presented frame.
+    let accept = twin
+        .app
+        .ui
+        .widgets
+        .iter()
+        .find(|widget| widget.control == Some(Control::Accept))
+        .cloned()
+        .unwrap();
+    twin.app.presented_generation = None;
+    #[allow(clippy::cast_precision_loss)]
+    let at = [
+        (accept.bounds.x + accept.bounds.width / 2) as f32,
+        (accept.bounds.y + accept.bounds.height / 2) as f32,
+    ];
+    assert!(route(&mut twin.app, &button(true, at)).is_err());
+    assert_eq!(revision(&twin.app.session), before);
+    enter(&mut twin.app);
+    assert_eq!(
+        revision(&twin.app.session),
+        twin.proposal.steps()[0].after()
+    );
+}
+
+/// A small deterministic generator (no new dependency).
+struct Lcg(u64);
+impl Lcg {
+    fn next(&mut self, bound: u64) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.0 >> 33) % bound
+    }
+}
+
+/// Random interleavings of G, Enter, Esc, Z, Y, R, the person's own edits
+/// and presented or unpresented frames against a 3-step proposal: the
+/// committed world changes only on an Enter on a presented frame while a
+/// change was pending; a step is applied only from its pending state, at
+/// its recorded result; the panel says "pending" exactly when the pending
+/// change is the one the control prepared; no control while anything is
+/// pending; one record per applied step; nothing panics. Seeds:
+/// `TILEWRIGHT_PROPOSAL_SEEDS` (default 12; the review ran 80).
+#[test]
+#[allow(clippy::too_many_lines)]
+fn interruptions_never_apply_a_step_without_the_persons_accept() {
+    let seeds: u64 = std::env::var("TILEWRIGHT_PROPOSAL_SEEDS")
+        .ok()
+        .and_then(|seeds| seeds.parse().ok())
+        .unwrap_or(12);
+    for seed in 0..seeds {
+        let mut twin = twin(3, |_| {}, |_| {}, None);
+        open(&mut twin);
+        let mut rng = Lcg(seed * 7919 + 13);
+        let mut prepared = false;
+        let mut applied = 0usize;
+        let mut log = Vec::new();
+        for _ in 0..40 {
+            if rng.next(10) < 7 {
+                acknowledge_ui(&mut twin.app);
+            }
+            let presented = twin.app.presented_generation == Some(twin.app.view.frame_revision);
+            let before = revision(&twin.app.session);
+            let pending_before = twin.app.session.history().pending().is_some();
+            let state_before = state(&twin.app);
+            let operation = rng.next(8);
+            let result = match operation {
+                0 | 1 => route(&mut twin.app, &key(Keycode::G)),
+                2 | 3 => route(&mut twin.app, &key(Keycode::Return)),
+                4 => route(&mut twin.app, &key(Keycode::Escape)),
+                5 => route(
+                    &mut twin.app,
+                    &key(if rng.next(2) == 0 {
+                        Keycode::Z
+                    } else {
+                        Keycode::Y
+                    }),
+                ),
+                6 => {
+                    let expected = revision(&twin.app.session);
+                    #[allow(clippy::cast_possible_wrap)]
+                    let x = 1 + rng.next(4) as i64;
+                    twin.app.action(Action::Move {
+                        uid: "marker_2".into(),
+                        x,
+                        y: 4,
+                        expected,
+                    })
+                }
+                _ => route(&mut twin.app, &key(Keycode::R)),
+            };
+            log.push(format!(
+                "{operation} presented={presented} {state_before:?} -> {:?}",
+                result.as_ref().err()
+            ));
+            let after = revision(&twin.app.session);
+            let pending_after = twin.app.session.history().pending().is_some();
+            let enter = matches!(operation, 2 | 3);
+            if after != before {
+                assert!(
+                    enter && pending_before && presented,
+                    "seed {seed}: the world changed without an accepted Enter: {log:#?}"
+                );
+            }
+            if let (true, true, State::Pending { step }) = (enter, after != before, state_before) {
+                // The person accepted the prepared step: it lands exactly on
+                // its recorded result and writes one record.
+                assert!(prepared, "seed {seed}: {log:#?}");
+                assert_eq!(after, twin.proposal.steps()[step].after(), "seed {seed}");
+                applied += 1;
+            }
+            if matches!(operation, 0 | 1) && !pending_before && pending_after {
+                prepared = true;
+            }
+            if !pending_after {
+                prepared = false;
+            }
+            let shown = state(&twin.app);
+            assert_eq!(
+                matches!(shown, State::Pending { .. }),
+                prepared,
+                "seed {seed}: {shown:?} {log:#?}"
+            );
+            assert_eq!(
+                twin.app.status_label().contains("matches its recording"),
+                prepared,
+                "seed {seed}"
+            );
+            if pending_after {
+                assert_eq!(control(&mut twin.app), None, "seed {seed}: {log:#?}");
+            }
+            let _ = panel(&mut twin.app);
+        }
+        let records = evidence_names(&twin)
+            .into_iter()
+            .filter(|name| name.starts_with("proposal-step-0"))
+            .count();
+        assert_eq!(records, applied, "seed {seed}: {log:#?}");
+    }
 }
 
 #[test]

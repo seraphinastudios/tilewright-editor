@@ -237,6 +237,8 @@ struct Application {
     frame_limits: tilewright_scene::SceneLimits,
     /// The proposal the person opened (`--proposal-fd`), if any.
     proposal: Option<proposal_view::OpenProposal>,
+    /// The proposal panel's state, derived once for the layout being built.
+    proposal_layout: Option<proposal_view::State>,
 }
 
 /// This command is intentionally a deployment seam, not arbitrary recovery-path
@@ -318,6 +320,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
         proposal: None,
+        proposal_layout: None,
     };
     app.open_proposal(proposal)?;
     println!(
@@ -465,7 +468,7 @@ impl Application {
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
-        self.funnel(accept, |app| {
+        self.funnel(accept, false, |app| {
             app.session
                 .dispatch(action, &mut app.recovery)
                 .map_err(|error| error.to_string())
@@ -479,6 +482,7 @@ impl Application {
     fn funnel(
         &mut self,
         accept: bool,
+        prepare: bool,
         dispatch: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
         let records = self.recovery.records().len();
@@ -496,7 +500,7 @@ impl Application {
         // empty Undo). Always rebuild from Session's actual current World.
         let refreshed = self.rebuild();
         self.report();
-        let settled = self.settle_proposal(accept.then_some(records));
+        let settled = self.settle_proposal(accept.then_some(records), prepare);
         match result {
             Err(original) => Err(original),
             Ok(()) => refreshed.and(settled),
@@ -843,9 +847,12 @@ impl Application {
             self.zone_view = Some(ZoneView { key, tiles });
         }
         let mut ui = WorkspaceUi::new(self.ui.logical_size(), self.ui.size);
+        self.proposal_layout = None;
+        self.proposal_layout = self.proposal_state();
         self.toolbar(&mut ui);
         self.sidebar(&mut ui);
         self.review(&mut ui);
+        self.proposal_layout = None;
         for widget in &mut ui.widgets {
             if widget.editable.is_none() {
                 let indent = if widget.thumbnail.is_some() || widget.swatch.is_some() {

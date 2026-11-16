@@ -212,15 +212,23 @@ The PR worker's decisions, easy to revisit
   progress at the world; refusals other than a refused or diverged step
   (a world that moved, a pending change) are shown through the session's
   state rather than kept.
-- Rows: at most 160 characters, wrapped between words to three lines;
-  proposal and world strings escaped with the observe crate's set and a
-  backslash and cut at 48 characters. The step is described from the
-  committed world, so a pending step reads the same as before it was
-  prepared.
+- Rows: the block is capped at 240 logical pixels so the sidebar stays
+  usable at the minimum window (review of #82); one fitted line for the
+  header, label and editor rows, three wrapped lines for the step's words
+  (deciding facts first), two for the state line; least important lines
+  go first. Proposal and world strings are escaped with the observe
+  crate's set and a backslash and cut at 48 characters. The step is
+  described from the committed world, so a pending step reads the same as
+  before it was prepared.
+- The recorded actor is shown "as recorded", with a caveat row when it is
+  not `agent:<name>`; such a proposal is not refused (the format allows
+  any actor; the person decides). Coordinator, 2026-11-16.
 - Evidence: `proposal-open.json` and `proposal-step-<sequence>.json`
   (six-digit sequence over every applied step, so re-applying after an
   undo never collides); a frame's `proposal` member only while one is
   open. The recovery record named is the one the applying Accept retained.
+  A record that cannot be written leaves the step applied and says so;
+  its number is not reused.
 - With a window, `--demo-script` and a proposal are refused; with
   `--reference` the scripted run applies the proposal instead of the
   demonstration.

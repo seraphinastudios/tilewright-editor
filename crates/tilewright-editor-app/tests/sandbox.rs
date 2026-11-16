@@ -321,9 +321,8 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let desktop = root.join("desktop");
     let proposal_file = sandbox.join("proposals").join(&name);
     let proposal_bytes = std::fs::read(&proposal_file).unwrap();
-    // Not isolated (-I): the helper imports its font pack checks from
-    // beside itself, through the script's directory on the path.
     let ran = Command::new("python3")
+        .arg("-I")
         .arg(repository().join("tools/provision-prototype.py"))
         .arg("--world")
         .arg(&source)
