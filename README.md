@@ -8,7 +8,7 @@ with a live preview of the cells a stroke will change,
 object placement from a searchable palette of granted prototypes with thumbnails, object deletion,
 a zone overlay with a legend and a zone brush, zone management (display name, parent, new zones, deleting unused ones),
 anchor and portal badges with an anchor list, anchor editing (create, move, delete anchors no portal names), portal editing one object at a time (an anchor from a list, a tile picked in the view, a typed location, or none), reviewed changes and undo/redo. Deterministic reference capture accompanies native
-window testing; a read-only MCP server observes a world for agents, while MCP editing and a full widget system remain future work.
+window testing; a read-only MCP server observes a world for agents, and an MCP editing server lets an agent edit in its own sandbox and submit a proposal; a full widget system remains future work.
 
 Tilewright is maintained by Seraphina Studios alongside
 [tilewright-world](https://github.com/seraphinastudios/tilewright-world), the
@@ -90,6 +90,7 @@ cargo run --locked --package tilewright-editor -- headless crates/tilewright-edi
 SDL_VIDEO_DRIVER=dummy cargo run --locked --package tilewright-editor -- window
 python3 tools/provision-prototype.py --world crates/tilewright-editor-testkit/fixtures/prototype-neutral --destination /absolute/private/new-session --editor target/debug/tilewright-editor
 python3 tools/provision-sandbox.py --world crates/tilewright-editor-testkit/fixtures/prototype-neutral --destination-parent /absolute/private/sandboxes --actor agent:example --editor target/debug/tilewright-editor
+python3 tools/provision-sandbox.py --mcp --world crates/tilewright-editor-testkit/fixtures/prototype-neutral --destination-parent /absolute/private/sandboxes --actor agent:example --editor target/debug/tilewright-editor
 tools/validate.sh
 ```
 
@@ -123,7 +124,11 @@ proposal; only a person applies a proposal, step by step, through Review and
 Accept. The helper starts `tilewright-editor sandbox`, which reads one JSON
 request per line on standard input (`status`, `edit`, `review`, `accept`,
 `cancel`, `undo`, `redo`, `submit`, `quit`) and answers one JSON line each.
-See [agent sandboxes](docs/SANDBOX.md) and [proposals](docs/PROPOSALS.md).
+With `--mcp` it starts `tilewright-editor sandbox-mcp` instead, which serves
+the same requests as MCP tools over stdio, with the observe tools on the
+sandbox world; no MCP client product has been tested against it.
+See [agent sandboxes](docs/SANDBOX.md), [the MCP editing server](docs/MCP-EDITING.md)
+and [proposals](docs/PROPOSALS.md).
 
 `tools/validate.sh` checks formatting, Clippy-as-errors, all tests/docs,
 dependency architecture/licenses/advisories, provenance/assets, path/inventory

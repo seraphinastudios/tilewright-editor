@@ -41,7 +41,10 @@ attribution; no dependency implementation is copied into editor source.
 ## MCP server
 
 `crates/tilewright-editor-mcp` and `docs/MCP.md` implement MCP revision
-2026-07-28 over stdio.
+2026-07-28 over stdio. The MCP editing server
+(`crates/tilewright-editor-mcp-sandbox`, `docs/MCP-EDITING.md`) runs that
+crate's protocol loop and observe tools, and adds tools written here; it
+ports nothing further.
 
 - **Ported from tilewright-world.** The protocol layer is ported from
   Seraphina Studios' own MIT server in

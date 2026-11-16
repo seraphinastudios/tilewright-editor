@@ -121,3 +121,43 @@ Decisions made with them (coordinator and PR worker, easy to revisit):
 - The helper copies the world from the descriptor it checked before making
   the sandbox, and closes every descriptor it holds or inherited but the
   three, as `/proc/self/fd` lists them (failing closed without it).
+
+## Addendum: the MCP editing server (PR 6c, 2026-11-15)
+
+- The editing tools are a separate server in a separate crate,
+  `tilewright-editor-mcp-sandbox`, started by `tools/provision-sandbox.py
+  --mcp` as `tilewright-editor sandbox-mcp` with the runner's options: the
+  same provisioning, descriptors and clean standard output, so one fixed
+  command starts it again and again, each start on a new sandbox. The
+  JSON-lines runner is unchanged.
+- The read-only MCP crate gains one seam, an `Endpoint` (the protocol
+  loop) over a `Tools` trait (instructions, list, call, a log line), and
+  exposes its `Observer` (the observe tools on one world, with `reload`)
+  and its schema DSL. The read-only server is an endpoint over its own
+  tools, and its replies are byte-identical. The dependency goes one way:
+  the editing crate names the MCP crate, never the reverse, and the MCP
+  crate's architecture checks are unchanged.
+- Every editing tool is one runner request through a new typed entry
+  point, `Sandbox::respond`, so its structured content is exactly the
+  runner's reply, refusals included (`isError: true`, the runner's code,
+  engine code, step and message). Arguments a tool does not take are the
+  runner's `request.invalid`. There is no `quit` tool: closing standard
+  input ends the session, and steps not submitted are lost.
+- `edit`'s input schema is a `oneOf` over the 15 kinds with exactly their
+  members; the proposal decoder stays the authority. The server writes a
+  fraction-free number in an integer member as an integer before decoding,
+  so schema and server agree on `3.0`; cell order, UTF-8 byte lengths and
+  field value budgets are what the schema cannot express.
+- Annotations from the revision's definitions: `status`, `review` and the
+  observe tools read-only; `cancel` destructive (it drops an unkept
+  pending change); the others non-destructive (sandbox-only, additive or
+  retained with an inverse), and every tool idempotent and closed-world.
+- The observe tools run on the sandbox world, reloaded from the copy
+  whenever the sandbox revision moved, and only when an observe tool is
+  called; a pending change is not observed, cursors go stale after an
+  accept, and `refresh` is not offered.
+- The runner's reply cap is lowered to 85 KiB in this server, so that both
+  copies of a reply stay within the read-only server's 256 KiB result
+  bound; the runner's own cutting and counts apply unchanged.
+- The confinement is of the protocol, not of the operating system, as for
+  the runner. No MCP client product was tested.

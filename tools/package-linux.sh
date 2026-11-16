@@ -18,7 +18,10 @@ for command in cargo-auditable syft strip python3; do command -v "${command}" >/
 
 stage=$(mktemp -d /tmp/tilewright-editor-stage.XXXXXX)
 render_smoke=$(mktemp -d /tmp/tilewright-editor-render.XXXXXX)
-trap 'rm -rf -- "${stage}" "${render_smoke}"' EXIT
+# The sandbox provisioner refuses volatile storage: its smoke test runs on
+# the checked test root when one is given.
+sandbox_smoke=$(mktemp -d "${TILEWRIGHT_CHECKED_TEST_ROOT:-${TMPDIR:-/tmp}}/tilewright-editor-mcp-sandbox.XXXXXX")
+trap 'rm -rf -- "${stage}" "${render_smoke}" "${sandbox_smoke}"' EXIT
 cargo auditable build --locked --release --package tilewright-editor
 target=$(cargo metadata --locked --offline --format-version 1 --no-deps | jq -r .target_directory)
 install -d "${stage}/tilewright-editor-${version}/bin" "${output}"
@@ -85,6 +88,27 @@ assert image["type"] == "image" and image["mimeType"] == "image/png", image["typ
 with open(sys.argv[1], "rb") as written:
     assert base64.b64decode(image["data"], validate=True) == written.read(), "the MCP image is not the PNG render writes"
 ' "${render_smoke}/sample.png"
+# The MCP editing server starts through the sandbox provisioner with the
+# packaged binary on a fresh copy of the packaged sample: discovery, the
+# sandbox's status and an edit refused for its form, over stdio.
+printf '%s\n' \
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{${mcp_meta}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{},${mcp_meta}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"edit\",\"arguments\":{\"action\":{\"kind\":\"x\"}},${mcp_meta}}}" |
+  python3 -I tools/provision-sandbox.py --world "${stage}/tilewright-editor-${version}/samples/prototype-neutral" \
+    --destination-parent "${sandbox_smoke}" --actor agent:package-smoke --mcp \
+    --editor "${stage}/tilewright-editor-${version}/bin/tilewright-editor" 2>/dev/null |
+  python3 -I -c '
+import json, sys
+replies = [json.loads(line) for line in sys.stdin]
+assert [reply["id"] for reply in replies] == [1, 2, 3], replies
+assert replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["title"] == "Tilewright editor (sandbox editing)", replies[0]
+status = replies[1]["result"]
+assert status["isError"] is False and status["structuredContent"]["actor"] == "agent:package-smoke", status
+refused = replies[2]["result"]
+assert refused["isError"] is True and refused["structuredContent"]["code"] == "proposal.invalid", refused
+'
+test "$(ls -A "${sandbox_smoke}" | wc -l)" -eq 1
 SYFT_CHECK_FOR_APP_UPDATE=false syft \
   "${stage}/tilewright-editor-${version}/bin/tilewright-editor" \
   --source-name tilewright-editor --source-version "${version}" \

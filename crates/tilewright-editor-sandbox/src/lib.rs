@@ -221,6 +221,11 @@ impl<R: RecoveryStore> Sandbox<R> {
         self.reply_bytes = bytes.min(MAXIMUM_REPLY_BYTES);
     }
 
+    /// The reply cap in force.
+    pub fn reply_limit(&self) -> usize {
+        self.reply_bytes
+    }
+
     /// The session, read-only.
     pub fn session(&self) -> &Session {
         &self.session

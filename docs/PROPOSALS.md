@@ -9,7 +9,9 @@ is applied, as the `tilewright-editor-proposal` crate implements them.
 Sandboxes and submitting from an agent are in [docs/SANDBOX.md](SANDBOX.md):
 the provisioning helper's sandbox mode and the headless runner, whose
 `submit` builds a proposal with `Proposal::from_session` and retains it in
-the sandbox's `proposals/` directory. Opening a proposal in the desktop
+the sandbox's `proposals/` directory, and in
+[docs/MCP-EDITING.md](MCP-EDITING.md): the same requests as MCP tools, whose
+`edit` takes an Action in this format's form. Opening a proposal in the desktop
 (what the person sees for each step: PR 6d) is later work; nothing
 described here lets an agent publish to a person's world, and nothing
 publishes except the person's own Accept.

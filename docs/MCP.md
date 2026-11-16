@@ -6,7 +6,10 @@ coding agent. The client starts it as a subprocess and talks to it over its
 standard input and output. Its tools answer the questions the read-only
 commands of [docs/CLI.md](CLI.md) answer, with the same reports, and page
 their long lists (issue #57). It is the crate `tilewright-editor-mcp`,
-which the binary runs; editing tools come later and are not part of it.
+which the binary runs. Editing is a separate server and crate, the MCP
+editing server of [docs/MCP-EDITING.md](MCP-EDITING.md), which reuses this
+server's protocol loop and observe tools; nothing in this server can reach
+it.
 
 ```sh
 cargo run --locked --package tilewright-editor -- mcp crates/tilewright-editor-testkit/fixtures/prototype-neutral
@@ -356,6 +359,7 @@ the CLI's command does; `lint`'s view preparation runs once per load.
 
 ## Not here
 
-Editing tools, change sets and proposals (issue #57's later parts), deeper
+Editing tools, change sets and proposals (the MCP editing server's, in
+[docs/MCP-EDITING.md](MCP-EDITING.md)), deeper
 analysis such as reachability, an HTTP transport, resources and prompts,
 and attaching to a running desktop editor.

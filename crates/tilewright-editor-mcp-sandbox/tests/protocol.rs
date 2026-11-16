@@ -540,11 +540,25 @@ fn a_failed_publication_blocks_every_change_with_session_blocked() {
 }
 
 #[test]
+fn the_runner_replies_are_capped_for_two_copies() {
+    let layout = Layout::new(|_| {});
+    let client = layout.open(None);
+    assert_eq!(
+        client.endpoint.tools().sandbox().reply_limit(),
+        tilewright_editor_mcp_sandbox::MAXIMUM_REPLY_BYTES
+    );
+    assert!(
+        3 * tilewright_editor_mcp_sandbox::MAXIMUM_REPLY_BYTES + 1024
+            <= tilewright_editor_mcp::MAXIMUM_RESULT_BYTES
+    );
+}
+
+#[test]
 fn the_log_names_the_actor_and_revision_and_nothing_else() {
     let layout = Layout::new(|_| {});
     let mut client = layout.open(Some("label \u{1b}[31m"));
     let revision = client.revision();
-    let (output, log) = client.serve_raw(&[b'x'; 70_000][..]);
+    let (output, log) = client.serve_raw(&vec![b'x'; 70_000]);
     assert_eq!(
         log,
         format!(

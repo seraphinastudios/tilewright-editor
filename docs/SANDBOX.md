@@ -14,7 +14,8 @@ That confines what the runner's requests can do. It is not an
 operating-system sandbox: a process running as the same user with a shell
 or file tools can read and write the person's world, the sandbox's
 receipt, `recovery/` and `proposals/` directly, and start a runner of its
-own. Give such an agent only the runner (in PR 6c, its MCP tools). Safety
+own. Give such an agent only the runner, or its MCP tools
+([docs/MCP-EDITING.md](MCP-EDITING.md)). Safety
 against anything written outside the protocol rests on the person's review
 when applying: every step is dispatched again under the person's grants,
 on the exact base, and reviewed and accepted by the person
@@ -28,9 +29,10 @@ records every step from the start again).
 This page describes `tools/provision-sandbox.py`, which makes a sandbox and
 starts the runner in it, and the runner's line protocol
 (`tilewright-editor sandbox`, crate `tilewright-editor-sandbox`). Both are
-Linux only, as editing is. The MCP editing tools that wrap the protocol
-(PR 6c) and the desktop's proposal review (PR 6d) are later work: no MCP
-client is involved yet.
+Linux only, as editing is. With `--mcp` the helper starts the MCP editing
+server instead, which offers the same requests as MCP tools
+([docs/MCP-EDITING.md](MCP-EDITING.md)); the desktop's proposal review
+(PR 6d) is later work.
 
 The owner decided (2026-11-14 and 2026-11-15): an agent edits and accepts
 only in its own provisioned sandbox and submits a proposal; no agent tool
@@ -59,6 +61,7 @@ that starts its server: every start makes a new sandbox.
 | `--actor agent:<name>` | The actor of every step: `agent:` and a name, 1 to 256 printable ASCII characters in all, not ending with a space (the engine's actor rule, with the prefix required, so a sandbox step can never pass for a person's). |
 | `--client-label TEXT` | Optional. An untrusted label, 1 to 256 bytes of UTF-8, recorded in proposals as given and shown escaped. It is never an actor. |
 | `--editor PATH` | The trusted editor executable. Without it the helper makes the sandbox and stops. |
+| `--mcp` | Start the MCP editing server, `tilewright-editor sandbox-mcp`, with the same options, instead of the runner ([docs/MCP-EDITING.md](MCP-EDITING.md)). Needs `--editor`. |
 
 The helper:
 
@@ -143,7 +146,8 @@ order, flushed. A line may end in CR LF. Requests are read with World's
 strict JSON reader: no comments, no duplicate keys, no trailing data. A
 request has the member `request` and, for `edit`, `action`; any other
 member is refused. This is a plain line protocol, not MCP: the MCP editing
-tools (PR 6c) will wrap it.
+server ([docs/MCP-EDITING.md](MCP-EDITING.md)) serves the same requests,
+through the same code, as MCP tools.
 
 Every reply has `ok` (whether the request was done), `request` (the
 request's name, or `null` when the line named no known request) and
@@ -344,6 +348,5 @@ Trimmed (`…` for digests and review lines):
 
 ## Not here
 
-MCP editing tools and their server (PR 6c); the desktop opening a proposal
-(PR 6d); a blocked session's Reopen (start a new sandbox instead); rebasing
+The desktop opening a proposal (PR 6d); a blocked session's Reopen (start a new sandbox instead); rebasing
 proposals; Windows and macOS editing.
