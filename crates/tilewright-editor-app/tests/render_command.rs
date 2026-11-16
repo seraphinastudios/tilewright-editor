@@ -219,6 +219,17 @@ fn render_writes_one_new_file_and_leaves_the_world_untouched() {
     let mut after = snapshot(directory.path());
     let written = after.remove(Path::new("out/image.png")).unwrap();
     assert_eq!(written.0, "file");
+    // The PNG gets the platform's default access, as a file the standard
+    // library creates beside it does (on Unix 0o666 less the umask).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let probe = directory.path().join("probe");
+        std::fs::write(&probe, b"").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode(&file), mode(&probe));
+        std::fs::remove_file(&probe).unwrap();
+    }
     // The output directory's modification time changes with its new entry;
     // nothing else does, and nothing else appears.
     after.remove(Path::new("out"));
