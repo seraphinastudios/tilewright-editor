@@ -38,14 +38,19 @@ const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable f
 const STROKE_INTERRUPTED: &str = "Brush stroke ended before release; nothing was prepared.";
 
 type Result<T> = std::result::Result<T, String>;
+
+#[path = "proposal_view.rs"]
+mod proposal_view;
 type UiRows = Vec<(String, Option<Control>, bool, bool)>;
 // The review text and its completeness limits are the engine's; the app
 // lays the lines out.
 #[cfg(test)]
 use tilewright_editor_ui::review::{MAXIMUM_REVIEW_BYTES, append_change_review};
 use tilewright_editor_ui::review::{REVIEW_LIMIT_MESSAGE, Review};
-/// The actor of every transaction the desktop app prepares.
+/// The actor of every transaction the desktop app prepares, unless the
+/// helper's `--actor human:<name>` names the person.
 const ACTOR: &str = "editor:prototype";
+const PERSON_PREFIX: &str = "human:";
 const NOTHING_TO_PLACE: &str = "Place is unavailable: the catalog grants no prototype to place.";
 /// Sidebar row heights and the gap between rows, in logical pixels. Place
 /// palette rows are taller so their thumbnails stay legible.
@@ -230,6 +235,8 @@ struct Application {
     /// defaults (`SceneLimits::default()`), never queried from the renderer;
     /// tests lower them.
     frame_limits: tilewright_scene::SceneLimits,
+    /// The proposal the person opened (`--proposal-fd`), if any.
+    proposal: Option<proposal_view::OpenProposal>,
 }
 
 /// This command is intentionally a deployment seam, not arbitrary recovery-path
@@ -247,6 +254,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
     if world == recovery || world == evidence || recovery == evidence {
         return Err("provisioned descriptor numbers must be distinct".into());
     }
+    let (proposal_root, person) = proposal_arguments(arguments, [&world, &recovery, &evidence])?;
     let reference = arguments.iter().any(|argument| argument == "--reference");
     let demo = arguments.iter().any(|argument| argument == "--demo-script");
     let font_path = arguments
@@ -271,7 +279,8 @@ pub fn run(arguments: &[String]) -> Result<()> {
         PreviewLimits::default(),
     )
     .map_err(|error| error.to_string())?;
-    let actor = tilewright_editor_ui::Actor::new(ACTOR).map_err(|error| error.to_string())?;
+    let actor = tilewright_editor_ui::Actor::new(person).map_err(|error| error.to_string())?;
+    let proposal = proposal_view::read(proposal_root.as_ref(), demo && !reference)?;
     let mut session = Session::new(History::new(document), catalog, resources, actor);
     if demo {
         // Scripted evidence is reproducible: its placements get the same uids
@@ -308,7 +317,9 @@ pub fn run(arguments: &[String]) -> Result<()> {
         zone_view: None,
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
+        proposal: None,
     };
+    app.open_proposal(proposal)?;
     println!(
         "{}\n{}",
         HELP,
@@ -322,10 +333,57 @@ pub fn run(arguments: &[String]) -> Result<()> {
                     .into(),
             );
         }
-        app.demo_all()?;
+        if app.proposal.is_some() {
+            app.proposal_demo()?;
+        } else {
+            app.demo_all()?;
+        }
         return Ok(());
     }
     native(app, demo)
+}
+
+/// The proposal to open (the provisioned `proposal/` directory and the file
+/// name in it, both or neither, the directory distinct from the others) and
+/// the session's actor (`--actor human:<name>`, else the fixed one).
+fn proposal_arguments(
+    arguments: &[String],
+    others: [&PathBuf; 3],
+) -> Result<(Option<(PathBuf, String)>, String)> {
+    let proposal_root = match (
+        arguments.iter().any(|argument| argument == "--proposal-fd"),
+        option(arguments, "--proposal-name")?,
+    ) {
+        (false, None) => None,
+        (true, Some(name)) => {
+            let root = descriptor(arguments, "--proposal-fd")?;
+            if others.contains(&&root) {
+                return Err("provisioned descriptor numbers must be distinct".into());
+            }
+            Some((root, name))
+        }
+        _ => return Err("--proposal-fd and --proposal-name go together".into()),
+    };
+    let person = match option(arguments, "--actor")? {
+        None => ACTOR.to_owned(),
+        Some(actor) if actor.starts_with(PERSON_PREFIX) && actor.len() > PERSON_PREFIX.len() => {
+            actor
+        }
+        Some(_) => return Err("--actor takes human:<name>".into()),
+    };
+    Ok((proposal_root, person))
+}
+
+/// The value after option `name`, if the option is given.
+fn option(arguments: &[String], name: &str) -> Result<Option<String>> {
+    match arguments.iter().position(|argument| argument == name) {
+        None => Ok(None),
+        Some(index) => arguments
+            .get(index + 1)
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| format!("missing {name} value")),
+    }
 }
 
 fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
@@ -406,10 +464,25 @@ impl Application {
             self.notice = Some(REVIEW_LIMIT_MESSAGE.into());
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
-        let result = self
-            .session
-            .dispatch(action, &mut self.recovery)
-            .map_err(|error| error.to_string());
+        let accept = matches!(action, Action::Accept);
+        self.funnel(accept, |app| {
+            app.session
+                .dispatch(action, &mut app.recovery)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// The one path every edit, review and history action takes, and the
+    /// proposal's prepare: `dispatch`, then the recovery descriptor, a
+    /// rebuild from the session's actual World, the report, and settling an
+    /// open proposal. `accept` tells whether the action is an Accept.
+    fn funnel(
+        &mut self,
+        accept: bool,
+        dispatch: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        let records = self.recovery.records().len();
+        let result = dispatch(self);
         if let Some(error) = self.recovery.last_error() {
             self.session.set_recovery_descriptor(error.to_string());
         } else if let Some(record) = self.recovery.records().last() {
@@ -423,9 +496,10 @@ impl Application {
         // empty Undo). Always rebuild from Session's actual current World.
         let refreshed = self.rebuild();
         self.report();
+        let settled = self.settle_proposal(accept.then_some(records));
         match result {
             Err(original) => Err(original),
-            Ok(()) => refreshed,
+            Ok(()) => refreshed.and(settled),
         }
     }
 
@@ -2168,7 +2242,7 @@ impl Application {
                 }
             };
         }
-        let mut y = 56;
+        let mut y = self.proposal_panel(ui, 56);
         if self.tools.mode() == ToolMode::Place
             && !tools::object_palette(self.session.catalog()).is_empty()
         {
@@ -2615,6 +2689,9 @@ impl Application {
         if let Some(status) = self.portal_status() {
             return status;
         }
+        if let Some(status) = self.proposal_review_status() {
+            return status;
+        }
         match self.session.status().phase {
             SessionPhase::Ready if self.session.status().applied == Some(true) => {
                 "Changes saved. Ready to edit."
@@ -2771,6 +2848,7 @@ impl Application {
             Control::Undo => self.action(Action::Undo),
             Control::Redo => self.action(Action::Redo),
             Control::Nudge(delta) => self.nudge(delta),
+            Control::ProposalPrepare | Control::ProposalContinue => self.proposal_control(),
             Control::BrushSize(delta) => {
                 self.tools
                     .set_brush(self.tools.brush().resized(i32::from(delta)));
@@ -3123,14 +3201,26 @@ impl Application {
                 .map_err(|error| error.to_string())?;
         }
         self.evidence.retain(&format!("{name}.png"), &bytes)?;
-        self.evidence.retain(&format!("{name}.json"), serde_json::to_string_pretty(&serde_json::json!({
+        let mut frame_record = serde_json::json!({
             "format":"tilewright.prototype-frame/1", "path":"cpu-reference", "frame_generation":self.view.frame_revision,
             "source_revision":tilewright_editor_document::revision_hex(&self.session.world().source_digest()),
             "committed_revision":tilewright_editor_document::revision_hex(&self.session.history().document().revision()),
             "catalog_revision":tilewright_editor_document::revision_hex(&self.prepared.catalog_revision),
             "width":frame.width,"height":frame.height,"status":self.session.status().to_string(),
             "toolkit":tilewright_editor_document::TOOLKIT_VERSION,"renderer":"0.7.1","pending":self.session.history().pending().is_some()
-        })).map_err(|error| error.to_string())?.as_bytes())
+        });
+        // Only while a proposal is open, so other frames are unchanged.
+        if let (Some(proposal), Some(record)) =
+            (self.proposal_frame(), frame_record.as_object_mut())
+        {
+            record.insert("proposal".into(), proposal);
+        }
+        self.evidence.retain(
+            &format!("{name}.json"),
+            serde_json::to_string_pretty(&frame_record)
+                .map_err(|error| error.to_string())?
+                .as_bytes(),
+        )
     }
 
     /// Select a visible object with `capability` through the ordinary mask.
@@ -4562,6 +4652,14 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         Keycode::Z => app.action(Action::Undo),
         Keycode::Y => app.action(Action::Redo),
         Keycode::R => app.action(Action::Reopen),
+        // The proposal panel's control: prepare the step, or continue or
+        // resume the proposal. Nothing without an open proposal.
+        Keycode::G if app.proposal.is_some() => {
+            if !app.displayed_input_ready() {
+                return Err("the proposal waits for the current displayed panel".into());
+            }
+            app.proposal_control()
+        }
         Keycode::Delete => app.control(Control::Delete),
         Keycode::Left if app.tools.mode() == ToolMode::Move => app.nudge([-1, 0]),
         Keycode::Right if app.tools.mode() == ToolMode::Move => app.nudge([1, 0]),

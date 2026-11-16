@@ -8,9 +8,11 @@ to the app, avoiding a pathname reopen after verification.
 """
 # Copyright 2026 Seraphina Studios. SPDX-License-Identifier: MIT
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import sys
@@ -18,6 +20,12 @@ import sys
 MAX_FILES = 4096
 MAX_BYTES = 64 << 20
 PERSISTENT_LOCAL = {'ext2', 'ext3', 'ext4', 'xfs', 'btrfs', 'f2fs', 'zfs', 'bcachefs'}
+# A proposal file as the proposal store names it, and its size bound
+# (tilewright_editor_proposal::limits::BYTES).
+PROPOSAL_NAME = re.compile(r'proposal-[0-9a-f]{64}\.json')
+MAX_PROPOSAL = 16 << 20
+PERSON_PREFIX = 'human:'
+MAX_ACTOR = 256
 
 
 def directory(path):
@@ -65,6 +73,67 @@ def identity(fd):
         raise ValueError('session directories must be owned by this user with mode 0700')
     return {'device': value.st_dev, 'inode': value.st_ino, 'uid': value.st_uid, 'mode': '0700',
             'mount': persistent_mount(fd)}
+
+
+def person_actor(text):
+    """The engine's actor rule (1 to 256 printable ASCII characters, no
+    space at either end) with the human: prefix and a name after it."""
+    if not text.startswith(PERSON_PREFIX) or len(text) == len(PERSON_PREFIX):
+        raise ValueError('a person\'s actor is human:<name>')
+    if len(text) > MAX_ACTOR or not all(' ' <= character <= '~' for character in text):
+        raise ValueError('an actor is at most 256 printable ASCII characters')
+    if text.endswith(' '):
+        raise ValueError('an actor does not end with a space')
+    return text
+
+
+def read_proposal(path):
+    """The bytes of the proposal file at `path`, checked and read before
+    anything is created: a regular file, not a link, at most 16 MiB, named
+    as the proposal store names it. It is opened once, without following a
+    link and without blocking on a pipe, read whole and closed; it is never
+    written."""
+    if PROPOSAL_NAME.fullmatch(path.name) is None:
+        raise ValueError('a proposal file is named proposal-<64 lowercase hex digits>.json')
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as error:
+        raise ValueError('the proposal must be an existing readable regular file, not a link') from error
+    try:
+        value = os.fstat(fd)
+        if not stat.S_ISREG(value.st_mode):
+            raise ValueError('the proposal must be a regular file')
+        if value.st_size > MAX_PROPOSAL:
+            raise ValueError('the proposal is larger than 16 MiB')
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_PROPOSAL:
+                raise ValueError('the proposal is larger than 16 MiB')
+            chunks.append(chunk)
+        if total != value.st_size:
+            raise ValueError('the proposal changed while it was read')
+        return b''.join(chunks)
+    finally:
+        os.close(fd)
+
+
+def write_proposal(directory_fd, name, data):
+    """Write the proposal's bytes as a new private file in the session's
+    proposal/ directory and sync it and the directory."""
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+    try:
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view):]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.fsync(directory_fd)
 
 
 def copy_tree(source, destination):
@@ -139,7 +208,15 @@ def main():
     parser.add_argument('--font-pack', type=Path, help='explicit absolute immutable font pack; required for editor launch')
     parser.add_argument('--demo-script', action='store_true')
     parser.add_argument('--reference', action='store_true', help='headless reference proof, no native acceptance')
+    parser.add_argument('--proposal', type=Path,
+                        help='a proposal file (proposal-<digest>.json) to open; copied into the session')
+    parser.add_argument('--actor', help='human:<name>, the actor of the changes this session accepts')
     args = parser.parse_args()
+    # Checked, and the proposal read, before anything is created.
+    actor = None if args.actor is None else person_actor(args.actor)
+    proposal = None
+    if args.proposal is not None:
+        proposal = (args.proposal.name, read_proposal(args.proposal))
     font_record = None
     if args.editor and args.font_pack is None:
         raise ValueError('editor launch requires explicit --font-pack')
@@ -168,19 +245,27 @@ def main():
         held.append(task_fd)
         ids = {'session': identity(task_fd)}
         children = {}
-        for child in ('world', 'recovery', 'evidence'):
+        for child in ('world', 'recovery', 'evidence') + (('proposal',) if proposal else ()):
             os.mkdir(child, mode=0o700, dir_fd=task_fd)
             fd = os.open(child, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=task_fd)
             held.append(fd)
             children[child] = fd
             ids[child] = identity(fd)
-        if len({(v['device'], v['inode']) for v in ids.values()}) != 4:
+        if len({(v['device'], v['inode']) for v in ids.values()}) != len(ids):
             raise ValueError('provisioned directory identity collision')
         copied = copy_tree(args.world, children['world'])
+        if proposal:
+            write_proposal(children['proposal'], *proposal)
         os.fsync(task_fd)
         os.fsync(parent_fd)
         receipt = {'format': 'tilewright.prototype-provision/1', 'platform': sys.platform,
                    'roots': ids, 'copy': copied, 'font_pack': font_record, 'scope': 'fresh distinct retained roots; no arbitrary-root guarantee'}
+        # Only with the options, so a receipt without them is unchanged.
+        if proposal:
+            receipt['proposal'] = {'name': proposal[0], 'bytes': len(proposal[1]),
+                                   'sha256': hashlib.sha256(proposal[1]).hexdigest()}
+        if actor is not None:
+            receipt['actor'] = actor
         receipt_fd = os.open('provision.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=task_fd)
         with os.fdopen(receipt_fd, 'w') as stream:
@@ -207,6 +292,12 @@ def main():
                 command.append('--demo-script')
             if args.reference:
                 command.append('--reference')
+            if proposal:
+                command += ['--proposal-fd', str(children['proposal']), '--proposal-name', proposal[0]]
+            if actor is not None:
+                command += ['--actor', actor]
+            # subprocess closes every other descriptor (close_fds), so only
+            # the standard streams and these directories reach the editor.
             result = subprocess.run(command, pass_fds=tuple(children.values()), check=False)
             return result.returncode
         return 0

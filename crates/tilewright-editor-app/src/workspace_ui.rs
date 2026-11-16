@@ -86,6 +86,11 @@ pub enum Control {
     EditDraft,
     ApplyDraft,
     CancelDraft,
+    /// Prepare the open proposal's next step for review.
+    ProposalPrepare,
+    /// Continue the open proposal from where the world is (after the
+    /// person's own edits, an undo, or a Cancel).
+    ProposalContinue,
 }
 
 #[derive(Clone, Debug)]
