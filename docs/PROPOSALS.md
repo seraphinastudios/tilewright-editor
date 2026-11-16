@@ -309,22 +309,32 @@ shows that it does not apply here, with both revisions; normal editing
 stays available either way.
 
 **The panel.** A Proposal block at the top of the sidebar, while a proposal
-is open: its short digest and the actor it was recorded with ("by X (as
-recorded)": the file lives where the agent can write, so the actor is only
-what it says; a further row says "Recorded actor is not an agent actor"
-when it does not start with `agent:`, and the proposal is still offered:
-the person decides); the client's label, escaped and marked unverified;
-the editor version it was recorded with and this one's ("may diverge" when
-they differ); where the world is ("at its base", "after step j of n", "not
-on its path", "at N places on its path"); "Step k of n" and the step in
-words; a state line; how many steps are applied and remain; the catalog
-notice. Only the current step is described, so a 256-step proposal reads
-the same as a short one.
+is open. Every row puts the fact that matters first, so a one-line cut
+never hides it:
+
+- "Proposal <short digest>, recorded actor: <actor>": the file lives where
+  the agent can write, so the actor is only what it says; a long actor is
+  what gets cut;
+- "Recorded actor is not an agent actor", when it does not start with
+  `agent:`; the proposal is still offered (the person decides);
+- "Client label (unverified): …", escaped;
+- "Recorded by this editor build (0.1.0)", or "Recorded by another editor
+  build (0.2.0; this is 0.1.0): steps may diverge";
+- where the world is ("World: at its base", "after step j of n", "not on
+  its path", "at N places on its path");
+- "Step k of n:" and the step in words;
+- the state line;
+- "Applied k of n, remaining m";
+- "Catalog differs from the recording: your grants apply", when it does.
+
+Only the current step is described, so a 256-step proposal reads the same
+as a short one.
 
 The step's words come from its decoded Action and from the person's
 committed world, never from the recorded transaction. They say what the
-step does, to which id and where to first (the destination of a move, the
-value of a field, the parent of a new zone), then the rest; from the world
+step does, to which id and where to first ("Move marker_1 to (4, 2), from
+(3, 2), on main/0", "Set label on marker_1 to …", "Create zone Z under P,
+named N, on main"), then the rest; from the world
 they add where an object or anchor being moved or deleted is now, how many
 objects a deleted object carries ("and the 3 objects it carries"), and
 "outside the view" for a tile outside it. Every string from the proposal
@@ -332,19 +342,21 @@ or the world is escaped with the observe crate's set (controls,
 bidirectional and line separators, invisible characters) and a backslash,
 and cut at 48 characters.
 
-The block never takes more than 240 logical pixels, its control included,
-so at the minimum 720×480 window an open text draft and the inspector rows
-below it stay on screen. The header, label and editor rows are one line
-each, cut with "..." when long (the full strings are in
-`proposal-open.json`); the step's words wrap between words to at most
-three lines and the state line to two; each row is first cut to what three
-lines of the sidebar can hold. When the rows need more than the nine lines
-the block has, the least important lines go first: the notice, then the
-counts, then the third line of the words, the second of the state line,
-the second of the words, where the world is, the editor, the actor caveat
-and the label; the
-header, the first line of the words and the first of the state line always
-stay. A row cut short ends in "...".
+The block takes at most 240 logical pixels at the minimum 720×480 window,
+its control included, so an open text draft and the inspector rows below
+it stay on screen; a taller window gives it up to a third of the sidebar.
+The header, label, caveat, editor and where rows are one line each, cut
+with "..." when long (the full strings are in `proposal-open.json`); the
+step's words wrap between words to at most three lines and the state line
+to two; each row is first cut to about what three lines of the sidebar can
+hold. When the rows need more lines than the block has (nine at the
+minimum window), the least important lines go first: the notice, the
+counts, the third line of the words (while a step is refused or diverged,
+the notice, a likely cause, goes after these two), the second line of the
+state line, the second of the words, where the world is, the editor row,
+the actor caveat and the label. The header, the first line of the words
+and the first of the state line always stay. A row cut short ends in
+"...".
 
 **The control.** One button under the block, also on the **G** key:
 "Prepare step k" prepares the next step through the same path as every
@@ -361,15 +373,19 @@ ones; nothing in the desktop accepts a step for the person.
 | State | What happened | What the person can do |
 |---|---|---|
 | Ready to prepare. | The world is where the next step starts. | Prepare it. |
-| Step k pending: matches its recording. | The step is prepared; the Review status reads "Proposal step k of n recorded as agent:…: matches its recording. Accept applies it; Cancel stops the proposal." and shows the session's own review of the freshly prepared change. | Accept or Cancel. |
+| Step k pending: matches its recording. Accept or Cancel below. | The step is prepared; the Review status reads "Step k of n matches its recording (recorded as agent:…). Accept applies it; Cancel stops the proposal." and shows the session's own review of the freshly prepared change. | Accept or Cancel. |
 | Your own change is pending: the proposal waits. | The pending change is the person's; the Review is today's. | Accept or Cancel it. |
 | Step k undone: prepare it again (or Redo). | An applied step was undone. | Prepare it again, or Redo. |
-| The world is at several places on its path: Redo continues the proposal. | An applied step was undone in a proposal whose steps return to a revision they passed, so where to continue is ambiguous. | Redo. |
+| The world is at several places on its path: Redo continues the proposal. | The steps return to a revision they passed, so where to continue is ambiguous, and there is a change to redo (the person undid a step). | Redo. |
+| The world is at several places on its path: undo your last edits to continue. | As above with nothing to redo: the person's own edits brought the world back to a revisited revision. | Undo them. |
+| The world is at several places on its path: the proposal cannot continue from here. | As above with nothing to undo or redo. | Nothing in this session. |
 | The world moved: undo your own edits to continue. | The person accepted an edit of their own; the world is on no step of the path. | Undo it. |
 | The world moved: undo your edits or continue from step j. | The world is after a later step than the progress (the person made a step's edit themselves). | Continue. |
+| The world moved: every step is in it; continue to finish. | The world is at the proposal's result while the progress is behind (the person made the last steps' edits themselves). | Continue. |
 | Refused: proposal.step_refused (engine code). Nothing changed. | The engine refused the step under the person's grants. | Try again after changing what refused it. |
-| Diverged from its recording (recorded by editor X). Nothing changed. Preparing again will give the same result unless the world or catalog changes. | The step prepared another change than it recorded and was cancelled. | Preparing again is offered and gives the same result unless the world or catalog changed; another editor build may record differently. |
+| Diverged from its recording. Nothing changed. (With "Recorded by another editor build." when the versions differ.) | The step prepared another change than it recorded and was cancelled. | Preparing again is offered; it gives the same result unless the world or catalog changes. Another editor build may record differently. |
 | Stopped by Cancel. Resume continues it. | The person cancelled a prepared step. | Resume. |
+| Stopped by Cancel; it cannot resume from where the world is. | As above, and the world is now at no single place on the path (or a change is pending). | Undo own edits, or finish the pending change. |
 | All n steps applied. | | |
 | Does not apply to this world; nothing can be prepared. | Neither begin nor resume applied at start-up. | Edit normally. |
 | This session cannot continue (blocked). | The session or the rendering is blocked. | Inspect recovery, as for any blocked session. |
@@ -414,8 +430,10 @@ CPU frames. A person checks:
    --actor human:<you>` as above. The window opens with the Proposal
    block at the top right; read it at 1280×800.
 2. Press **G** once: the Review shows the diff, and the status line reads
-   "Proposal step 1 of n recorded as agent:…: matches its recording…".
-   Hold G down: nothing repeats.
+   "Step 1 of n matches its recording (recorded as agent:…)…". Hold G
+   down: nothing repeats. With a proposal recorded by another editor
+   version, the editor row starts "Recorded by another editor build" and
+   ends "steps may diverge" (cut when the versions are long).
 3. Press G and then Enter as fast as you can: the step is accepted only
    once its diff has been drawn. Press Enter: the step is applied and the
    panel moves to step 2.

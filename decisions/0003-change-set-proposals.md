@@ -206,8 +206,10 @@ The PR worker's decisions, easy to revisit
   takes it. The desktop never dispatches Accept for the person; only the
   `--reference --demo-script` evidence run, which opens no window, accepts
   each step as the scripted demonstration accepts its own edits.
-- The panel's state is derived from the progress and the session each
-  time it is laid out. An applied step the person undid reads "Step k
+- The panel's state is derived once per layout from the reading the
+  funnel's settle stores after every action (the only place the session
+  changes), the stored refusal and the session; nothing is settled or
+  copied to lay the panel out. An applied step the person undid reads "Step k
   undone: prepare it again (or Redo)", and preparing first resumes the
   progress at the world; refusals other than a refused or diverged step
   (a world that moved, a pending change) are shown through the session's
@@ -220,9 +222,15 @@ The PR worker's decisions, easy to revisit
   crate's set and a backslash and cut at 48 characters. The step is
   described from the committed world, so a pending step reads the same as
   before it was prepared.
-- The recorded actor is shown "as recorded", with a caveat row when it is
-  not `agent:<name>`; such a proposal is not refused (the format allows
-  any actor; the person decides). Coordinator, 2026-11-16.
+- Every row and the Review status lead with the fact that matters, so a
+  one-line cut never hides it: "Proposal <digest>, recorded actor: X",
+  "Recorded by another editor build (…): steps may diverge", "Step k of n
+  matches its recording (recorded as X)". A caveat row appears when the
+  actor is not `agent:<name>`; such a proposal is not refused (the format
+  allows any actor; the person decides). Coordinator, 2026-11-16.
+- The block's cap grows with the window to a third of the sidebar; while
+  a step is refused or diverged the catalog notice outranks the counts
+  and the words' third line.
 - Evidence: `proposal-open.json` and `proposal-step-<sequence>.json`
   (six-digit sequence over every applied step, so re-applying after an
   undo never collides); a frame's `proposal` member only while one is

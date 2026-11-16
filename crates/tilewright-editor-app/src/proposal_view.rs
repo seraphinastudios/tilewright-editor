@@ -37,14 +37,27 @@ const ROW_GAP: u32 = 2;
 /// The control row's height.
 const BUTTON_HEIGHT: u32 = 26;
 /// The most logical pixels the whole Proposal block takes, its control and
-/// the space after it included, at every window size. At the minimum
+/// the space after it included, at the minimum window; a taller window
+/// gives it up to a third of the sidebar (`panel_height`). At the minimum
 /// 720x480 window the sidebar runs from y=56 to 480: this leaves 184 px for
 /// an open text draft (its field, hint and Review/Discard buttons, 96 px)
 /// and the inspector rows below it.
 pub(super) const PANEL_HEIGHT: u32 = 240;
 /// The text lines that fit in [`PANEL_HEIGHT`] beside the control.
-pub(super) const PANEL_LINES: usize =
-    ((PANEL_HEIGHT - BUTTON_HEIGHT - ROW_GAP - 6) / (ROW_HEIGHT + ROW_GAP)) as usize;
+#[cfg(test)]
+pub(super) const PANEL_LINES: usize = panel_lines_in(PANEL_HEIGHT);
+
+/// The block's height for a sidebar whose rows end at logical `bottom`:
+/// [`PANEL_HEIGHT`], or a third of the sidebar when that is more.
+pub(super) fn panel_height(bottom: u32) -> u32 {
+    PANEL_HEIGHT.max(bottom.saturating_sub(56) / 3)
+}
+
+/// The text lines that fit in a block `height` pixels tall beside the
+/// control.
+pub(super) const fn panel_lines_in(height: u32) -> usize {
+    (height.saturating_sub(BUTTON_HEIGHT + ROW_GAP + 6) / (ROW_HEIGHT + ROW_GAP)) as usize
+}
 /// This editor's version, as a proposal's `editor` member records one.
 pub(super) const EDITOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -135,8 +148,10 @@ impl Row {
         }
     }
     /// The rank of its line `line` when the block is short of room: lower
-    /// is kept first.
-    fn rank(self, line: usize) -> usize {
+    /// is kept first. While a step is refused or diverged, the catalog
+    /// notice (a likely cause) outranks the counts and the words' third
+    /// line.
+    fn rank(self, line: usize, refused: bool) -> usize {
         match (self, line) {
             (Self::Header, _) => 0,
             (Self::Step, 0) => 1,
@@ -147,15 +162,17 @@ impl Row {
             (Self::Where, _) => 6,
             (Self::Step, 1) => 7,
             (Self::State, _) => 8,
-            (Self::Step, _) => 9,
-            (Self::Counts, _) => 10,
-            (Self::Notice, _) => 11,
+            (Self::Notice, _) if refused => 9,
+            (Self::Step, _) => 10,
+            (Self::Counts, _) => 11,
+            (Self::Notice, _) => 12,
         }
     }
 }
 
-/// What the panel shows: derived from the progress and the session each
-/// time the interface is laid out, so it never goes stale.
+/// What the panel shows: derived, once per layout, from the reading the
+/// funnel's settle stored after the last action (the only place the
+/// session changes), the stored refusal and the session itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum State {
     /// The session or the rendering is blocked.
@@ -189,9 +206,13 @@ pub(super) enum State {
         resume: Option<usize>,
     },
     /// The world is at several positions of a chain that revisits a
-    /// revision, after the person undid a step: a resume would be
-    /// ambiguous, and Redo continues.
-    Several,
+    /// revision: a resume would be ambiguous. `redo` and `undo` say whether
+    /// the session has a change to redo (a step the person undid) or to
+    /// undo (an edit of the person's own that brought it here).
+    Several {
+        redo: bool,
+        undo: bool,
+    },
 }
 
 impl State {
@@ -208,7 +229,7 @@ impl State {
             Self::Undone { .. } => "undone",
             Self::Ready { .. } => "ready",
             Self::Moved { .. } => "moved",
-            Self::Several => "several",
+            Self::Several { .. } => "several",
         }
     }
 }
@@ -316,7 +337,13 @@ impl OpenProposal {
                 // Every step applied, and the person edited after them.
                 [] if next == self.steps() => State::Finished,
                 [] => State::Moved { resume: None },
-                _ => State::Several,
+                _ => {
+                    let (undo, redo) = session.history().depths();
+                    State::Several {
+                        redo: redo > 0,
+                        undo: undo > 0,
+                    }
+                }
             };
         }
         if next == self.steps() {
@@ -386,10 +413,14 @@ impl OpenProposal {
             State::Refused {
                 code: RefusalCode::ProposalStepDiverged,
                 ..
-            } => format!(
-                "Diverged from its recording (recorded by editor {}). Nothing changed. Preparing again will give the same result unless the world or catalog changes.",
-                shown(self.proposal.editor())
-            ),
+            } => {
+                if self.proposal.editor() == EDITOR_VERSION {
+                    "Diverged from its recording. Nothing changed.".into()
+                } else {
+                    "Diverged from its recording. Nothing changed. Recorded by another editor build."
+                        .into()
+                }
+            }
             State::Refused { code, engine, .. } => match engine {
                 Some(engine) => format!("Refused: {code} ({engine}). Nothing changed."),
                 None => format!("Refused: {code}. Nothing changed."),
@@ -410,8 +441,16 @@ impl OpenProposal {
             State::Moved { resume: None } => {
                 "The world moved: undo your own edits to continue.".into()
             }
-            State::Several => {
+            State::Several { redo: true, .. } => {
                 "The world is at several places on its path: Redo continues the proposal.".into()
+            }
+            State::Several { undo: true, .. } => {
+                "The world is at several places on its path: undo your last edits to continue."
+                    .into()
+            }
+            State::Several { .. } => {
+                "The world is at several places on its path: the proposal cannot continue from here."
+                    .into()
             }
         }
     }
@@ -461,7 +500,7 @@ impl OpenProposal {
             (
                 Row::Header,
                 format!(
-                    "Proposal {} by {} (as recorded)",
+                    "Proposal {}, recorded actor: {}",
                     &revision_hex(&proposal.body_sha256())[..8],
                     shown(actor)
                 ),
@@ -481,13 +520,10 @@ impl OpenProposal {
         rows.push((
             Row::Editor,
             if proposal.editor() == EDITOR_VERSION {
-                format!(
-                    "Recorded by editor {} (this editor too)",
-                    shown(proposal.editor())
-                )
+                format!("Recorded by this editor build ({EDITOR_VERSION})")
             } else {
                 format!(
-                    "Recorded by editor {} (this editor {EDITOR_VERSION}): may diverge",
+                    "Recorded by another editor build ({}; this is {EDITOR_VERSION}): steps may diverge",
                     shown(proposal.editor())
                 )
             },
@@ -818,7 +854,7 @@ impl Application {
         let open = self.proposal.as_ref()?;
         match self.proposal_state()? {
             State::Pending { step } => Some(format!(
-                "Proposal step {} of {} recorded as {}: matches its recording. Accept applies it; Cancel stops the proposal.",
+                "Step {} of {} matches its recording (recorded as {}). Accept applies it; Cancel stops the proposal.",
                 step + 1,
                 open.proposal.steps().len(),
                 shown(open.proposal.actor().as_str())
@@ -838,8 +874,8 @@ impl Application {
 
     /// The proposal block at the top of the sidebar, from logical `y`;
     /// returns the next free row. The block never takes more than
-    /// [`PANEL_HEIGHT`]: when its rows need more lines than
-    /// [`PANEL_LINES`], the least important lines go first (see
+    /// `panel_height` ([`PANEL_HEIGHT`] at the minimum window): when its
+    /// rows need more lines than fit, the least important lines go first (see
     /// `Row::rank`) and a row cut short ends in "...". Every line goes
     /// through the ordinary fit-and-clip path when the interface is laid
     /// out.
@@ -857,7 +893,9 @@ impl Application {
         let rows = open.rows(&self.session, state, characters);
         let ready = self.blocked.is_none() && self.session.can_prepare();
         let control = open.control(state, ready);
-        for line in panel_lines(&mut self.text, &rows, width) {
+        let budget = panel_lines_in(panel_height(ui.logical_height()));
+        let refused = matches!(state, State::Refused { .. });
+        for line in panel_lines(&mut self.text, &rows, width, budget, refused) {
             ui.widget(
                 crate::workspace_ui::Rect {
                     x,
@@ -935,10 +973,10 @@ impl Application {
     }
 }
 
-/// The most characters three lines of the sidebar can hold, from the
-/// narrowest advance the layout's font gives a visible character (a full
-/// stop) at the row size: an upper bound, so the cut before layout never
-/// hides what the lines could show; the layout cuts what does not fit.
+/// About the most characters three lines of the sidebar can hold, from the
+/// advance the layout's font gives a full stop at the row size. Narrower
+/// glyphs (an "l") can fit a few more; the cut is always marked with an
+/// ellipsis, and the layout cuts what does not fit.
 pub(super) fn row_characters(system: &mut tilewright_render_ui::TextSystem, width: u32) -> usize {
     let size = crate::workspace_render::text_size(ROW_HEIGHT);
     let available = f64::from(width.saturating_sub(8));
@@ -954,13 +992,15 @@ pub(super) fn row_characters(system: &mut tilewright_render_ui::TextSystem, widt
 }
 
 /// The block's lines: each row wrapped to at most its own number of lines,
-/// then at most [`PANEL_LINES`] in all, keeping the best-ranked lines; a
-/// row that loses lines ends in "...", and a row that loses all is left
-/// out.
+/// then at most `budget` in all, keeping the best-ranked lines (`refused`:
+/// a step is refused or diverged); a row that loses lines ends in "...",
+/// and a row that loses all is left out.
 pub(super) fn panel_lines(
     system: &mut tilewright_render_ui::TextSystem,
     rows: &[(Row, String)],
     width: u32,
+    budget: usize,
+    refused: bool,
 ) -> Vec<String> {
     let wrapped: Vec<Vec<String>> = rows
         .iter()
@@ -977,12 +1017,13 @@ pub(super) fn panel_lines(
         .zip(&wrapped)
         .enumerate()
         .flat_map(|(index, ((kind, _), lines))| {
-            (0..lines.len().min(kind.lines())).map(move |line| (kind.rank(line), index, line))
+            (0..lines.len().min(kind.lines()))
+                .map(move |line| (kind.rank(line, refused), index, line))
         })
         .collect();
     ranked.sort_unstable();
     let mut kept = vec![0; rows.len()];
-    for (_, index, _) in ranked.into_iter().take(PANEL_LINES) {
+    for (_, index, _) in ranked.into_iter().take(budget) {
         kept[index] += 1;
     }
     let mut lines = Vec::new();
@@ -1168,10 +1209,10 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
         Action::SetField {
             uid, field, value, ..
         } => format!(
-            "Set {} to {} on {}",
+            "Set {} on {} to {}",
             shown(field),
-            shown(&value.to_string()),
-            shown(uid)
+            shown(uid),
+            shown(&value.to_string())
         ),
         Action::Paint {
             plane,
