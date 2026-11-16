@@ -121,7 +121,8 @@ cargo run --locked --package tilewright-editor -- mcp crates/tilewright-editor-t
 An agent edits only in its own sandbox, a fresh private copy of a world that
 `tools/provision-sandbox.py` makes for each run (Linux only), and submits a
 proposal; only a person applies a proposal, step by step, through Review and
-Accept. The helper starts `tilewright-editor sandbox`, which reads one JSON
+Accept: `tools/provision-prototype.py --proposal FILE --actor human:NAME`
+opens it in the desktop ([applying in the desktop](docs/PROPOSALS.md#applying-in-the-desktop)). The helper starts `tilewright-editor sandbox`, which reads one JSON
 request per line on standard input (`status`, `edit`, `review`, `accept`,
 `cancel`, `undo`, `redo`, `submit`, `quit`) and answers one JSON line each.
 With `--mcp` it starts `tilewright-editor sandbox-mcp` instead, which serves

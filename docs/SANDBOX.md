@@ -31,8 +31,9 @@ starts the runner in it, and the runner's line protocol
 (`tilewright-editor sandbox`, crate `tilewright-editor-sandbox`). Both are
 Linux only, as editing is. With `--mcp` the helper starts the MCP editing
 server instead, which offers the same requests as MCP tools
-([docs/MCP-EDITING.md](MCP-EDITING.md)); the desktop's proposal review
-(PR 6d) is later work.
+([docs/MCP-EDITING.md](MCP-EDITING.md)). A person applies a submitted
+proposal in the desktop
+([applying in the desktop](PROPOSALS.md#applying-in-the-desktop)).
 
 The owner decided (2026-11-14 and 2026-11-15): an agent edits and accepts
 only in its own provisioned sandbox and submits a proposal; no agent tool
@@ -348,5 +349,5 @@ Trimmed (`…` for digests and review lines):
 
 ## Not here
 
-The desktop opening a proposal (PR 6d); a blocked session's Reopen (start a new sandbox instead); rebasing
+A blocked session's Reopen (start a new sandbox instead); rebasing
 proposals; Windows and macOS editing.

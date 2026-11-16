@@ -95,6 +95,8 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         zone_view: None,
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
+        proposal: None,
+        proposal_layout: None,
     };
     (temporary, app)
 }
@@ -2107,3 +2109,6 @@ mod anchors;
 
 #[path = "portals.rs"]
 mod portals;
+
+#[path = "proposal.rs"]
+mod proposal;
