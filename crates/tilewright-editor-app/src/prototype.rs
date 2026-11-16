@@ -501,6 +501,7 @@ impl Application {
         let refreshed = self.rebuild();
         self.report();
         let settled = self.settle_proposal(accept.then_some(records), prepare);
+        self.refresh_highlight();
         match result {
             Err(original) => Err(original),
             Ok(()) => refreshed.and(settled),
@@ -2682,8 +2683,11 @@ impl Application {
             // Badges show with the zones, and alone in Anchor mode.
             return if self.tools.zones_visible() {
                 "Zone overlay and badges left out: too many cells for one frame."
-            } else {
+            } else if self.tools.badges_visible() {
                 "Anchor and portal badges left out: too many for one frame."
+            } else {
+                // Only an open proposal's highlight was left out.
+                "Proposal highlight left out: too many cells for one frame."
             }
             .into();
         }
@@ -4876,6 +4880,35 @@ fn zone_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     crate::workspace_render::zone_overlay(&app.prepared, &cells)
 }
 
+/// The open proposal's highlight of the tiles its current step concerns
+/// (`proposal_view::Highlight`): copies of their prepared cell quads in the
+/// highlight's tints, in the World's draw order like the zone tints, after
+/// them and before the brush preview. Tiles the person's own running stroke
+/// previews are left to that preview, so a cell never shows both. Empty
+/// without a proposal or a step to highlight.
+fn proposal_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    let Some(highlight) = app.proposal_highlight() else {
+        return Vec::new();
+    };
+    if highlight.tints.is_empty() || app.prepared.frame_revision != app.view.frame_revision {
+        return Vec::new();
+    }
+    let previewed: std::collections::BTreeSet<[i64; 2]> = app
+        .tools
+        .stroke()
+        .and_then(|_| stroke_changes(app))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    crate::workspace_render::tile_overlay(&app.prepared, |at| {
+        if previewed.contains(&at) {
+            None
+        } else {
+            highlight.tints.get(&at).copied()
+        }
+    })
+}
+
 /// The anchor and portal badges of the in-view tiles, over the cached
 /// prepared cell scene: shown in Anchor mode, and wherever the zone overlay
 /// shows. Anchors on other layers or out of view are listed, not drawn.
@@ -4939,6 +4972,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     // every tile and object, whatever order they are passed in.
     let mut overlay = zone_overlay(app);
     overlay.extend(badge_overlay(app));
+    overlay.extend(proposal_overlay(app));
     overlay.extend(stroke_overlay(app));
     let (mut presentation, mut omitted) = compose_with_preview(
         &mut app.text,

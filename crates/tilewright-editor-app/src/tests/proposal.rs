@@ -552,7 +552,7 @@ fn every_step_applies_through_prepare_and_the_persons_accept() {
     assert_eq!(
         frame["proposal"],
         json!({"proposal": hex(&proposal.body_sha256()), "steps": KINDS, "applied": KINDS,
-            "state": "finished", "pending_step": false})
+            "state": "finished", "pending_step": false, "highlight": null})
     );
 }
 
