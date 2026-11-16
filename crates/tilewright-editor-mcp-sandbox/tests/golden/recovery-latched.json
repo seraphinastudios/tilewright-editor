@@ -1,0 +1,36 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "accept",
+      "code": "recovery.failed",
+      "engine": "recovery.failed",
+      "step": null,
+      "message": "the recovery store refused a record earlier in this run and refuses every later one: no accept can succeed in this sandbox; cancel, submit the steps so far and start a new sandbox",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "pending",
+        "pending": true,
+        "undo": 0,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}

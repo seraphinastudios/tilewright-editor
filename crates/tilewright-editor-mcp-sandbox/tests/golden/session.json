@@ -1,0 +1,815 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "status",
+      "actor": "agent:mcp-tester",
+      "client": "example client",
+      "editor": "0.1.0-test",
+      "receipt": "<hex 0>",
+      "catalog": "<hex 1>",
+      "catalog_verified": true,
+      "view": {
+        "plane": "main",
+        "layer": 0,
+        "bounds": [
+          0,
+          0,
+          8,
+          6
+        ]
+      },
+      "proposals": 0,
+      "recovery_failed": false,
+      "state": {
+        "revision": "<hex 2>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 0,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "edit",
+      "pending": {
+        "base": "<hex 2>",
+        "result": "<hex 3>",
+        "complete": true,
+        "files": [
+          {
+            "path": "planes/main/layers/0/0_0.jsonc",
+            "change": "modified",
+            "before_bytes": 4057,
+            "after_bytes": 4057
+          }
+        ],
+        "files_omitted": 0,
+        "warnings": [],
+        "warnings_omitted": 0,
+        "review": [
+          "planes/main/layers/0/0_0.jsonc / source excerpt; scroll for more",
+          "[...] marks unchanged source omitted from this excerpt.",
+          "- [...] ,\\u{a}      \"at\": [\\u{a}        3,\\u{a}        2\\u{a}      ],\\u{a}    [...]",
+          "+ [...] ,\\u{a}      \"at\": [\\u{a}        4,\\u{a}        2\\u{a}      ],\\u{a}    [...]"
+        ],
+        "review_omitted": 0,
+        "cut": false
+      },
+      "state": {
+        "revision": "<hex 2>",
+        "phase": "pending",
+        "pending": true,
+        "undo": 0,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "edit",
+      "code": "pending.exists",
+      "engine": "pending.exists",
+      "step": null,
+      "message": "review pending transaction: Accept or Cancel before another edit",
+      "state": {
+        "revision": "<hex 2>",
+        "phase": "pending",
+        "pending": true,
+        "undo": 0,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "review",
+      "pending": {
+        "base": "<hex 2>",
+        "result": "<hex 3>",
+        "complete": true,
+        "files": [
+          {
+            "path": "planes/main/layers/0/0_0.jsonc",
+            "change": "modified",
+            "before_bytes": 4057,
+            "after_bytes": 4057
+          }
+        ],
+        "files_omitted": 0,
+        "warnings": [],
+        "warnings_omitted": 0,
+        "review": [
+          "planes/main/layers/0/0_0.jsonc / source excerpt; scroll for more",
+          "[...] marks unchanged source omitted from this excerpt.",
+          "- [...] ,\\u{a}      \"at\": [\\u{a}        3,\\u{a}        2\\u{a}      ],\\u{a}    [...]",
+          "+ [...] ,\\u{a}      \"at\": [\\u{a}        4,\\u{a}        2\\u{a}      ],\\u{a}    [...]"
+        ],
+        "review_omitted": 0,
+        "cut": false
+      },
+      "state": {
+        "revision": "<hex 2>",
+        "phase": "pending",
+        "pending": true,
+        "undo": 0,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "accept",
+      "applied": {
+        "before": "<hex 2>",
+        "after": "<hex 3>",
+        "placed": null
+      },
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "format": "tilewright.editor-tile/1",
+      "revision": "<hex 3>",
+      "tile": {
+        "plane": "main",
+        "layer": 0,
+        "x": 4,
+        "y": 2
+      },
+      "chunk": {
+        "path": "planes/main/layers/0/0_0.jsonc",
+        "at": [
+          0,
+          0
+        ]
+      },
+      "ground": [
+        {
+          "grid": "floor",
+          "value": "sand"
+        },
+        {
+          "grid": "edge",
+          "value": null
+        }
+      ],
+      "height": 0,
+      "zone": {
+        "id": "meadow",
+        "from_default": true,
+        "path": [
+          "meadow"
+        ],
+        "name": "Quiet meadow"
+      },
+      "catalog": {
+        "status": "loaded",
+        "in_view": true
+      },
+      "objects": [
+        {
+          "uid": "marker_1",
+          "proto": "marker",
+          "render_layer": "item",
+          "sub_layer": 0,
+          "z": 0,
+          "fields": [
+            {
+              "name": "label",
+              "kind": "string",
+              "value": "Trail marker"
+            },
+            {
+              "name": "settings",
+              "kind": "json",
+              "value": "{\"active\":true,\"visits\":3}"
+            }
+          ],
+          "fields_more": 0,
+          "portal": null,
+          "inventory": 0,
+          "carried": 0,
+          "custom": false,
+          "allowed": {
+            "move": true,
+            "delete": true,
+            "portal": false,
+            "fields": [
+              "label"
+            ],
+            "fields_more": 0
+          }
+        }
+      ],
+      "objects_more": 0,
+      "objects_cursor": null,
+      "anchors": [],
+      "anchors_more": 0,
+      "anchors_cursor": null,
+      "arrivals": [],
+      "arrivals_more": 0,
+      "arrivals_cursor": null
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "accept",
+      "code": "pending.none",
+      "engine": "pending.none",
+      "step": null,
+      "message": "editor command error: NothingPrepared",
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "edit",
+      "code": "grant.missing",
+      "engine": "grant.missing",
+      "step": null,
+      "message": "terrain capability or bounds refused",
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "edit",
+      "code": "revision.stale",
+      "engine": "revision.stale",
+      "step": null,
+      "message": "stale source revision",
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "edit",
+      "code": "proposal.invalid",
+      "engine": null,
+      "step": null,
+      "message": "the action is not in the proposal format's form: unknown action kind",
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "accept",
+      "code": "request.invalid",
+      "engine": null,
+      "step": null,
+      "message": "this tool takes no arguments: no path, actor, label or other value",
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "undo",
+      "pending": {
+        "base": "<hex 3>",
+        "result": "<hex 2>",
+        "complete": true,
+        "files": [
+          {
+            "path": "planes/main/layers/0/0_0.jsonc",
+            "change": "modified",
+            "before_bytes": 4057,
+            "after_bytes": 4057
+          }
+        ],
+        "files_omitted": 0,
+        "warnings": [],
+        "warnings_omitted": 0,
+        "review": [
+          "planes/main/layers/0/0_0.jsonc / source excerpt; scroll for more",
+          "[...] marks unchanged source omitted from this excerpt.",
+          "- [...] ,\\u{a}      \"at\": [\\u{a}        4,\\u{a}        2\\u{a}      ],\\u{a}    [...]",
+          "+ [...] ,\\u{a}      \"at\": [\\u{a}        3,\\u{a}        2\\u{a}      ],\\u{a}    [...]"
+        ],
+        "review_omitted": 0,
+        "cut": false
+      },
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "pending",
+        "pending": true,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "cancel",
+      "pending": null,
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "accept",
+      "applied": null,
+      "state": {
+        "revision": "<hex 2>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 0,
+        "redo": 1
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "submit",
+      "code": "proposal.empty",
+      "engine": null,
+      "step": null,
+      "message": "no step is applied: a proposal needs at least one",
+      "state": {
+        "revision": "<hex 2>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 0,
+        "redo": 1
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "redo",
+      "pending": {
+        "base": "<hex 2>",
+        "result": "<hex 3>",
+        "complete": true,
+        "files": [
+          {
+            "path": "planes/main/layers/0/0_0.jsonc",
+            "change": "modified",
+            "before_bytes": 4057,
+            "after_bytes": 4057
+          }
+        ],
+        "files_omitted": 0,
+        "warnings": [],
+        "warnings_omitted": 0,
+        "review": [
+          "planes/main/layers/0/0_0.jsonc / source excerpt; scroll for more",
+          "[...] marks unchanged source omitted from this excerpt.",
+          "- [...] ,\\u{a}      \"at\": [\\u{a}        3,\\u{a}        2\\u{a}      ],\\u{a}    [...]",
+          "+ [...] ,\\u{a}      \"at\": [\\u{a}        4,\\u{a}        2\\u{a}      ],\\u{a}    [...]"
+        ],
+        "review_omitted": 0,
+        "cut": false
+      },
+      "state": {
+        "revision": "<hex 2>",
+        "phase": "pending",
+        "pending": true,
+        "undo": 0,
+        "redo": 1
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "submit",
+      "proposal": {
+        "file": "proposal-<hex 4>.json",
+        "body_sha256": "<hex 4>",
+        "bytes": 1798,
+        "steps": 1,
+        "base": "<hex 2>",
+        "result": "<hex 3>",
+        "existed": false
+      },
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": true,
+      "request": "submit",
+      "proposal": {
+        "file": "proposal-<hex 4>.json",
+        "body_sha256": "<hex 4>",
+        "bytes": 1798,
+        "steps": 1,
+        "base": "<hex 2>",
+        "result": "<hex 3>",
+        "existed": true
+      },
+      "state": {
+        "revision": "<hex 3>",
+        "phase": "ready",
+        "pending": false,
+        "undo": 1,
+        "redo": 0
+      }
+    },
+    "isError": false,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}

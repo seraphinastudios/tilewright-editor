@@ -1,0 +1,36 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "resultType": "complete",
+    "content": [
+      {
+        "type": "text",
+        "text": "<the structured content, serialized as sent>"
+      }
+    ],
+    "structuredContent": {
+      "ok": false,
+      "request": "accept",
+      "code": "review.incomplete",
+      "engine": "review.incomplete",
+      "step": null,
+      "message": "Change exceeds the visible review limit. Cancel this edit.",
+      "state": {
+        "revision": "<hex 0>",
+        "phase": "pending",
+        "pending": true,
+        "undo": 0,
+        "redo": 0
+      }
+    },
+    "isError": true,
+    "_meta": {
+      "io.modelcontextprotocol/serverInfo": {
+        "name": "tilewright-editor",
+        "title": "Tilewright editor (sandbox editing)",
+        "version": "0.1.0-test"
+      }
+    }
+  }
+}

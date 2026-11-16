@@ -31,6 +31,8 @@ pub enum Schema {
     Enum(&'static [&'static str]),
     /// Exactly this string.
     Const(&'static str),
+    /// Exactly this boolean.
+    Flag(bool),
     /// A field value: a world string, a number, a boolean or null.
     Scalar,
     Nullable(Box<Schema>),
@@ -168,6 +170,13 @@ impl Schema {
                 json_string(value, output);
                 output.push('}');
             }
+            Self::Flag(value) => {
+                output.push_str(if *value {
+                    r#"{"const":true}"#
+                } else {
+                    r#"{"const":false}"#
+                });
+            }
             Self::Scalar => output
                 .push_str(r#"{"type":["string","number","boolean","null"],"x-world-text":true}"#),
             Self::Nullable(inner) => {
@@ -263,6 +272,10 @@ impl Schema {
             },
             Self::Integer => value.as_i64().map_or_else(wrong, |_| Ok(())),
             Self::Boolean => value.as_bool().map_or_else(wrong, |_| Ok(())),
+            Self::Flag(expected) => match value.as_bool() {
+                Some(found) if found == *expected => Ok(()),
+                _ => wrong(),
+            },
             Self::Scalar => match value {
                 Value::String { .. } => string(true),
                 Value::Null { .. }
@@ -384,5 +397,13 @@ mod tests {
                 .check(&value(r#"{"k":"a"}"#))
                 .is_err()
         );
+        assert_eq!(Schema::Flag(true).to_json(), r#"{"const":true}"#);
+        assert!(Schema::Flag(true).check(&value("true")).is_ok());
+        for refused in ["false", "1", "\"true\""] {
+            assert!(
+                Schema::Flag(true).check(&value(refused)).is_err(),
+                "{refused}"
+            );
+        }
     }
 }

@@ -70,6 +70,10 @@ fn main() {
             let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(2).collect();
             sandbox_command::run(&arguments).unwrap_or_else(|error| fail(&error));
         }
+        "sandbox-mcp" => {
+            let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(2).collect();
+            sandbox_command::run_mcp(&arguments).unwrap_or_else(|error| fail(&error));
+        }
         "window" => {
             let sdl = sdl3::init().unwrap_or_else(|error| fail(&error));
             let video = sdl.video().unwrap_or_else(|error| fail(&error));
@@ -139,7 +143,7 @@ fn mcp() {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: tilewright-editor [version | open ROOT | headless ROOT | window | mcp ROOT | prototype (use provision helper) | sandbox (use tools/provision-sandbox.py)]\n{}",
+        "usage: tilewright-editor [version | open ROOT | headless ROOT | window | mcp ROOT | prototype (use provision helper) | sandbox | sandbox-mcp (use tools/provision-sandbox.py)]\n{}",
         tilewright_editor_observe::cli::USAGE
     );
     std::process::exit(2);

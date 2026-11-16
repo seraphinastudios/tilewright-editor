@@ -154,6 +154,8 @@ class SandboxProvisionTests(unittest.TestCase):
                 'no editor': ('--actor', 'agent:tester', '--editor', root / 'missing-editor'),
                 'old destination': ('--actor', 'agent:tester', '--destination', root / 'session'),
                 'font pack': ('--actor', 'agent:tester', '--font-pack', root),
+                'mcp without editor': ('--actor', 'agent:tester', '--mcp'),
+                'mcp with a value': ('--actor', 'agent:tester', '--mcp=yes'),
             }
             for case, extra in cases.items():
                 result = run(*base, *extra)
@@ -345,6 +347,37 @@ class SandboxProvisionTests(unittest.TestCase):
             self.assertTrue(any(fd < max(fds) for fd in leaked), (leaked, fds))
             self.assertTrue(any(min(fds) < fd < max(fds) for fd in leaked) or
                             any(fd > max(fds) for fd in leaked), (leaked, fds))
+
+    def test_mcp_starts_the_editing_server_with_the_same_options_each_time(self):
+        with persistent_root(self) as temporary:
+            root = Path(temporary)
+            source = world(root)
+            parent = root / 'sandboxes'
+            parent.mkdir()
+            editor = root / 'fake-editor'
+            editor.write_text(f'#!{sys.executable} -I\n{FAKE_EDITOR}')
+            editor.chmod(0o700)
+            report = root / 'report.json'
+            message = b'{"jsonrpc":"2.0","id":1,"method":"server/discover"}\n'
+            command = [sys.executable, str(SCRIPT), '--world', str(source), '--destination-parent', str(parent),
+                       '--actor', 'agent:tester', '--editor', str(editor), '--mcp']
+            seen = []
+            # A client configuration names one fixed command; each start
+            # makes a new sandbox and starts the server in it.
+            for _ in range(2):
+                result = subprocess.run(command, input=message, capture_output=True, check=False,
+                                        env={**os.environ, 'FAKE_EDITOR_REPORT': str(report)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, message)
+                reported = notice(result)
+                arguments = json.loads(report.read_text())['arguments']
+                self.assertEqual(arguments[0], 'sandbox-mcp')
+                self.assertEqual(arguments[arguments.index('--receipt-sha256') + 1], reported['receipt_sha256'])
+                self.assertEqual(sorted(arguments[1::2]), ['--actor', '--proposals-fd', '--receipt-sha256',
+                                                          '--recovery-fd', '--world-fd'])
+                seen.append(reported['sandbox'])
+            self.assertNotEqual(seen[0], seen[1])
+            self.assertEqual(sorted(str(path) for path in parent.iterdir()), sorted(seen))
 
     def test_a_world_path_swapped_after_the_check_is_not_what_is_copied(self):
         with persistent_root(self) as temporary:
