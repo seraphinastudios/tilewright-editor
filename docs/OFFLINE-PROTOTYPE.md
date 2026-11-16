@@ -99,9 +99,9 @@ draws over a zone tint of the same tile, and a cell the person's own brush
 preview marks shows only the preview. Badges stay above both. Tiles on
 another plane or layer or outside the view are not drawn. The highlight
 needs the same draw-order slots as the zone tints: where they cannot be
-computed it is not drawn, and if the overlays would take the frame past the
-scene limits they are all left out and the status line says so ("Proposal
-highlight left out: too many cells for one frame." when it is the only one).
+computed it is not drawn. If the overlays would take the frame past the
+scene limits, the highlight is left out first and the Proposal block says
+so; the other overlays are left out only if the frame still does not fit.
 
 Click an editable field or position and type. Place the caret by clicking
 (Shift-click extends), with the arrows (Shift extends), Home/End or

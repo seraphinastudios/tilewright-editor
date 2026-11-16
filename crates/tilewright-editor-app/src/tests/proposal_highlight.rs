@@ -188,7 +188,7 @@ fn every_kind_highlights_its_tiles_before_prepare_and_while_pending() {
             twin.app.capture("highlight-ready").unwrap();
             assert_eq!(
                 evidence(&twin, "highlight-ready.json")["proposal"]["highlight"],
-                json!({"step": 1, "concerns": "tiles", "in_view": 2, "outside_view": 0,
+                json!({"step": 1, "concerns": "tiles", "in_view": 2, "outside_view": 0, "left_out": false,
                 "tiles": [
                     {"role": "to", "plane": "main", "layer": 0, "x": 4, "y": 2, "in_view": true},
                     {"role": "from", "plane": "main", "layer": 0, "x": 3, "y": 2, "in_view": true},
@@ -199,7 +199,7 @@ fn every_kind_highlights_its_tiles_before_prepare_and_while_pending() {
             twin.app.capture("highlight-outside").unwrap();
             assert_eq!(
                 evidence(&twin, "highlight-outside.json")["proposal"]["highlight"],
-                json!({"step": 14, "concerns": "tiles", "in_view": 0, "outside_view": 1,
+                json!({"step": 14, "concerns": "tiles", "in_view": 0, "outside_view": 1, "left_out": false,
                     "tiles": [{"role": "anchor", "plane": "main", "layer": 0, "x": -2, "y": 0,
                         "in_view": false}]})
             );
@@ -208,7 +208,7 @@ fn every_kind_highlights_its_tiles_before_prepare_and_while_pending() {
             twin.app.capture("highlight-zone").unwrap();
             assert_eq!(
                 evidence(&twin, "highlight-zone.json")["proposal"]["highlight"],
-                json!({"step": 8, "concerns": "no tiles", "in_view": 0, "outside_view": 0,
+                json!({"step": 8, "concerns": "no tiles", "in_view": 0, "outside_view": 0, "left_out": false,
                     "tiles": []})
             );
         }
@@ -393,11 +393,45 @@ fn tiles_on_another_layer_outside_the_view_or_not_placed_are_not_drawn() {
             layer: 1,
             grid: "floor".into(),
             x: 2,
-            y: 2,
+            y: 3,
             proto: "sand".into(),
             expected
         }),
-        (Concerns::Tiles, vec![("cell", main(), 1, [2, 2], false)])
+        (Concerns::Tiles, vec![("cell", main(), 1, [2, 3], false)])
+    );
+    // x and y in their places: an asymmetric in-view tile.
+    assert_eq!(
+        of(Action::Paint {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 2,
+            y: 3,
+            proto: "sand".into(),
+            expected
+        }),
+        (Concerns::Tiles, main0(&[("cell", [2, 3])]))
+    );
+    assert_eq!(
+        of(Action::Place {
+            plane: main(),
+            layer: 0,
+            x: 1,
+            y: 5,
+            proto: "marker".into(),
+            expected
+        }),
+        (Concerns::Tiles, main0(&[("target", [1, 5])]))
+    );
+    assert_eq!(
+        of(Action::CreateAnchor {
+            plane: main(),
+            anchor: "new".into(),
+            x: 6,
+            y: 1,
+            expected
+        }),
+        (Concerns::Tiles, main0(&[("anchor", [6, 1])]))
     );
     // Repeated cells count once; the first role is kept.
     assert_eq!(
@@ -839,7 +873,7 @@ fn the_highlight_changes_only_its_tiles_pixels_and_never_what_a_click_picks() {
 }
 
 #[test]
-fn a_refused_step_stays_highlighted_and_a_highlight_past_the_limits_is_reported() {
+fn a_refused_step_stays_highlighted() {
     let mut twin = twin(2, |_| {}, |_| {}, None);
     twin.proposal = forged(&twin.proposal, |body| {
         body["steps"][1]["action"]["value"] = json!("Other");
@@ -852,11 +886,148 @@ fn a_refused_step_stays_highlighted_and_a_highlight_past_the_limits_is_reported(
     let (concerns, expected) = expected_kind(1);
     assert_eq!(shown(&mut twin.app), Some((1, concerns, expected.clone())));
     assert_eq!(drawn(&twin.app), expected_tints(&expected));
-    // Room for the World and the interface (as laid out once the omission
-    // is reported) but not for the highlight: it is left out, and the
-    // status line says so.
+}
+
+/// The person's own overlays now: zone tints, badges and the brush preview.
+fn person_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    let mut overlay = crate::prototype::zone_overlay(app);
+    overlay.extend(crate::prototype::badge_overlay(app));
+    overlay.extend(crate::prototype::stroke_overlay(app));
+    overlay
+}
+
+/// Frame limits with room for the World, the interface as laid out with
+/// the highlight reported left out, and the person's own overlays, but not
+/// for the highlight too.
+fn limits_without_highlight(app: &mut Application) {
+    app.highlight_omitted = true;
+    app.refresh_ui();
+    let person = person_overlay(app);
+    let fits = crate::workspace_render::compose_with_overlay(
+        &mut app.text,
+        &app.ui,
+        &app.prepared.scene,
+        app.prepared.resources.clone(),
+        &person,
+        tilewright_scene::SceneLimits::default(),
+    )
+    .unwrap();
+    app.frame_limits = tilewright_scene::SceneLimits {
+        maximum_quads: fits.scene.quads().len(),
+        ..tilewright_scene::SceneLimits::default()
+    };
+}
+
+fn count(app: &mut Application, wanted: impl Fn(&tilewright_scene::Quad) -> bool) -> usize {
+    app.refresh_ui();
+    crate::prototype::workspace_presentation(app)
+        .unwrap()
+        .scene
+        .quads()
+        .iter()
+        .filter(|quad| !quad.pickable && wanted(quad))
+        .count()
+}
+
+fn zone_tinted(quad: &tilewright_scene::Quad) -> bool {
+    (0..tilewright_editor_ui::zones::TINTS.len()).any(|tint| {
+        quad.color.map(f32::to_bits)
+            == tilewright_editor_ui::zones::tint_color(tint).map(f32::to_bits)
+    })
+}
+
+#[test]
+fn the_highlight_gives_way_first_and_never_takes_the_review_status() {
+    let mut twin = twin(1, |_| {}, |_| {}, None);
+    open(&mut twin);
+    press_control(&mut twin.app);
     let app = &mut twin.app;
-    app.preview_omitted = true;
+    assert_eq!(state(app), State::Pending { step: 0 });
+    acknowledge_ui(app);
+    route(app, &key(Keycode::O)).unwrap();
+    let status = app.status_label();
+    assert!(status.contains("matches its recording"), "{status}");
+    let zones = count(app, zone_tinted);
+    let badges = count(app, |quad| {
+        quad.color == crate::workspace_render::BADGE_LIGHT
+    });
+    assert!(zones > 0 && badges > 0);
+    assert!(!app.highlight_omitted);
+    limits_without_highlight(app);
+    assert_eq!(presented(app), 0, "the highlight is left out");
+    assert!(app.highlight_omitted);
+    assert!(!app.preview_omitted, "the person's overlays stay");
+    assert_eq!(count(app, zone_tinted), zones);
+    assert_eq!(
+        count(app, |quad| quad.color
+            == crate::workspace_render::BADGE_LIGHT),
+        badges
+    );
+    // The Review status is the pending step's own; the Proposal block says
+    // the highlight was left out, and so does the frame evidence.
+    assert_eq!(app.status_label(), status);
+    assert!(
+        super::zones::sidebar_texts(app)
+            .iter()
+            .any(|text| text.starts_with("Highlight left out")),
+    );
+    app.capture("left-out").unwrap();
+    assert_eq!(
+        evidence(&twin, "left-out.json")["proposal"]["highlight"]["left_out"],
+        json!(true)
+    );
+    // With room again it is drawn and the notice goes.
+    let app = &mut twin.app;
+    app.frame_limits = tilewright_scene::SceneLimits::default();
+    assert_eq!(presented(app), 2);
+    assert!(!app.highlight_omitted);
+    assert!(
+        !super::zones::sidebar_texts(app)
+            .iter()
+            .any(|text| text.starts_with("Highlight left out")),
+    );
+}
+
+#[test]
+fn a_left_out_highlight_keeps_the_persons_brush_preview() {
+    let mut twin = proposal_of(&[stroke]);
+    let app = &mut twin.app;
+    app.control(Control::Terrain).unwrap();
+    app.control(Control::Palette {
+        grid: "floor".into(),
+        prototype: "sand".into(),
+    })
+    .unwrap();
+    acknowledge_ui(app);
+    // A stroke on (3, 3), a grass cell the step does not paint.
+    let at = cell_pixel(app, 3, 3);
+    route(app, &button(true, at)).unwrap();
+    let white =
+        |quad: &tilewright_scene::Quad| quad.color == crate::workspace_render::STROKE_PREVIEW_TINT;
+    assert_eq!(count(app, white), 1);
+    assert_eq!(presented(app), 3);
+    limits_without_highlight(app);
+    assert_eq!(presented(app), 0);
+    assert!(app.highlight_omitted && !app.preview_omitted);
+    assert_eq!(count(app, white), 1, "the brush preview is still drawn");
+    assert!(!app.status_label().contains("Too many cells"));
+}
+
+/// The reviewer's check: a pending step's Review status is not replaced
+/// when the frame has no room for the highlight.
+#[test]
+fn the_pending_step_status_stays_under_omission() {
+    let mut twin = twin(1, |_| {}, |_| {}, None);
+    open(&mut twin);
+    press_control(&mut twin.app);
+    let app = &mut twin.app;
+    assert_eq!(state(app), State::Pending { step: 0 });
+    app.refresh_ui();
+    let normal = app.status_label();
+    assert!(normal.contains("matches its recording"));
+    // Laid out as it will be once the highlight is left out (the reviewer
+    // primed `preview_omitted`, the flag that carried the omission before).
+    app.highlight_omitted = true;
     app.refresh_ui();
     let plain = crate::workspace_render::compose(
         &mut app.text,
@@ -869,11 +1040,43 @@ fn a_refused_step_stays_highlighted_and_a_highlight_past_the_limits_is_reported(
         maximum_quads: plain.scene.quads().len(),
         ..tilewright_scene::SceneLimits::default()
     };
-    assert_eq!(presented(app), 0);
-    assert!(app.preview_omitted);
-    assert!(!crate::prototype::proposal_overlay(app).is_empty());
-    assert_eq!(
-        app.status_label(),
-        "Proposal highlight left out: too many cells for one frame."
-    );
+    let _ = presented(app);
+    assert!(app.highlight_omitted);
+    let status = app.status_label();
+    assert!(status.contains("matches its recording"), "status: {status}");
+}
+
+fn move_to(x: i64) -> impl Fn([u8; 32]) -> Action {
+    move |expected| Action::Move {
+        uid: "marker_1".into(),
+        x,
+        y: 2,
+        expected,
+    }
+}
+
+#[test]
+fn no_highlight_where_the_world_moved_ahead_or_is_at_several_places() {
+    // The person makes step 1's edit themselves: Moved with a resume step.
+    let mut twin = twin(3, |_| {}, |_| {}, None);
+    open(&mut twin);
+    let action = twin.proposal.steps()[0].action().clone();
+    twin.app.action(action).unwrap();
+    twin.app.action(Action::Accept).unwrap();
+    assert_eq!(state(&twin.app), State::Moved { resume: Some(1) });
+    assert_eq!(shown(&mut twin.app), None);
+    assert!(drawn(&twin.app).is_empty());
+    press_control(&mut twin.app);
+    assert_eq!(shown(&mut twin.app).map(|(step, _, _)| step), Some(1));
+    // A chain that revisits a revision: A -> B -> A -> C, the person moves
+    // the marker back by hand after step 1.
+    let mut several = proposal_of(&[|e| move_to(4)(e), |e| move_to(3)(e), |e| move_to(5)(e)]);
+    let app = &mut several.app;
+    press_control(app);
+    enter(app);
+    app.action(move_to(3)(revision(&app.session))).unwrap();
+    enter(app);
+    assert!(matches!(state(app), State::Several { .. }));
+    assert_eq!(shown(app), None);
+    assert!(drawn(app).is_empty());
 }

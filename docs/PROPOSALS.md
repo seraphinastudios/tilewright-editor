@@ -359,7 +359,10 @@ state changes, not per frame:
 | `move_anchor` | the anchor's tile now (`from`) and its destination (`to`) |
 | `create_zone`, `rename_zone`, `set_zone_parent`, `delete_zone` | nothing: the zone overlay shows zones |
 
-An object or anchor that is not in the person's world gives no tiles. It is
+An object or anchor that is not in the person's world gives no tiles, and
+neither does an object carried in an inventory: it has no tile of its own
+(the frame evidence says `"not placed"`); the carrier's tile is not
+highlighted. The highlight is
 shown for the step the panel offers to prepare (ready, undone, or refused)
 and for the step that is pending, where the map shows the pending world, so
 the highlight marks where the change is; there is none when every step is
@@ -369,13 +372,26 @@ apply, or while the session is blocked. The tint is black at 50 % over the
 tile (25 % for a `from` tile): it darkens, where the brush preview's white
 lightens and the zone tints colour, and selection is not drawn on the map.
 Only tiles on the active view's plane and layer and inside its bounds are
-drawn; the step's words already say "outside the view" for the others. The
+drawn. For the others the step's words say "outside the view" after the
+tile they name, a portal's location or anchor tile included, and a field
+change says "(outside the view)" when its object's tile is. The
 highlight draws after a zone tint of the same tile and is covered, as ground
 is, by objects on the tile and nearer tiles; on a cell the person's own
 running brush stroke previews, only the preview is drawn. It is unpickable:
 a click picks what it picked without it. A stroke's highlight holds at most
 4,096 tiles, the stroke bound; a tile named twice is highlighted once, with
-its first role.
+its first role. Darkening does not show on near-black ground (a pit tile, or
+an empty cell over the map background): the Proposal block's words are what
+the step does; the highlight only helps find it.
+
+The highlight is the first thing to give way: when the overlays would take
+the frame past the scene limits, the frame is composed again without it,
+keeping the person's brush preview, zone tints and badges, and only if that
+still does not fit is it composed without any overlay, as before. The status
+line is never used for it (a pending step's Review status, the review limit
+and error notices stay); the Proposal block says "Highlight left out: too
+many cells for one frame" as a notice row, and the frame evidence's
+`highlight` member says `left_out: true`.
 
 The block takes at most 240 logical pixels at the minimum 720×480 window,
 its control included, so an open text draft and the inspector rows below
@@ -390,7 +406,8 @@ counts, the third line of the words (while a step is refused or diverged,
 the notice, a likely cause, goes after these two), the second line of the
 state line, the second of the words, where the world is, the editor row,
 the actor caveat and the label. The header, the first line of the words
-and the first of the state line always stay. A row cut short ends in
+and the first of the state line always stay, and so does the "Highlight
+left out" notice when there is one. A row cut short ends in
 "...".
 
 **The control.** One button under the block, also on the **G** key:
@@ -453,7 +470,8 @@ key such as `ready`, `pending`, `refused`), `pending_step` (whether the
 pending change is the proposal's step) and `highlight`: `null` when no step
 is highlighted, else the `step` (from 1), `concerns` (`tiles`, `no tiles`
 for a zone change, or `not placed`), the counts `in_view` and
-`outside_view`, and the first 8 `tiles`, each with its `role` (`from`, `to`,
+`outside_view`, `left_out` (whether the frame left the highlight out to fit
+the scene limits), and the first 8 `tiles`, each with its `role` (`from`, `to`,
 `object`, `cell`, `target` or `anchor`), escaped `plane`, `layer`, `x`, `y`
 and `in_view`. `--demo-script --reference` with
 a proposal runs the proposal instead of the demonstration: it captures
@@ -471,7 +489,9 @@ CPU frames. A person checks:
    block at the top right; read it at 1280×800.
 2. Before pressing anything, the tiles of step 1 are darkened on the map
    and match the step's words (a move: its tile now, lighter, and its
-   destination; a stroke: its cells; nothing for a zone change). They stay
+   destination; a stroke: its cells; nothing for a zone change). On a dark
+   pit tile or an empty cell the darkening does not show; the words are
+   what count. They stay
    darkened while the step is pending, and move to step 2's tiles after
    Accept.
 3. Press **G** once: the Review shows the diff, and the status line reads

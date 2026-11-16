@@ -89,6 +89,9 @@ pub(super) struct OpenProposal {
 /// The most tiles a step's highlight holds: the stroke bound, which the
 /// proposal reader already applies to a stroke's cells.
 pub(super) const HIGHLIGHT_TILES: usize = tilewright_editor_ui::brush::MAXIMUM_STROKE_CELLS;
+/// The Proposal block's notice when the last frame left the highlight out
+/// to fit the scene limits; the status line keeps what it says.
+pub(super) const HIGHLIGHT_LEFT_OUT: &str = "Highlight left out: too many cells for one frame";
 /// The most tiles the frame evidence lists by name.
 pub(super) const FRAME_TILES: usize = 8;
 /// The highlight's tint: black at 50 % over the tile, so it darkens a tile
@@ -417,6 +420,8 @@ pub(super) enum Row {
     State,
     Counts,
     Notice,
+    /// The map highlight was left out of the last frame.
+    Highlight,
 }
 
 impl Row {
@@ -436,7 +441,9 @@ impl Row {
         match (self, line) {
             (Self::Header, _) => 0,
             (Self::Step, 0) => 1,
-            (Self::State, 0) => 2,
+            // Kept with the state's first line: the map no longer shows
+            // what the words name.
+            (Self::State, 0) | (Self::Highlight, _) => 2,
             (Self::Label, _) => 3,
             (Self::Caveat, _) => 4,
             (Self::Editor, _) => 5,
@@ -1209,7 +1216,10 @@ impl Application {
         let x = ui.sidebar_x();
         let width = ui.sidebar_width();
         let characters = row_characters(&mut self.text, width);
-        let rows = open.rows(&self.session, state, characters);
+        let mut rows = open.rows(&self.session, state, characters);
+        if self.highlight_omitted && self.proposal_highlight().is_some() {
+            rows.push((Row::Highlight, HIGHLIGHT_LEFT_OUT.into()));
+        }
         let ready = self.blocked.is_none() && self.session.can_prepare();
         let control = open.control(state, ready);
         let budget = panel_lines_in(panel_height(ui.logical_height()));
@@ -1257,7 +1267,11 @@ impl Application {
             "applied": open.progress.as_ref().map(Progress::next),
             "state": state.key(),
             "pending_step": matches!(state, State::Pending { .. }),
-            "highlight": self.proposal_highlight().map(Highlight::frame),
+            "highlight": self.proposal_highlight().map(|highlight| {
+                let mut frame = highlight.frame();
+                frame["left_out"] = self.highlight_omitted.into();
+                frame
+            }),
         }))
     }
 
@@ -1529,10 +1543,11 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
         Action::SetField {
             uid, field, value, ..
         } => format!(
-            "Set {} on {} to {}",
+            "Set {} on {} to {}{}",
             shown(field),
             shown(uid),
-            shown(&value.to_string())
+            shown(&value.to_string()),
+            object_outside(world, catalog, uid)
         ),
         Action::Paint {
             plane,
@@ -1704,16 +1719,16 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
         Action::SetPortal { uid, target, .. } => match target {
             None => format!("Clear the portal of {}", shown(uid)),
             Some(PortalTarget::Anchor { plane, anchor }) => format!(
-                "Point the portal of {} to anchor {} on {}",
+                "Point the portal of {} to anchor {}{} on {}",
                 shown(uid),
                 shown(anchor),
+                anchor_at(plane, anchor).map_or_else(String::new, |at| format!(" at {at}")),
                 shown(plane)
             ),
             Some(PortalTarget::Location { plane, layer, at }) => format!(
-                "Point the portal of {} to ({}, {}) on {}/{layer}",
+                "Point the portal of {} to {} on {}/{layer}",
                 shown(uid),
-                at[0],
-                at[1],
+                tile(catalog, plane, *layer, *at),
                 shown(plane)
             ),
         },
@@ -1724,6 +1739,19 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
         | Action::Undo
         | Action::Redo
         | Action::Reopen => "not an edit".into(),
+    }
+}
+
+/// " (outside the view)" when object `uid` is placed on a tile outside it.
+fn object_outside(world: &World, catalog: &PreviewCatalog, uid: &str) -> &'static str {
+    match object_place(world, uid) {
+        Some(Found {
+            plane,
+            layer,
+            at: Some([x, y]),
+            ..
+        }) if !catalog.tile_in_active_view(&plane, layer, x, y) => " (outside the view)",
+        _ => "",
     }
 }
 

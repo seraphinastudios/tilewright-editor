@@ -1201,12 +1201,13 @@ fn every_kind_reads_as_words_from_its_action_and_the_persons_world() {
             "Create anchor camp at (2, 2) on main",
             "Move anchor arrival to (6, 3), from (7, 3), on main",
             "Delete anchor lookout at (-2, 0), outside the view on main",
-            "Point the portal of gate_west to anchor arrival on main",
+            "Point the portal of gate_west to anchor arrival at (7, 3) on main",
         ]
     );
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn outside_the_view_is_said_where_the_world_has_it() {
     let (_person, app) = person_application(|root| {
         edit_json(root, "planes/main/anchors.jsonc", |anchors| {
@@ -1264,6 +1265,51 @@ fn outside_the_view_is_said_where_the_world_has_it() {
             expected
         }),
         "Point the portal of gate_west to (2, 3) on main/0"
+    );
+    // Where the words name a tile outside the view, they say so: a portal's
+    // location or anchor, and the object a field change concerns.
+    assert_eq!(
+        words(&Action::SetPortal {
+            uid: "gate_west".into(),
+            target: Some(PortalTarget::Location {
+                plane: "main".into(),
+                layer: 1,
+                at: [2, 3]
+            }),
+            expected
+        }),
+        "Point the portal of gate_west to (2, 3), outside the view on main/1"
+    );
+    assert_eq!(
+        words(&Action::SetPortal {
+            uid: "gate_west".into(),
+            target: Some(PortalTarget::Anchor {
+                plane: "main".into(),
+                anchor: "far".into()
+            }),
+            expected
+        }),
+        "Point the portal of gate_west to anchor far at (400, 3), outside the view on main"
+    );
+    assert_eq!(
+        words(&Action::SetPortal {
+            uid: "gate_west".into(),
+            target: Some(PortalTarget::Anchor {
+                plane: "main".into(),
+                anchor: "gone".into()
+            }),
+            expected
+        }),
+        "Point the portal of gate_west to anchor gone on main"
+    );
+    assert_eq!(
+        words(&Action::SetField {
+            uid: "marker_negative".into(),
+            field: "label".into(),
+            value: json!("Far"),
+            expected
+        }),
+        "Set label on marker_negative to \"Far\" (outside the view)"
     );
     assert_eq!(
         words(&Action::SetPortal {
