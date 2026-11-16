@@ -43,6 +43,18 @@ python3 tools/provision-prototype.py --world samples/prototype-neutral \
   --font-pack "$(pwd)/font-pack"
 ```
 
+Two options open an agent's proposal in the new session
+([applying in the desktop](PROPOSALS.md#applying-in-the-desktop)):
+`--proposal FILE` checks the file before anything is created (a regular
+file, not a link, at most 16 MiB, named `proposal-<64 hex>.json`), copies
+its bytes into a private `proposal/` child (0700, the file 0600, synced),
+records its name, size and SHA-256 in the receipt and passes that
+directory as a further descriptor; `--actor human:<name>` makes the person
+the actor of every change the session accepts (default
+`editor:prototype`) and is recorded in the receipt. Without them the
+session, the receipt and the editor's arguments are as before; only the
+standard streams and the session's directories reach the editor.
+
 For an agent, `tools/provision-sandbox.py` makes a sandbox with the same
 copy rules under a fresh name each run and starts the headless runner in it
 ([agent sandboxes](SANDBOX.md)); this helper and its output are unchanged.
@@ -75,7 +87,10 @@ Move, Terrain, Place or Zone mode and exposes Clear, Undo, Redo and Delete. Terr
 paints with the drag brush described below; deletion and placement are described after it. The inspector shows
 the selected object's identity, position and schema fields, or the selected
 cell and explicit terrain choices. Only profile-authorized scalar fields are
-editable; structured values remain read-only.
+editable; structured values remain read-only. With a proposal open, a
+Proposal block sits above them and **G** (or its button) prepares the next
+step for the ordinary Review
+([applying in the desktop](PROPOSALS.md#applying-in-the-desktop)).
 
 Click an editable field or position and type. Place the caret by clicking
 (Shift-click extends), with the arrows (Shift extends), Home/End or

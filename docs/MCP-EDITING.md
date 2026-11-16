@@ -8,8 +8,8 @@ on the sandbox world. An agent prepares, reviews and accepts steps in its
 own provisioned copy and submits them as a proposal file
 ([docs/PROPOSALS.md](PROPOSALS.md)). **Only a person applies a proposal**,
 to their own world, one step at a time through the normal Review and
-Accept; today that is the proposal crate's library (`Progress`), and the
-desktop's proposal view is the next pull request. No tool applies a
+Accept, in the desktop
+([applying in the desktop](PROPOSALS.md#applying-in-the-desktop)). No tool applies a
 proposal, makes, lists or deletes a sandbox, or reaches a person's world.
 
 It is the crate `tilewright-editor-mcp-sandbox`. The read-only server
@@ -430,7 +430,6 @@ The client then closes the server's input, and the server exits.
 
 ## Not here
 
-Applying a proposal (the desktop's proposal view is the next pull
-request), any tool that makes or deletes sandboxes or touches a person's
+Applying a proposal (a person does, in the desktop), any tool that makes or deletes sandboxes or touches a person's
 world, an HTTP transport, resources and prompts, reachability, Windows and
 macOS editing, and attaching to a running desktop editor.

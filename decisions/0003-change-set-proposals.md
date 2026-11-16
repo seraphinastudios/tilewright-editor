@@ -180,3 +180,49 @@ revisit.
   bound; the runner's own cutting and counts apply unchanged.
 - The confinement is of the protocol, not of the operating system, as for
   the runner. No MCP client product was tested.
+
+## Addendum: the desktop opens a proposal (PR 6d-1, 2026-11-16)
+
+Owner decisions this follows, 2026-11-16: the person opens a proposal with
+`provision-prototype.py --proposal FILE`, which copies the file into the
+person's session and passes a descriptor; the person's own edits between
+steps are allowed, and the panel says when the world moved and offers to
+undo or to continue from the matching step; before preparing, the panel
+shows the step in words with its tile and nothing from the recorded
+transaction; the helper gains `--actor human:<name>` (default
+`editor:prototype`), so changes the person accepts carry their name. From
+2026-11-15: step by step through the normal Review and Accept, "step k of
+n", the agent's actor, whether the step matched its recording; Cancel stops
+the proposal; each applied step is a normal undo entry and recovery record;
+the evidence maps applied steps to the proposal's digest.
+
+The PR worker's decisions, easy to revisit
+([docs/PROPOSALS.md](../docs/PROPOSALS.md#applying-in-the-desktop) has the details):
+
+- One control under the panel and the free **G** key: prepare the next
+  step, or continue (resume) from where the world is. Preparing goes
+  through the same funnel as every edit (dispatch, recovery descriptor,
+  rebuild, report), and the progress is settled after every action that
+  takes it. The desktop never dispatches Accept for the person; only the
+  `--reference --demo-script` evidence run, which opens no window, accepts
+  each step as the scripted demonstration accepts its own edits.
+- The panel's state is derived from the progress and the session each
+  time it is laid out. An applied step the person undid reads "Step k
+  undone: prepare it again (or Redo)", and preparing first resumes the
+  progress at the world; refusals other than a refused or diverged step
+  (a world that moved, a pending change) are shown through the session's
+  state rather than kept.
+- Rows: at most 160 characters, wrapped between words to three lines;
+  proposal and world strings escaped with the observe crate's set and a
+  backslash and cut at 48 characters. The step is described from the
+  committed world, so a pending step reads the same as before it was
+  prepared.
+- Evidence: `proposal-open.json` and `proposal-step-<sequence>.json`
+  (six-digit sequence over every applied step, so re-applying after an
+  undo never collides); a frame's `proposal` member only while one is
+  open. The recovery record named is the one the applying Accept retained.
+- With a window, `--demo-script` and a proposal are refused; with
+  `--reference` the scripted run applies the proposal instead of the
+  demonstration.
+- The engine's Reopen keeps the session's History, so the progress
+  survives it; a new start resumes.

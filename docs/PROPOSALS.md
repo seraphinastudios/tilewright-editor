@@ -11,10 +11,10 @@ the provisioning helper's sandbox mode and the headless runner, whose
 `submit` builds a proposal with `Proposal::from_session` and retains it in
 the sandbox's `proposals/` directory, and in
 [docs/MCP-EDITING.md](MCP-EDITING.md): the same requests as MCP tools, whose
-`edit` takes an Action in this format's form. Opening a proposal in the desktop
-(what the person sees for each step: PR 6d) is later work; nothing
-described here lets an agent publish to a person's world, and nothing
-publishes except the person's own Accept.
+`edit` takes an Action in this format's form. The desktop opens a proposal
+and offers its steps one at a time ([Applying in the desktop](#applying-in-the-desktop));
+nothing described here lets an agent publish to a person's world, and
+nothing publishes except the person's own Accept.
 
 ## The document
 
@@ -209,8 +209,7 @@ person's session:
   `proposal.step_diverged`, naming the step and which members differ, with
   no world text. An equal step is pending for the person's normal Review
   and Accept. The review shows the pending diff of that freshly prepared
-  change, never the recorded transaction text (the desktop's review is PR
-  6d).
+  change, never the recorded transaction text (the desktop's review below).
 - `Progress::settle` (which `prepare_step` calls first) reads what the
   person did with the prepared step:
   - `Pending`: exactly the prepared change is still pending;
@@ -257,7 +256,7 @@ What a front end does in each case:
 Every applied step carries the person's actor and is a normal undo entry
 and recovery record. `Progress::proposal` gives the proposal's body digest
 so a front end can record which proposal each step came from; the desktop
-records it in its evidence (PR 6d). Nothing in this crate records it.
+records it in its evidence (below). Nothing in this crate records it.
 
 A proposal recorded by another editor build may diverge when it is
 applied: a different title, member order or number spelling in the
@@ -281,6 +280,110 @@ member on one side only is a difference. Both sides must have a string
 actor. A recorded transaction with a member World's transaction format
 does not have is already refused when the proposal is read
 (`proposal.invalid`).
+
+## Applying in the desktop
+
+The person starts the desktop with the proposal file (Linux only):
+
+```sh
+python3 tools/provision-prototype.py --world WORLD --destination NEW-SESSION \
+  --editor target/debug/tilewright-editor --font-pack /absolute/font-pack \
+  --proposal SANDBOX/proposals/proposal-<digest>.json --actor human:<name>
+```
+
+The helper reads and checks the file before it creates anything (a regular
+file, not a link, at most 16 MiB, named `proposal-<64 hex>.json`), copies
+its bytes into a private `proposal/` child of the new session, records its
+name, size and SHA-256 in the receipt and passes the editor that directory
+as a descriptor with `--proposal-fd` and `--proposal-name`. The sandbox's
+file is never written or kept open. `--actor human:<name>` names the person
+as the actor of every change the session accepts; without it the actor is
+`editor:prototype`, as before. The editor reads the copy with
+`read_proposal`; a refusal stops it at start-up with the code
+(`proposal refused: proposal.digest: …`; also `proposal.store`,
+`proposal.budget`, `proposal.invalid`).
+
+At start-up the desktop begins the proposal when the world is at its base,
+resumes it when the world is at exactly one step's result, and otherwise
+shows that it does not apply here, with both revisions; normal editing
+stays available either way.
+
+**The panel.** A Proposal block at the top of the sidebar, while a proposal
+is open: its short digest and the agent's actor; the client's label,
+escaped and marked unverified; the editor version it was recorded with
+and this one's ("may diverge" when they differ); where the world is ("at
+its base", "after step j of n", "not on its path"); "Step k of n" and the
+step in words; a state line; how many steps are applied and remain; the
+catalog notice. Only the current step is described, so a 256-step proposal
+reads the same as a short one. The step's words come from its decoded
+Action (kind, uid, plane and layer, tile, the number of cells and the
+prototype or zone, a field and its value, a portal target) and from the
+person's committed world (where an object or anchor being moved or deleted
+is now, and "outside the view" for a tile outside it), never from the
+recorded transaction. Every string from the proposal or the world is
+escaped with the observe crate's set (controls, bidirectional and line
+separators, invisible characters) and a backslash, cut at 48 characters;
+a row is at most 160 characters and wraps between words to at most three
+lines.
+
+**The control.** One button under the block, also on the **G** key:
+"Prepare step k" prepares the next step through the same path as every
+edit; "Continue from step j" (the world is after a step the progress has
+not reached) and "Resume at step j" (after a Cancel) start again from where
+the world is, preparing nothing. There is no control while a change is
+pending, the world is not on the path, the session is blocked or every step
+is applied. Accept (Enter) and Cancel (Esc) are the ordinary ones; nothing
+in the desktop accepts a step for the person.
+
+**The states**, as the state line says them:
+
+| State | What happened | What the person can do |
+|---|---|---|
+| Ready to prepare. | The world is where the next step starts. | Prepare it. |
+| Step k pending: matches its recording. | The step is prepared; the Review status reads "Proposal step k of n by agent:…: matches its recording. Accept applies it; Cancel stops the proposal." and shows the session's own review of the freshly prepared change. | Accept or Cancel. |
+| Your own change is pending: the proposal waits. | The pending change is the person's; the Review is today's. | Accept or Cancel it. |
+| Step k undone: prepare it again (or Redo). | An applied step was undone. | Prepare it again, or Redo. |
+| The world moved: undo your own edits to continue. | The person accepted an edit of their own; the world is on no step of the path. | Undo it. |
+| The world moved: undo your edits or continue from step j. | The world is after a later step than the progress (the person made a step's edit themselves). | Continue. |
+| Refused: proposal.step_refused (engine code). Nothing changed. | The engine refused the step under the person's grants. | Try again after changing what refused it. |
+| Diverged: … (recorded by editor X). Nothing changed. | The step prepared another change than it recorded and was cancelled. | Nothing; another editor build may record differently. |
+| Stopped by Cancel. Resume continues it. | The person cancelled a prepared step. | Resume. |
+| All n steps applied. | | |
+| Does not apply to this world; nothing can be prepared. | Neither begin nor resume applied at start-up. | Edit normally. |
+| This session cannot continue (blocked). | The session or the rendering is blocked. | Inspect recovery, as for any blocked session. |
+
+The progress survives the engine's Reopen (R), which keeps the session's
+History; after a closed editor, the next start resumes.
+
+**Evidence.** Nothing is written without a proposal, so existing evidence
+is unchanged. With one, `proposal-open.json`
+(`tilewright.prototype-proposal/1`: the body digest, file name, recording
+editor and this one, agent actor, escaped client label, the person's
+actor, base, result, catalog, step count, notices, and `begun`,
+`resumed_after` or `applies: false` with the code and the world's
+revision), and for each step the person's Accept applies
+`proposal-step-<sequence>.json` (`tilewright.prototype-proposal-step/1`:
+the sequence, the proposal's digest and file, step k of n, the person's
+actor, the recorded transaction's SHA-256 and the SHA-256 of the
+transaction the session applied, which differ by the actor, the step's
+before and after revisions, and the recovery record that Accept retained,
+or `null` for a step found applied later, after the person undid an edit
+of their own on top of it). The sequence counts every applied step, so a
+step applied again after an undo gets a new record. Frame captures gain a
+`proposal` member (digest, steps, applied, state) while a proposal is open.
+`--demo-script --reference` with a proposal runs the proposal instead of
+the demonstration: it captures `proposal-opened`, then prepares, captures
+`proposal-step-k-pending`, accepts as the scripted demonstration accepts
+its own edits, and captures `proposal-step-k-applied` for each step; with
+a window, `--demo-script` and a proposal are refused.
+
+**A hand test** should check, in a real window: the block reads on screen
+at 720×480 and at 1280×800; G and the button prepare a step and nothing
+else; Enter and Esc accept and cancel it; the Review status line names the
+step and the agent; Undo of an applied step and an own edit between steps
+read as above; and the evidence names the person. None of this was tested
+in a window: the tests drive the application object, its key and pointer
+routing and its CPU frames.
 
 ## What the digests protect
 
