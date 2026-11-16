@@ -841,7 +841,7 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
     assert!(
         texts
             .iter()
-            .any(|text| text == "Catalog differs from the recording: your grants apply"),
+            .any(|text| text == "Catalog differs; your grants apply"),
         "{texts:?}"
     );
     assert_eq!(
@@ -896,6 +896,23 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
     }
     assert_eq!(revision(&twin.app.session), before);
     assert_eq!(state(&twin.app), State::Ready { step: 2 });
+    // At the smallest window, while the step is refused, the catalog
+    // notice (a likely cause) is laid out and the counts give way.
+    smallest_window(&mut twin.app);
+    acknowledge_ui(&mut twin.app);
+    assert!(route(&mut twin.app, &key(Keycode::G)).is_err());
+    acknowledge_ui(&mut twin.app);
+    let lines = block_lines(&mut twin.app);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "Catalog differs; your grants apply"),
+        "{lines:#?}"
+    );
+    assert!(
+        !lines.iter().any(|line| line.starts_with("Applied ")),
+        "{lines:#?}"
+    );
 }
 
 /// The proposal with its body changed by `change` and its transaction

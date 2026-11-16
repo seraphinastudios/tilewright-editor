@@ -582,10 +582,9 @@ impl OpenProposal {
         }
         for notice in &self.notices {
             match notice {
-                Notice::CatalogDiffers { .. } => rows.push((
-                    Row::Notice,
-                    "Catalog differs from the recording: your grants apply".into(),
-                )),
+                Notice::CatalogDiffers { .. } => {
+                    rows.push((Row::Notice, "Catalog differs; your grants apply".into()));
+                }
             }
         }
         rows.into_iter()

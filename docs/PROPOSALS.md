@@ -325,7 +325,7 @@ never hides it:
 - "Step k of n:" and the step in words;
 - the state line;
 - "Applied k of n, remaining m";
-- "Catalog differs from the recording: your grants apply", when it does.
+- "Catalog differs; your grants apply", when it does.
 
 Only the current step is described, so a 256-step proposal reads the same
 as a short one.
