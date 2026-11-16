@@ -607,6 +607,20 @@ fn cancel_stops_the_proposal_and_resume_continues_it() {
             true
         ))
     );
+    // While a change of the person's own is pending, nothing is offered.
+    let expected = revision(&twin.app.session);
+    twin.app
+        .action(Action::Move {
+            uid: "marker_2".into(),
+            x: 2,
+            y: 5,
+            expected,
+        })
+        .unwrap();
+    assert_eq!(state(&twin.app), State::Stopped { resume: None });
+    assert_eq!(control(&mut twin.app), None);
+    acknowledge_ui(&mut twin.app);
+    route(&mut twin.app, &key(Keycode::Escape)).unwrap();
     // Resume through the key: a new progress, nothing prepared yet.
     acknowledge_ui(&mut twin.app);
     route(&mut twin.app, &key(Keycode::G)).unwrap();
@@ -1014,6 +1028,20 @@ fn a_reopen_keeps_the_history_and_the_progress() {
     assert_eq!(state(&twin.app), State::Ready { step: 1 });
     prepare_and_accept(&mut twin, 1);
     assert_eq!(state(&twin.app), State::Finished);
+}
+
+#[test]
+fn the_key_waits_for_the_displayed_panel() {
+    let mut twin = twin(1, |_| {}, |_| {}, None);
+    open(&mut twin);
+    // A change the person has not seen yet: the frame is not presented.
+    twin.app.presented_generation = None;
+    let error = route(&mut twin.app, &key(Keycode::G)).unwrap_err();
+    assert!(error.contains("displayed panel"), "{error}");
+    assert!(twin.app.session.history().pending().is_none());
+    acknowledge_ui(&mut twin.app);
+    route(&mut twin.app, &key(Keycode::G)).unwrap();
+    assert_eq!(state(&twin.app), State::Pending { step: 0 });
 }
 
 #[test]
