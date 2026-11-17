@@ -14,15 +14,21 @@
 //! cooperating writers apart; like the recovery store's, it does not stop
 //! a process of the same user that ignores it.
 //!
-//! The final name is never written. The stage is made with World's
-//! create-only `create`, an exclusive create that fails, removing and
-//! replacing nothing, if anything is at the stage name: a file, a link, a
-//! directory, made however recently. A stage already there blocks that
-//! proposal until a person removes it. World 0.2.2 has no rename that
-//! refuses to replace, so the stage is renamed only after the final name is
-//! found free. One window remains: a process that ignores the lock and
-//! creates an entry at the final name in the few system calls between that
-//! check and the rename has it replaced by the proposal.
+//! The final name is never written, and the store itself removes nothing.
+//! The stage is made with World's create-only `create`, an exclusive create
+//! that fails if anything is at the stage name (a file, a link, a
+//! directory, made however recently) and never removes what was at the
+//! name before the call. A stage already there blocks that proposal until
+//! a person removes it. World 0.2.2 has no rename that refuses to replace,
+//! so the stage is renamed only after the final name is found free.
+//!
+//! Two windows remain, both open only to a process of the same user that
+//! ignores the lock. An entry it creates at the final name in the few
+//! system calls between that check and the rename is replaced by the
+//! proposal. And on Unix, when a create fails after making its file, World
+//! removes the file only while the name is still that file; a file renamed
+//! over the new stage between World's check and its removal, about a
+//! microsecond, is removed.
 use tilewright_editor_ui::RefusalCode;
 use tilewright_source::{Access, AccessError, Mounts, SourceDirectory, SourceLock, SourceRoot};
 

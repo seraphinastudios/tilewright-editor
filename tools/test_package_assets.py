@@ -58,7 +58,7 @@ class PackageAssetTests(unittest.TestCase):
             stage = Path(temporary)
             assets.package_assets(ROOT, stage)
             shipped = {path.name for path in stage.glob('*.md')}
-            self.assertEqual(shipped, set(assets.DOCS))
+            self.assertEqual(shipped, {'OFFLINE-PROTOTYPE.md', 'SANDBOX.md', 'MCP-EDITING.md', 'PROPOSALS.md', 'ENGINE.md', 'MCP.md', 'CLI.md'})
             for name in assets.DOCS:
                 self.assertEqual((stage/name).read_bytes(), (ROOT/'docs'/name).read_bytes())
                 text = (stage/name).read_text(encoding='utf-8')

@@ -556,19 +556,25 @@ The lock keeps cooperating writers apart; like the recovery store's, it
 does not stop a process of the same user that ignores it.
 
 Precisely, with the World crates at 0.2.2: the store never writes to the
-final name, and never removes or replaces anything at the stage name
-(`<name>.stage`). It makes the stage with `SourceDirectory::create`, an
-exclusive create that fails if anything is at the name, a link or a
-directory included, however recently it was made, and leaves it as it was:
-a leftover stage blocks that proposal (`proposal.store`) until a person
-removes it. A create that fails after making its file removes it only when
-the name is still that file; where it could not tell, the refusal says the
-stage may be left. `SourceDirectory::rename` replaces its target, and 0.2.2
-offers no rename that does not, so the store renames only after checking
-the final name is free. One window remains: an entry that a process
-ignoring the lock creates at the final name between that check and the
-rename, a few system calls, is replaced by the proposal. Only a same-user
-process can use it.
+final name and itself removes nothing. It makes the stage
+(`<name>.stage`) with `SourceDirectory::create`, an exclusive create that
+fails if anything is at the name, a link or a directory included, however
+recently it was made, and never removes what was at the name before the
+call: a leftover stage blocks that proposal (`proposal.store`) until a
+person removes it. A create that fails after making its file removes it
+only when the name is still that file; where it could not tell, the
+refusal says the stage may be left. `SourceDirectory::rename` replaces its
+target, and 0.2.2 offers no rename that does not, so the store renames
+only after checking the final name is free.
+
+Two windows remain, both open only to a process of the same user that
+ignores the lock:
+
+- an entry it creates at the final name between that check and the rename,
+  a few system calls, is replaced by the proposal;
+- on Unix, while a create of the stage is failing, a file it renames over
+  the new stage between World's identity check and its removal (about a
+  microsecond) is removed.
 
 `read_proposal(root, name)` reads a store's name only, at most 16 MiB
 (larger is refused before it is read), refuses a link or anything but a
