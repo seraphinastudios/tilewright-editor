@@ -2117,22 +2117,6 @@ mod proposal;
 #[path = "proposal_highlight.rs"]
 mod proposal_highlight;
 
-/// Labels the neutral sample's resources in `project` as project art in
-/// the copy at `world`: catalog format 2, the MIT pixels unchanged. No
-/// project art is used in tests; only the label differs, in a temporary
-/// copy.
-fn label_project_art(world: &Path, project: &[&str]) {
-    let path = world.join("preview.jsonc");
-    let mut catalog: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    catalog["format"] = "tilewright.editor-preview/2".into();
-    for resource in catalog["resources"].as_array_mut().unwrap() {
-        if project.contains(&resource["id"].as_str().unwrap()) {
-            resource["license"] = "project".into();
-        }
-    }
-    fs::write(path, catalog.to_string()).unwrap();
-}
-
 fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(fs::read(path).unwrap()))
         .read_info()
@@ -2146,7 +2130,7 @@ fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
 #[test]
 fn evidence_frames_with_project_art_carry_the_mark_and_say_so() {
     let (temporary, mut app) = application_with_source(|world| {
-        label_project_art(world, &["grass", "marker"]);
+        tilewright_editor_testkit::label_project_art(world, &["grass", "marker"]);
     });
     assert_eq!(app.session.catalog().project_art_resources(), 2);
     let composed = app.workspace_frame().unwrap();
@@ -2199,7 +2183,7 @@ fn the_desktop_shows_while_project_art_is_loaded() {
             .collect::<Vec<_>>()
     };
     let (_temporary, mut app) = application_with_source(|world| {
-        label_project_art(world, &["stone"]);
+        tilewright_editor_testkit::label_project_art(world, &["stone"]);
     });
     let shown = label(&mut app);
     assert_eq!(shown.len(), 1);
@@ -2220,6 +2204,7 @@ fn the_desktop_shows_while_project_art_is_loaded() {
     }
     let (_plain, mut app) = application();
     assert!(label(&mut app).is_empty());
-    let (_two, mut app) = application_with_source(|world| label_project_art(world, &[]));
+    let (_two, mut app) =
+        application_with_source(|world| tilewright_editor_testkit::label_project_art(world, &[]));
     assert!(label(&mut app).is_empty());
 }

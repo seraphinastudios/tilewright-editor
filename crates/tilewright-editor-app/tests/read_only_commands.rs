@@ -267,16 +267,7 @@ fn listing(
 fn labelled(directory: &std::path::Path, name: &str, project: &[&str]) -> std::path::PathBuf {
     let root = directory.join(name);
     copy_tree(&fixture_world("prototype-neutral"), &root);
-    let path = root.join("preview.jsonc");
-    let mut catalog: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    catalog["format"] = "tilewright.editor-preview/2".into();
-    for resource in catalog["resources"].as_array_mut().unwrap() {
-        if project.contains(&resource["id"].as_str().unwrap()) {
-            resource["license"] = "project".into();
-        }
-    }
-    std::fs::write(path, catalog.to_string()).unwrap();
+    tilewright_editor_testkit::label_project_art(&root, project);
     root
 }
 

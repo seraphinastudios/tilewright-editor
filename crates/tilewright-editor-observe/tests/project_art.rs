@@ -36,20 +36,11 @@ fn labelled(format: &str, project: &[&str]) -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("world");
     copy_tree(&fixture_world("prototype-neutral"), &root);
-    let path = root.join("preview.jsonc");
-    let mut catalog: Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    catalog["format"] = json!(format);
-    let mut found = 0;
-    for resource in catalog["resources"].as_array_mut().unwrap() {
-        assert_eq!(resource["license"], "MIT");
-        if project.contains(&resource["id"].as_str().unwrap()) {
-            resource["license"] = json!("project");
-            found += 1;
-        }
+    if format.ends_with("/2") {
+        tilewright_editor_testkit::label_project_art(&root, project);
+    } else {
+        assert!(project.is_empty());
     }
-    assert_eq!(found, project.len());
-    std::fs::write(path, serde_json::to_string_pretty(&catalog).unwrap()).unwrap();
     (directory, root)
 }
 
@@ -60,6 +51,10 @@ fn original() -> (tempfile::TempDir, PathBuf) {
 
 fn json_of(command: &str, root: &Path, text: bool) -> String {
     let mut arguments = vec![OsString::from(root)];
+    if command == "tile" {
+        // The marker's tile.
+        arguments.extend(["main", "0", "3", "2"].map(OsString::from));
+    }
     if !text {
         arguments.insert(0, "--json".into());
     }
@@ -89,7 +84,7 @@ fn draw(root: &Path, scale: u32) -> (ReferenceFrame, Value) {
     (frame, serde_json::from_str(&outcome.stdout).unwrap())
 }
 
-const COMMANDS: [&str; 3] = ["overview", "catalog", "lint"];
+const COMMANDS: [&str; 4] = ["overview", "tile", "catalog", "lint"];
 
 #[test]
 fn a_format_2_catalog_without_project_art_reports_and_draws_as_format_1() {
@@ -235,4 +230,60 @@ fn the_marked_image_keeps_within_the_image_bounds() {
         }
     }
     assert!(checked > 0);
+}
+
+/// A copy of the neutral sample with its marker drawn `height` pixels tall,
+/// in format 2 with grass labelled `project` when `project` is set.
+fn tall(height: u32, project: bool) -> (tempfile::TempDir, PathBuf) {
+    let (directory, root) = labelled("tilewright.editor-preview/2", &[]);
+    tilewright_editor_testkit::replace_resource(&root, "marker", 24, height, [9, 9, 9, 255]);
+    if project {
+        tilewright_editor_testkit::label_project_art(&root, &["grass"]);
+    }
+    (directory, root)
+}
+
+fn framed_size(root: &Path, scale: u32) -> Result<([u32; 2], Option<u32>), &'static str> {
+    let request = Request {
+        root: root.into(),
+        out: "unused.png".into(),
+        region: None,
+        scale,
+        json: true,
+    };
+    let observed = render::open(&request).unwrap_or_else(|outcome| panic!("{outcome:?}"));
+    render::frame_view(&observed, None, scale)
+        .map(|framed| (framed.size(), framed.mark_rows()))
+        .map_err(|refusal| refusal.code)
+}
+
+#[test]
+fn a_marked_image_past_the_side_bound_is_refused_and_one_within_it_is_not() {
+    use tilewright_editor_observe::limits::MAXIMUM_RENDER_SIDE;
+    // A taller marker makes a taller image, 2 pixels for each pixel of art
+    // (the frame is centred). Find the art height whose unmarked image
+    // ends just below the bound.
+    let height_for = |art: u32| framed_size(&tall(art, false).1, 1).unwrap().0[1];
+    let base = height_for(1_000);
+    let art = 1_000 + (MAXIMUM_RENDER_SIDE - 2 - base) / 2;
+    let ([width, unmarked], None) = framed_size(&tall(art, false).1, 1).unwrap() else {
+        panic!("unmarked");
+    };
+    assert!(
+        (MAXIMUM_RENDER_SIDE - 4..=MAXIMUM_RENDER_SIDE).contains(&unmarked),
+        "{unmarked}"
+    );
+    assert_eq!(mark::rows(width), 12);
+    // Unmarked it fits; marked, 12 rows more, it does not.
+    assert_eq!(framed_size(&tall(art, true).1, 1), Err("output.budget"));
+    // With room for the mark it is drawn, the mark included in the size.
+    let art = art - 6;
+    let ([width, unmarked], None) = framed_size(&tall(art, false).1, 1).unwrap() else {
+        panic!("unmarked");
+    };
+    assert!(unmarked + 12 <= MAXIMUM_RENDER_SIDE, "{unmarked}");
+    assert_eq!(
+        framed_size(&tall(art, true).1, 1),
+        Ok(([width, unmarked + 12], Some(12)))
+    );
 }
