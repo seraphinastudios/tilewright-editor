@@ -137,7 +137,7 @@ fn shown(app: &mut Application) -> Option<(usize, Concerns, Vec<Seen>)> {
     Some((highlight.step, highlight.concerns, tiles(highlight)))
 }
 
-/// What step `step` (from 0) of the 15 kinds highlights on the person's
+/// What step `step` (from 0) of the 17 kinds highlights on the person's
 /// world as each step finds it.
 fn expected_kind(step: usize) -> (Concerns, Vec<Seen>) {
     let tiles = match step {
@@ -155,7 +155,21 @@ fn expected_kind(step: usize) -> (Concerns, Vec<Seen>) {
         // Outside the view: listed, not drawn.
         13 => main0(&[("anchor", [-2, 0])]),
         // gate_west's tile, and arrival where step 12 moved it.
-        _ => main0(&[("object", [0, 3]), ("target", [6, 3])]),
+        14 => main0(&[("object", [0, 3]), ("target", [6, 3])]),
+        // The start cell, then the sand block east of x = 4 in x, then y
+        // order, less the view's empty cell.
+        15 => {
+            let mut cells = vec![("cell", [5, 0])];
+            for x in 4..8 {
+                for y in 0..6 {
+                    if [x, y] != [5, 0] && [x, y] != [6, 4] {
+                        cells.push(("cell", [x, y]));
+                    }
+                }
+            }
+            main0(&cells)
+        }
+        _ => main0(&[("cell", [6, 4])]),
     };
     (Concerns::Tiles, tiles)
 }

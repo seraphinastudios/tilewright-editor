@@ -87,9 +87,10 @@ pub(super) fn accept(session: &mut Session, action: Action) {
         .unwrap_or_else(|error| panic!("accept {kind}: {} {error}", error.code()));
 }
 
-/// The 15 edit kinds, in an order in which each applies after the ones
-/// before it on the neutral fixture with the `spare` zone.
-pub(super) const KINDS: usize = 15;
+/// The 16 edit kinds, in an order in which each applies after the ones
+/// before it on the neutral fixture with the `spare` zone; the fill twice,
+/// as a fill and as a replace.
+pub(super) const KINDS: usize = 17;
 #[allow(clippy::too_many_lines)]
 pub(super) fn edit(kind: usize, expected: [u8; 32]) -> Action {
     let main = || String::from("main");
@@ -185,12 +186,34 @@ pub(super) fn edit(kind: usize, expected: [u8; 32]) -> Action {
             anchor: "lookout".into(),
             expected,
         },
-        _ => Action::SetPortal {
+        14 => Action::SetPortal {
             uid: "gate_west".into(),
             target: Some(PortalTarget::Anchor {
                 plane: main(),
                 anchor: "arrival".into(),
             }),
+            expected,
+        },
+        // The sand block east of x = 4 becomes grass.
+        15 => Action::FillTerrain {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 5,
+            y: 0,
+            proto: "grass".into(),
+            contiguous: true,
+            expected,
+        },
+        // The view's one empty cell gets sand.
+        _ => Action::FillTerrain {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 6,
+            y: 4,
+            proto: "sand".into(),
+            contiguous: false,
             expected,
         },
     }
@@ -483,13 +506,13 @@ fn every_step_applies_through_prepare_and_the_persons_accept() {
     assert!(
         texts
             .iter()
-            .any(|text| text == "Step 1 of 15: Move marker_1 to (4, 2), from (3, 2), on main/0"),
+            .any(|text| text == "Step 1 of 17: Move marker_1 to (4, 2), from (3, 2), on main/0"),
         "{texts:?}"
     );
     assert!(
         texts
             .iter()
-            .any(|text| text == "Applied 0 of 15, remaining 15"),
+            .any(|text| text == "Applied 0 of 17, remaining 17"),
         "{texts:?}"
     );
     for step in 0..KINDS {
@@ -524,13 +547,13 @@ fn every_step_applies_through_prepare_and_the_persons_accept() {
     assert_eq!(control(&mut twin.app), None);
     let texts = panel(&mut twin.app);
     assert!(
-        texts.iter().any(|text| text == "All 15 steps applied."),
+        texts.iter().any(|text| text == "All 17 steps applied."),
         "{texts:?}"
     );
     assert!(
         texts
             .iter()
-            .any(|text| text == "World: after step 15 of 15"),
+            .any(|text| text == "World: after step 17 of 17"),
         "{texts:?}"
     );
     // The person's world now equals the agent's, byte for byte; every
@@ -1202,6 +1225,8 @@ fn every_kind_reads_as_words_from_its_action_and_the_persons_world() {
             "Move anchor arrival to (6, 3), from (7, 3), on main",
             "Delete anchor lookout at (-2, 0), outside the view on main",
             "Point the portal of gate_west to anchor arrival at (7, 3) on main",
+            "Fill from (5, 0) with grass: 23 cells of sand (floor on main/0)",
+            "Replace every cell with no terrain in the view with sand: 1 cell, from (6, 4) (floor on main/0)",
         ]
     );
 }
@@ -2400,9 +2425,31 @@ fn moves_twin(xs: &[i64]) -> Twin {
     }
 }
 
+/// A proposal of a paint, a fill and a replace (kinds 2, 15 and 16) on the
+/// neutral fixture with the spare zone.
+fn fills_twin() -> Twin {
+    let agent_root = tempfile::tempdir_in(scratch()).unwrap();
+    let world = agent_root.path().join("world");
+    copy_private(&fixture_world("prototype-neutral"), &world);
+    spare_zone(&world);
+    let mut session = open_session(&world, AGENT);
+    for kind in [2, 15, 16] {
+        let expected = revision(&session);
+        accept(&mut session, edit(kind, expected));
+    }
+    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let (person, app) = person_application(spare_zone);
+    Twin {
+        person,
+        agent: agent_root,
+        app,
+        proposal,
+    }
+}
+
 /// Variants: 0 plain 3 steps; 1 step 2 diverges; 2 step 3 refused by the
 /// person's catalog (and the catalog notice); 3 a chain that revisits its
-/// base ([4, 3, 5]).
+/// base ([4, 3, 5]); 4 a paint, a fill and a replace.
 fn oracle_variant(variant: u64) -> Twin {
     match variant {
         0 => twin(3, |_| {}, |_| {}, None),
@@ -2424,30 +2471,31 @@ fn oracle_variant(variant: u64) -> Twin {
             },
             None,
         ),
-        _ => moves_twin(&[4, 3, 5]),
+        3 => moves_twin(&[4, 3, 5]),
+        _ => fills_twin(),
     }
 }
 
 /// The application-level property test of the first review, extended: more
 /// operations (the person doing the next step's edit themselves, a clear
-/// selection, pressing the control with the pointer), four proposal
-/// variants (diverged, refused, revisiting) and an oracle that recomputes the
-/// state from scratch after every operation and compares it with the stored
-/// reading's state and with what the laid-out panel shows (state line and
-/// control). Seeds: `TILEWRIGHT_PROPOSAL_ORACLE_SEEDS` (default 8; the
-/// delta review ran 400).
+/// selection, pressing the control with the pointer), five proposal
+/// variants (diverged, refused, revisiting, fills) and an oracle that
+/// recomputes the state from scratch after every operation and compares it
+/// with the stored reading's state and with what the laid-out panel shows
+/// (state line and control). Seeds: `TILEWRIGHT_PROPOSAL_ORACLE_SEEDS`
+/// (default 10, two of each variant; the delta review ran 400).
 #[test]
 #[allow(clippy::too_many_lines)]
 fn the_stored_reading_never_differs_from_a_fresh_settle() {
     let seeds: u64 = std::env::var("TILEWRIGHT_PROPOSAL_ORACLE_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(8);
+        .unwrap_or(10);
     let operations = 40;
     let mut seen: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut accepted_total = 0usize;
     for seed in 0..seeds {
-        let variant = seed % 4;
+        let variant = seed % 5;
         let mut twin = oracle_variant(variant);
         open(&mut twin);
         let mut rng = Lcg(seed * 104_729 + 7);

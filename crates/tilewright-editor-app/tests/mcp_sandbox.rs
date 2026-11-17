@@ -233,6 +233,11 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     assert_eq!(client.ok("accept", json!({}))["state"]["undo"], 3);
     client.ok("redo", json!({}));
     assert_eq!(client.ok("accept", json!({}))["state"]["undo"], 4);
+    // Every grass cell left in the view becomes sand.
+    client.step(
+        json!({"kind": "fill_terrain", "plane": "main", "layer": 0, "grid": "floor",
+        "x": 3, "y": 3, "proto": "sand", "contiguous": false}),
+    );
     // The observe tools see the sandbox at its revision, and render
     // returns the real encoder's PNG.
     let now = client.revision();
@@ -247,7 +252,7 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     assert!(image["data"].as_str().unwrap().starts_with("iVBORw0KGgo"));
     let submitted = client.ok("submit", json!({}));
     let proposal = &submitted["proposal"];
-    assert_eq!(proposal["steps"], 4);
+    assert_eq!(proposal["steps"], 5);
     assert_eq!(proposal["base"], base.as_str());
     let name = proposal["file"].as_str().unwrap().to_owned();
     // The client ends the session by closing the server's input.

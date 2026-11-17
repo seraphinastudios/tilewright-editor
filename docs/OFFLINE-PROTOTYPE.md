@@ -84,7 +84,7 @@ outside this private-directory/advisory-lock model.
 The native window presents the prepared scene through the shared wgpu/SDL3
 adapter and remains open until the user closes it. A toolbar selects Select,
 Move, Terrain, Place or Zone mode and exposes Clear, Undo, Redo and Delete. Terrain mode
-paints with the drag brush described below; deletion and placement are described after it. The inspector shows
+paints with the drag brush described below, or fills and replaces with a click; deletion and placement are described after it. The inspector shows
 the selected object's identity, position and schema fields, or the selected
 cell and explicit terrain choices. Only profile-authorized scalar fields are
 editable; structured values remain read-only. With a proposal open, a
@@ -234,6 +234,46 @@ minimize ends the stroke without preparing anything. A new press (after a
 missed release) also ends it and does nothing else. Motion that arrives
 without the button held finishes the stroke where the release was missed.
 The brush never saves on release: there is no autosave.
+
+### Fill and replace
+
+Terrain mode's sidebar ends with its rule, after the palette: **Brush**
+(drag paints, the default), **Fill** (a click fills the joined area) or
+**Replace** (a click replaces every match in the view). A row chooses its
+rule; **F** cycles Brush, Fill, Replace in Terrain mode and does nothing
+elsewhere. The rule is kept across modes, like the brush. With Fill or
+Replace the brush rows stay but are unavailable, and `[`, `]` and `B` do
+nothing; a press never starts a stroke.
+
+Fill covers the cells joined to the clicked cell through edge neighbours
+(up, down, left, right; never diagonals) that hold its terrain on the
+chosen terrain's grid, without leaving the active view, even where the area
+would join again outside it. Replace covers every cell of the view that
+holds the clicked cell's terrain, joined or not. A cell with no terrain on
+the grid fills and replaces cells with no terrain. Both set the chosen
+terrain; the engine works the cells out from the committed World
+([docs/ENGINE.md](ENGINE.md#fill-and-replace)), so what is previewed is
+what is prepared.
+
+While hovering the map with Fill or Replace, the cells a click there would
+change are marked like a stroke preview's (white at 45 %, through the same
+unpickable copies of the exact cell-reference quads), and the status line
+says how many: "Fill from (1, 1) with sand: 24 cells to change; click to
+review." The preview is the engine's own answer for that cell, rule and
+terrain (`Session::fill_changes`), worked out when one of them, the World,
+the pending change or the frame changes, never per frame; hovering
+prepares nothing, writes nothing and rebuilds nothing. Over a panel or off
+the map there is no preview. When a click would be refused (already that
+terrain, an ungranted terrain, a change pending) nothing is marked and the
+status line gives the reason.
+
+A click selects the cell through the exact cell mask and prepares the fill
+as one pending change: one World transaction with one `terrain.set` that
+sets every covered cell, each expecting the value it holds now, reviewed,
+accepted, undone and redone whole like a stroke. A full 64 by 64 view, the
+largest the catalog allows, is 4,096 cells, the stroke cap: its review
+(four changed chunk files, about 14 KB of excerpt) is complete, so it can
+be accepted.
 
 ### Deleting objects
 
@@ -747,7 +787,13 @@ starts the pick step (`portal-pick`) and clicks the gate's own tile
 starts it again and clicks (4,3) (`portal-tile`, pending;
 `portal-tile-set`), and clears that portal (`portal-clear`, pending;
 `portal-cleared`). The scripted move and deletion earlier take objects whose
-portal is not editable, so the gates are left for this step. It is a
+portal is not editable, so the gates are left for this step. When the
+catalog grants terrain it ends in Terrain mode: with Fill and the last
+palette value it hovers (1,1) (`fill-preview`); with Replace and the first
+value it hovers (5,1) (`replace-preview`), clicks there (`replace-pending`)
+and cancels, so it changes nothing; the brush rule and terrain choice are
+restored. Those frames' JSON has a `fill_preview` member: the rule, start
+cell, terrain and how many cells are marked. It is a
 deterministic scripted demonstration,
 not a claim of human input. `--reference` produces composed workspace CPU
 reference evidence and

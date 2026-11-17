@@ -90,6 +90,8 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         displayed_text: None,
         presented_text_revision: None,
         stroke_mask: None,
+        hover: None,
+        fill_preview: None,
         prepared_scenes: 1,
         preview_omitted: false,
         highlight_omitted: false,
@@ -116,7 +118,7 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
         assert!(!app.demo_step(step).unwrap());
     }
     let selected_before_zones = app.session.selection().cloned();
-    for step in 10..15 {
+    for step in 10..16 {
         if app.demo_step(step).unwrap() {
             break;
         }
@@ -2096,6 +2098,9 @@ mod palette;
 
 #[path = "stroke_preview.rs"]
 mod stroke_preview;
+
+#[path = "fill.rs"]
+mod fill;
 
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
