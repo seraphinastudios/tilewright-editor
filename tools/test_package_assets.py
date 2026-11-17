@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import re
 import tempfile
 import unittest
 
@@ -49,6 +50,26 @@ class PackageAssetTests(unittest.TestCase):
         present = {path.relative_to(ROOT).as_posix() for path in sample.rglob('*') if path.is_file()}
         unpackaged = sorted(present - listed - {(assets.PREFIX/'generate_assets.py').as_posix()})
         self.assertEqual(unpackaged, [])
+
+    def test_the_shipped_guides_link_only_to_each_other_or_the_design_records(self):
+        # A guide a shipped guide links to ships beside it; the design
+        # records are the one place a shipped link leaves the archive.
+        with tempfile.TemporaryDirectory() as temporary:
+            stage = Path(temporary)
+            assets.package_assets(ROOT, stage)
+            shipped = {path.name for path in stage.glob('*.md')}
+            self.assertEqual(shipped, set(assets.DOCS))
+            for name in assets.DOCS:
+                self.assertEqual((stage/name).read_bytes(), (ROOT/'docs'/name).read_bytes())
+                text = (stage/name).read_text(encoding='utf-8')
+                for target in re.findall(r'\]\(([^)\s]+)\)', text):
+                    if re.match(r'[a-z][a-z0-9+.-]*:', target) or target.startswith('#'):
+                        continue
+                    path = target.split('#', 1)[0]
+                    if path.startswith('../decisions/'):
+                        self.assertTrue((ROOT/'docs'/path).is_file(), f'{name}: {target}')
+                    else:
+                        self.assertIn(path, shipped, f'{name} links to {target}, which the package does not ship')
 
     def test_policy_cannot_include_a_parent_or_external_sample(self):
         with tempfile.TemporaryDirectory() as temporary:
