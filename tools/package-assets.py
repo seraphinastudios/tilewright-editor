@@ -7,6 +7,11 @@ from pathlib import Path
 import shutil
 
 PREFIX = Path('crates/tilewright-editor-testkit/fixtures/prototype-neutral')
+# The guides a package ships, at its top level: the prototype and sandbox
+# guides and every page they link to, so that no link between shipped
+# guides leaves the archive. Links to the design records (`../decisions/`)
+# still do; those records are not shipped.
+DOCS = ('OFFLINE-PROTOTYPE.md', 'SANDBOX.md', 'MCP-EDITING.md', 'PROPOSALS.md', 'ENGINE.md', 'MCP.md', 'CLI.md')
 
 
 def package_assets(root, stage):
@@ -30,7 +35,7 @@ def package_assets(root, stage):
             shutil.copyfileobj(incoming, outgoing)
     if not seen:
         raise ValueError('sample package allowlist is empty')
-    for source, target in [('provenance/assets.json','asset-provenance.json'), ('docs/OFFLINE-PROTOTYPE.md','OFFLINE-PROTOTYPE.md'), ('docs/SANDBOX.md','SANDBOX.md'), ('tools/provision-prototype.py','tools/provision-prototype.py'), ('tools/provision-sandbox.py','tools/provision-sandbox.py'), ('tools/font_pack.py','tools/font_pack.py')]:
+    for source, target in [('provenance/assets.json','asset-provenance.json'), *((f'docs/{name}', name) for name in DOCS), ('tools/provision-prototype.py','tools/provision-prototype.py'), ('tools/provision-sandbox.py','tools/provision-sandbox.py'), ('tools/font_pack.py','tools/font_pack.py')]:
         (stage/target).parent.mkdir(parents=True, exist_ok=True)
         with (root/source).open('rb') as incoming, (stage/target).open('xb') as outgoing:
             shutil.copyfileobj(incoming, outgoing)

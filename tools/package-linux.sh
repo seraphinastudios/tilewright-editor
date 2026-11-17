@@ -22,7 +22,10 @@ render_smoke=$(mktemp -d /tmp/tilewright-editor-render.XXXXXX)
 # the checked test root when one is given.
 sandbox_smoke=$(mktemp -d "${TILEWRIGHT_CHECKED_TEST_ROOT:-${TMPDIR:-/tmp}}/tilewright-editor-mcp-sandbox.XXXXXX")
 trap 'rm -rf -- "${stage}" "${render_smoke}" "${sandbox_smoke}"' EXIT
-cargo auditable build --locked --release --package tilewright-editor
+# The packaged binary reports the release version for itself (`version`,
+# the MCP servers, proposals): the build reads it at compile time and
+# refuses an unusable one.
+TILEWRIGHT_EDITOR_RELEASE_VERSION="${version}" cargo auditable build --locked --release --package tilewright-editor
 target=$(cargo metadata --locked --offline --format-version 1 --no-deps | jq -r .target_directory)
 install -d "${stage}/tilewright-editor-${version}/bin" "${output}"
 install "${target}/release/tilewright-editor" "${stage}/tilewright-editor-${version}/bin/tilewright-editor"
@@ -38,7 +41,11 @@ python3 tools/package-assets.py --root . --stage "${stage}/tilewright-editor-${v
 python3 tools/package-font-notice.py --root . --stage "${stage}/tilewright-editor-${version}" >/dev/null
 python3 tools/prepare-font-pack.py stage --root . --font-pack "${font_pack}" \
   --stage "${stage}/tilewright-editor-${version}" >/dev/null
-"${stage}/tilewright-editor-${version}/bin/tilewright-editor" version >/dev/null
+reported=$("${stage}/tilewright-editor-${version}/bin/tilewright-editor" version)
+if [[ ${reported} != "tilewright-editor ${version} "* ]]; then
+  echo "the packaged binary reports itself as ${reported@Q}, not as ${version}" >&2
+  exit 1
+fi
 # The packaged sample must open as a World with the packaged binary: a fixture
 # file left out of policy/package-assets.json would ship a sample that does not
 # load.
@@ -81,13 +88,14 @@ import base64, json, sys
 replies = [json.loads(line) for line in sys.stdin]
 assert [reply["id"] for reply in replies] == [1, 2], replies
 assert replies[0]["result"]["supportedVersions"] == ["2026-07-28"], replies[0]
+assert replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"] == sys.argv[2], replies[0]
 result = replies[1]["result"]
 assert result["isError"] is False, result["content"][0]
 image = result["content"][1]
 assert image["type"] == "image" and image["mimeType"] == "image/png", image["type"]
 with open(sys.argv[1], "rb") as written:
     assert base64.b64decode(image["data"], validate=True) == written.read(), "the MCP image is not the PNG render writes"
-' "${render_smoke}/sample.png"
+' "${render_smoke}/sample.png" "${version}"
 # The MCP editing server starts through the sandbox provisioner with the
 # packaged binary on a fresh copy of the packaged sample: discovery, the
 # sandbox's status and an edit refused for its form, over stdio.
@@ -103,11 +111,13 @@ import json, sys
 replies = [json.loads(line) for line in sys.stdin]
 assert [reply["id"] for reply in replies] == [1, 2, 3], replies
 assert replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["title"] == "Tilewright editor (sandbox editing)", replies[0]
+assert replies[0]["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"] == sys.argv[1], replies[0]
 status = replies[1]["result"]
 assert status["isError"] is False and status["structuredContent"]["actor"] == "agent:package-smoke", status
+assert status["structuredContent"]["editor"] == sys.argv[1], status
 refused = replies[2]["result"]
 assert refused["isError"] is True and refused["structuredContent"]["code"] == "proposal.invalid", refused
-'
+' "${version}"
 test "$(ls -A "${sandbox_smoke}" | wc -l)" -eq 1
 SYFT_CHECK_FOR_APP_UPDATE=false syft \
   "${stage}/tilewright-editor-${version}/bin/tilewright-editor" \

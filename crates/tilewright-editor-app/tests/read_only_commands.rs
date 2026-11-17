@@ -47,6 +47,43 @@ fn the_binary_runs_the_read_only_commands() {
     );
 }
 
+/// The version string a build reports: the release version the packaging
+/// scripts set, otherwise the development form.
+const BUILD_VERSION: &str = match option_env!("TILEWRIGHT_EDITOR_RELEASE_VERSION") {
+    Some(version) => version,
+    None => "0.1.0-dev",
+};
+
+#[test]
+fn version_and_the_mcp_server_report_the_build_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tilewright-editor"))
+        .arg("version")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "tilewright-editor {BUILD_VERSION} toolkit={} renderer={}\n",
+            tilewright_editor_document::TOOLKIT_COMPATIBILITY,
+            tilewright_editor_preview::RENDERER_COMPATIBILITY
+        )
+    );
+    let input =
+        format!(r#"{{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{{{MCP_META}}}}}"#);
+    let output = mcp(
+        &[fixture_world("prototype-neutral").into_os_string()],
+        &input,
+    );
+    let reply: serde_json::Value =
+        serde_json::from_str(String::from_utf8(output.stdout).unwrap().trim_end()).unwrap();
+    assert_eq!(
+        reply["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
+        BUILD_VERSION
+    );
+}
+
 /// The `_meta` every MCP request needs.
 const MCP_META: &str = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
 

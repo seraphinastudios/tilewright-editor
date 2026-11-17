@@ -58,7 +58,10 @@ eras to send `server/discover` first.
   no resources, prompts, sampling or elicitation, and sends no requests or
   notifications.
 - Every result has `resultType: "complete"` and names the server in
-  `_meta["io.modelcontextprotocol/serverInfo"]`. The `server/discover` and
+  `_meta["io.modelcontextprotocol/serverInfo"]`, whose `version` is the
+  version string the editor build reports for itself (`tilewright-editor
+  version`): the release version in a release package, `0.1.0-dev` in any
+  other build. The `server/discover` and
   `tools/list` results may be cached for an hour (`ttlMs` 3600000,
   `cacheScope` `public`): they do not change while the server runs.
 - Notifications get no reply, not even a wrong one. As in the World
