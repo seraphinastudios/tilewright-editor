@@ -260,3 +260,83 @@ fn listing(
     }
     entries
 }
+
+/// A copy of the neutral sample in `directory/name` whose catalog is format
+/// 2 with the resources in `project` labelled `project`: the MIT pixels
+/// unchanged, only the label differs, in a temporary copy.
+fn labelled(directory: &std::path::Path, name: &str, project: &[&str]) -> std::path::PathBuf {
+    let root = directory.join(name);
+    copy_tree(&fixture_world("prototype-neutral"), &root);
+    let path = root.join("preview.jsonc");
+    let mut catalog: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    catalog["format"] = "tilewright.editor-preview/2".into();
+    for resource in catalog["resources"].as_array_mut().unwrap() {
+        if project.contains(&resource["id"].as_str().unwrap()) {
+            resource["license"] = "project".into();
+        }
+    }
+    std::fs::write(path, catalog.to_string()).unwrap();
+    root
+}
+
+/// Width, height and RGBA8 pixels of a PNG.
+fn decode_png(bytes: &[u8]) -> tilewright_editor_preview::ReferenceFrame {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut pixels).unwrap();
+    pixels.truncate(info.buffer_size());
+    tilewright_editor_preview::ReferenceFrame {
+        width: info.width,
+        height: info.height,
+        rgba8: pixels,
+    }
+}
+
+#[test]
+fn render_files_and_mcp_images_with_project_art_are_the_same_marked_png() {
+    let directory = tempfile::tempdir().unwrap();
+    let plain = labelled(directory.path(), "plain", &[]);
+    let root = labelled(directory.path(), "project", &["grass", "sand"]);
+    let render = |root: &std::path::Path, name: &str| {
+        let out = directory.path().join(name);
+        let output = Command::new(env!("CARGO_BIN_EXE_tilewright-editor"))
+            .args(["render", "--json", "--out"])
+            .arg(&out)
+            .arg(root)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        (std::fs::read(out).unwrap(), report)
+    };
+    let (unmarked, before) = render(&plain, "plain.png");
+    let (marked, report) = render(&root, "project.png");
+    let unmarked = decode_png(&unmarked);
+    let rows = tilewright_editor_preview::mark::rows(unmarked.width);
+    assert_eq!(
+        decode_png(&marked),
+        tilewright_editor_preview::mark::marked(&unmarked).unwrap()
+    );
+    assert_eq!(
+        report["catalog"]["project_art"],
+        serde_json::json!({"resources": 2})
+    );
+    assert_eq!(report["image"]["mark_rows"], rows);
+    assert_eq!(report["image"]["height"], unmarked.height + rows);
+    assert!(before["catalog"].get("project_art").is_none());
+    assert!(before["image"].get("mark_rows").is_none());
+    // MCP render returns the file's bytes, and the same report.
+    let input = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"render","arguments":{{}},{MCP_META}}}}}"#
+    );
+    let output = mcp(&[root.clone().into_os_string()], &input);
+    assert_eq!(output.status.code(), Some(0));
+    let reply: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let image = &reply["result"]["content"][1];
+    assert_eq!(image["mimeType"], "image/png");
+    assert_eq!(decode_base64(image["data"].as_str().unwrap()), marked);
+    assert_eq!(reply["result"]["structuredContent"], report);
+}

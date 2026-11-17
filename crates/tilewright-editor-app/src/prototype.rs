@@ -35,6 +35,8 @@ const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) 
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
+/// The desktop's indication while the catalog contains project art.
+const PROJECT_ART_LABEL: &str = "Project art loaded";
 const STROKE_INTERRUPTED: &str = "Brush stroke ended before release; nothing was prepared.";
 
 type Result<T> = std::result::Result<T, String>;
@@ -2596,6 +2598,22 @@ impl Application {
             pending && self.blocked.is_none(),
             false,
         );
+        // A persistent, quiet indication while project art is loaded, so a
+        // person taking a screenshot knows; evidence frames are also marked.
+        if self.session.catalog().contains_project_art() {
+            ui.widget(
+                Rect {
+                    x: 226,
+                    y: y + 6,
+                    width: logical.0.saturating_sub(320.min(logical.0 / 2) + 20 + 216),
+                    height: 28,
+                },
+                PROJECT_ART_LABEL,
+                None,
+                true,
+                false,
+            );
+        }
         let status = self.status_label();
         ui.widget(
             Rect {
@@ -3201,6 +3219,19 @@ impl Application {
         // CPU evidence includes the exact shared-renderer workspace composition;
         // the separate World-only frame() remains authoritative for semantic picks.
         let frame = self.workspace_frame()?;
+        let mut frame = tilewright_editor_preview::ReferenceFrame {
+            width: frame.width,
+            height: frame.height,
+            rgba8: frame.rgba8,
+        };
+        // While project art is loaded, every evidence frame carries the
+        // project-art mark below the workspace, and its record says so.
+        let project_art = self.session.catalog().project_art_resources();
+        let mark_rows = tilewright_editor_preview::mark::rows(frame.width);
+        if project_art > 0 {
+            frame = tilewright_editor_preview::mark::marked(&frame)
+                .ok_or_else(|| "the evidence frame could not be marked".to_owned())?;
+        }
         let mut bytes = Vec::new();
         {
             let mut encoder = png::Encoder::new(&mut bytes, frame.width, frame.height);
@@ -3226,6 +3257,13 @@ impl Application {
             (self.proposal_frame(), frame_record.as_object_mut())
         {
             record.insert("proposal".into(), proposal);
+        }
+        // Only while project art is loaded, so other frames are unchanged.
+        if let (true, Some(record)) = (project_art > 0, frame_record.as_object_mut()) {
+            record.insert(
+                "project_art".into(),
+                serde_json::json!({"resources": project_art, "mark_rows": mark_rows}),
+            );
         }
         self.evidence.retain(
             &format!("{name}.json"),

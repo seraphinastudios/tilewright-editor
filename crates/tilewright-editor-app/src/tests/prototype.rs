@@ -2116,3 +2116,110 @@ mod proposal;
 
 #[path = "proposal_highlight.rs"]
 mod proposal_highlight;
+
+/// Labels the neutral sample's resources in `project` as project art in
+/// the copy at `world`: catalog format 2, the MIT pixels unchanged. No
+/// project art is used in tests; only the label differs, in a temporary
+/// copy.
+fn label_project_art(world: &Path, project: &[&str]) {
+    let path = world.join("preview.jsonc");
+    let mut catalog: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    catalog["format"] = "tilewright.editor-preview/2".into();
+    for resource in catalog["resources"].as_array_mut().unwrap() {
+        if project.contains(&resource["id"].as_str().unwrap()) {
+            resource["license"] = "project".into();
+        }
+    }
+    fs::write(path, catalog.to_string()).unwrap();
+}
+
+fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(fs::read(path).unwrap()))
+        .read_info()
+        .unwrap();
+    let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut decoded).unwrap();
+    decoded.truncate(info.buffer_size());
+    (info.width, info.height, decoded)
+}
+
+#[test]
+fn evidence_frames_with_project_art_carry_the_mark_and_say_so() {
+    let (temporary, mut app) = application_with_source(|world| {
+        label_project_art(world, &["grass", "marker"]);
+    });
+    assert_eq!(app.session.catalog().project_art_resources(), 2);
+    let composed = app.workspace_frame().unwrap();
+    app.capture("marked").unwrap();
+    let (width, height, pixels) = decoded_png(&temporary.path().join("evidence/marked.png"));
+    let rows = tilewright_editor_preview::mark::rows(composed.width);
+    assert_eq!((width, height), (composed.width, composed.height + rows));
+    let expected =
+        tilewright_editor_preview::mark::marked(&tilewright_editor_preview::ReferenceFrame {
+            width: composed.width,
+            height: composed.height,
+            rgba8: composed.rgba8.clone(),
+        })
+        .unwrap();
+    assert_eq!(pixels, expected.rgba8);
+    assert_eq!(&pixels[..composed.rgba8.len()], composed.rgba8.as_slice());
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("evidence/marked.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        record["project_art"],
+        serde_json::json!({"resources": 2, "mark_rows": rows})
+    );
+    assert_eq!(record["width"], width);
+    assert_eq!(record["height"], height);
+    // A frame without project art has neither the member nor the mark.
+    let (plain, mut app) = application();
+    let composed = app.workspace_frame().unwrap();
+    app.capture("plain").unwrap();
+    let (width, height, pixels) = decoded_png(&plain.path().join("evidence/plain.png"));
+    assert_eq!((width, height), (composed.width, composed.height));
+    assert_eq!(pixels, composed.rgba8);
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(plain.path().join("evidence/plain.json")).unwrap())
+            .unwrap();
+    assert!(record.get("project_art").is_none());
+}
+
+#[test]
+fn the_desktop_shows_while_project_art_is_loaded() {
+    use crate::workspace_ui::WorkspaceUi;
+    let label = |app: &mut Application| {
+        app.ui = WorkspaceUi::new((720, 480), (720, 480));
+        app.refresh_ui();
+        app.ui
+            .widgets
+            .iter()
+            .filter(|widget| widget.text == super::PROJECT_ART_LABEL)
+            .map(|widget| (widget.control.is_none(), widget.layout))
+            .collect::<Vec<_>>()
+    };
+    let (_temporary, mut app) = application_with_source(|world| {
+        label_project_art(world, &["stone"]);
+    });
+    let shown = label(&mut app);
+    assert_eq!(shown.len(), 1);
+    let (information, layout) = shown[0];
+    // Information only, on the review row beside Accept and Cancel, and
+    // whole at the smallest window.
+    assert!(information);
+    assert_eq!((layout.x, layout.height), (226, 28));
+    assert_eq!(layout.width, 164);
+    // It stays in every mode.
+    for control in [
+        crate::workspace_ui::Control::Terrain,
+        crate::workspace_ui::Control::Zone,
+        crate::workspace_ui::Control::Anchor,
+    ] {
+        app.control(control).unwrap();
+        assert_eq!(label(&mut app).len(), 1);
+    }
+    let (_plain, mut app) = application();
+    assert!(label(&mut app).is_empty());
+    let (_two, mut app) = application_with_source(|world| label_project_art(world, &[]));
+    assert!(label(&mut app).is_empty());
+}
