@@ -246,6 +246,7 @@
                     "set_field",
                     "paint",
                     "paint_stroke",
+                    "fill_terrain",
                     "paint_zones",
                     "remove",
                     "place",
@@ -445,6 +446,65 @@
                     "grid",
                     "cells",
                     "proto",
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "fill_terrain"
+                    },
+                    "plane": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "layer": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    },
+                    "grid": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "x": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "proto": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "contiguous": {
+                      "type": "boolean",
+                      "description": "true fills the region connected to the start cell through edge neighbours; false replaces every cell of the view with the start cell's value."
+                    },
+                    "expected": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The sandbox revision the action was made for: state.revision."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "plane",
+                    "layer",
+                    "grid",
+                    "x",
+                    "y",
+                    "proto",
+                    "contiguous",
                     "expected"
                   ],
                   "additionalProperties": false

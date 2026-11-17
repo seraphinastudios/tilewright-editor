@@ -78,6 +78,7 @@ hold no NUL.
 | `set_field` | `uid`, `field`, `value` (any JSON value, nested at most 8 deep and 64 KiB encoded, as the engine allows) |
 | `paint` | `plane`, `layer`, `grid`, `x`, `y`, `proto` |
 | `paint_stroke` | `plane`, `layer`, `grid`, `cells` (1 to 4,096 `[x, y]` pairs, distinct and in increasing order, the engine's own rule for a stroke), `proto` |
+| `fill_terrain` | `plane`, `layer`, `grid`, `x`, `y`, `proto`, `contiguous` (`true` or `false`) |
 | `paint_zones` | `plane`, `layer`, `cells` (as for `paint_stroke`), `zone` (string or `null`) |
 | `remove` | `uid` |
 | `place` | `plane`, `layer`, `x`, `y`, `proto` |
@@ -92,6 +93,15 @@ hold no NUL.
 Selection, review, history and reopen actions (`Select`, `ClearSelection`,
 `Accept`, `Cancel`, `Undo`, `Redo`, `Reopen`) have no form and are never in
 a proposal.
+
+A `fill_terrain` step records the fill as it was meant (where it starts,
+the terrain, fill or replace), not its cells: the engine works the cells
+out from the world each time the step is prepared ([docs/ENGINE.md](ENGINE.md#fill-and-replace)),
+so on the world it was recorded from it gives the same transaction again.
+An editor from before `fill_terrain` refuses a whole proposal that holds
+one, with `proposal.invalid` (an unknown action kind) when it reads it,
+before anything is prepared: such a proposal needs an editor release that
+has the fill tool.
 
 ### What a reader requires and what the writer emits
 
@@ -334,9 +344,13 @@ The step's words come from its decoded Action and from the person's
 committed world, never from the recorded transaction. They say what the
 step does, to which id and where to first ("Move marker_1 to (4, 2), from
 (3, 2), on main/0", "Set label on marker_1 to …", "Create zone Z under P,
-named N, on main"), then the rest; from the world
+named N, on main", "Fill from (5, 0) with grass: 23 cells of sand (floor on
+main/0)", "Replace every sand in the view with grass: 23 cells, from
+(5, 0) (floor on main/0)"), then the rest; from the world
 they add where an object or anchor being moved or deleted is now, how many
-objects a deleted object carries ("and the 3 objects it carries"), and
+objects a deleted object carries ("and the 3 objects it carries"), what a
+fill's start cell holds and how many cells the engine's fill would change
+there ("no change, already sand" when none), and
 "outside the view" for a tile outside it. Every string from the proposal
 or the world is escaped with the observe crate's set (controls,
 bidirectional and line separators, invisible characters) and a backslash,
@@ -354,6 +368,7 @@ state changes, not per frame:
 | `set_portal` | the object's tile (`object`) and, when set, where the portal leads (`target`): the location, or the named anchor's tile |
 | `paint` | the cell (`cell`) |
 | `paint_stroke`, `paint_zones` | every cell of the stroke (`cell`) |
+| `fill_terrain` | the cell it starts from, then every cell it would change in the person's committed world (`cell`), worked out by the engine's own fill; just the start cell when it would change none |
 | `place` | the tile it places on (`target`) |
 | `create_anchor`, `delete_anchor` | the anchor's tile (`anchor`); a new anchor is on the view's layer |
 | `move_anchor` | the anchor's tile now (`from`) and its destination (`to`) |

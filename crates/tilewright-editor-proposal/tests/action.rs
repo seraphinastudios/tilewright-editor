@@ -30,6 +30,7 @@ fn round_trip(action: &Action) {
 const MAX: i64 = limits::INTEGER;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn every_edit_kind_round_trips_exactly_with_edge_values() {
     let revision: [u8; 32] = std::array::from_fn(|index| u8::try_from(index * 7).unwrap());
     for kind in 0..KINDS {
@@ -68,6 +69,26 @@ fn every_edit_kind_round_trips_exactly_with_edge_values() {
                 .collect(),
             proto: "t".into(),
             expected: revision,
+        },
+        Action::FillTerrain {
+            plane: odd.clone(),
+            layer: i32::MIN,
+            grid: long.clone(),
+            x: -MAX,
+            y: MAX,
+            proto: String::new(),
+            contiguous: false,
+            expected: [0xff; 32],
+        },
+        Action::FillTerrain {
+            plane: "p".into(),
+            layer: i32::MAX,
+            grid: "g".into(),
+            x: 0,
+            y: -0,
+            proto: long.clone(),
+            contiguous: true,
+            expected: [0; 32],
         },
         Action::PaintZones {
             plane: "p".into(),
@@ -294,6 +315,7 @@ fn reading_refuses_every_other_form() {
     let paint = encode_action(&edit(3, [3; 32])).unwrap();
     let place = encode_action(&edit(6, [3; 32])).unwrap();
     let field = encode_action(&edit(1, [3; 32])).unwrap();
+    let fill = encode_action(&edit(15, [3; 32])).unwrap();
     let with = |base: &Value, key: &str, value: Value| {
         let mut changed = base.clone();
         changed[key] = value;
@@ -349,6 +371,17 @@ fn reading_refuses_every_other_form() {
         with(&place, "x", json!(2.0)),
         with(&place, "x", json!(null)),
         without(&field, "value"),
+        with(&fill, "contiguous", json!(null)),
+        with(&fill, "contiguous", json!(1)),
+        with(&fill, "contiguous", json!(0)),
+        with(&fill, "contiguous", json!("true")),
+        with(&fill, "contiguous", json!([true])),
+        without(&fill, "contiguous"),
+        without(&fill, "grid"),
+        with(&fill, "cells", json!([[0, 0]])),
+        with(&fill, "x", json!(1.5)),
+        with(&fill, "y", json!("0")),
+        with(&fill, "kind", json!("fill")),
         "[]".into(),
         "\"move\"".into(),
     ];
@@ -363,6 +396,7 @@ fn reading_refuses_every_other_form() {
         with(&field, "value", deep),
         with(&good, "uid", json!("x".repeat(limits::TEXT_BYTES + 1))),
         with(&paint, "cells", json!(vec![[0, 0]; limits::CELLS + 1])),
+        with(&fill, "proto", json!("x".repeat(limits::TEXT_BYTES + 1))),
     ];
     for text in &over {
         assert_eq!(

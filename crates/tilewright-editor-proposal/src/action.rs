@@ -61,6 +61,20 @@ pub fn encode_action(action: &Action) -> Result<Value, ProposalError> {
             json!({"kind": "paint_stroke", "plane": text(plane)?, "layer": layer, "grid": text(grid)?,
             "cells": encode_cells(cells)?, "proto": text(proto)?, "expected": hex(expected)})
         }
+        Action::FillTerrain {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+            proto,
+            contiguous,
+            expected,
+        } => {
+            json!({"kind": "fill_terrain", "plane": text(plane)?, "layer": layer, "grid": text(grid)?,
+            "x": integer(*x)?, "y": integer(*y)?, "proto": text(proto)?, "contiguous": contiguous,
+            "expected": hex(expected)})
+        }
         Action::PaintZones {
             plane,
             layer,
@@ -181,6 +195,7 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
         "set_field" => &["uid", "field", "value"],
         "paint" => &["plane", "layer", "grid", "x", "y", "proto"],
         "paint_stroke" => &["plane", "layer", "grid", "cells", "proto"],
+        "fill_terrain" => &["plane", "layer", "grid", "x", "y", "proto", "contiguous"],
         "paint_zones" => &["plane", "layer", "cells", "zone"],
         "remove" => &["uid"],
         "place" => &["plane", "layer", "x", "y", "proto"],
@@ -227,6 +242,16 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
             grid: fields.text("grid")?,
             cells: fields.cells("cells")?,
             proto: fields.text("proto")?,
+            expected,
+        },
+        "fill_terrain" => Action::FillTerrain {
+            plane: fields.text("plane")?,
+            layer: fields.layer("layer")?,
+            grid: fields.text("grid")?,
+            x: fields.integer("x")?,
+            y: fields.integer("y")?,
+            proto: fields.text("proto")?,
+            contiguous: fields.boolean("contiguous")?,
             expected,
         },
         "paint_zones" => Action::PaintZones {
@@ -379,6 +404,12 @@ impl<'v> Fields<'v> {
         self.get(key)
             .as_i64()
             .ok_or_else(|| invalid(format!("action member {key} is an integer")))
+    }
+    fn boolean(&self, key: &str) -> Result<bool, ProposalError> {
+        match self.get(key) {
+            jsonc::Value::Bool { value, .. } => Ok(*value),
+            _ => Err(invalid(format!("action member {key} is a boolean"))),
+        }
     }
     fn layer(&self, key: &str) -> Result<i32, ProposalError> {
         i32::try_from(self.integer(key)?)
