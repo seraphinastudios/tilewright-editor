@@ -134,7 +134,7 @@ byte (and under another actor, all but the actor), and one whose covered
 cells changed since is refused by World's per-cell `expect`, or differs, and
 is not applied. The active view is an input of a fill as much as the World:
 under a catalog with other view bounds, the same fill on the same World
-covers other cells, so it prepares another change.
+can cover other cells, and then it prepares another change.
 
 `Session::fill_changes` answers, for a `FillTerrain`, the cells dispatching
 it would change now, from the same code; it prepares nothing. The desktop's

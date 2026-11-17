@@ -237,9 +237,10 @@ The brush never saves on release: there is no autosave.
 
 ### Fill and replace
 
-Terrain mode's sidebar names the current rule in a header row right after
-the inspector's rows ("Rule: Brush  F", always laid out, even at the
-smallest window), and lists the rules after the palette: **Brush**
+Terrain mode's sidebar names the current rule in a header row above the
+inspector's rows, below a proposal's block ("Rule: Brush  F", always laid
+out, even at the smallest window; pressing it moves to the next rule), and
+lists the rules after the palette: **Brush**
 (drag paints, the default), **Fill** (a click fills the joined area) or
 **Replace** (a click replaces every match in the view). A row chooses its
 rule; **F** cycles Brush, Fill, Replace in Terrain mode and does nothing
@@ -266,8 +267,9 @@ terrain (`Session::fill_changes`), worked out when one of them, the World,
 the pending change or the frame changes, never per frame; hovering
 prepares nothing, writes nothing and rebuilds nothing. Over a panel or off
 the map there is no preview. When a click would be refused (already that
-terrain, an ungranted terrain, a change pending) nothing is marked and the
-status line gives the reason.
+terrain, an ungranted terrain) nothing is marked and the status line gives
+the reason. When the cell overlay cannot be drawn for the view, the line
+adds "Preview unavailable for this view."
 
 A click selects the cell through the exact cell mask and prepares the fill
 as one pending change: one World transaction with one `terrain.set` that
@@ -281,7 +283,12 @@ Hovering picks the cell from one exact cell mask per presented frame, built
 on the first hover of that frame and dropped when the frame is rebuilt, as
 a stroke's samples do; while a change is pending, or editing is blocked,
 hovering does nothing at all, and the status line stays the pending
-change's, the review limit's or the proposal step's.
+change's, the review limit's or the proposal step's. A change of mode or
+rule, a pointer leaving the window and a window losing focus forget the
+hover, and release the mask when the rule is Brush or the mode is not
+Terrain: no preview shows until the pointer moves over the map again, so a
+preview never names a cell the pointer is not on. A pan or zoom under a
+still pointer picks the cell now under it from the new frame's mask.
 
 To try it by hand in a real window:
 

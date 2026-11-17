@@ -948,6 +948,9 @@ impl Application {
         if self.blocked.is_some() || !self.session.can_prepare() || !self.tools.filling() {
             self.hover.cell = None;
             self.hover.preview = None;
+            if !self.tools.filling() {
+                self.hover.mask = None;
+            }
             return;
         }
         let cell = pixel.and_then(|(x, y)| match self.hover_mask_pick(x, y) {
@@ -960,6 +963,16 @@ impl Application {
         }
         self.hover.cell = hover;
         self.refresh_fill_preview();
+    }
+
+    /// Forget where the pointer is: after a mode or rule change, or when it
+    /// leaves the window, no preview shows until it moves over the map
+    /// again, so a preview never names a cell the pointer is not on.
+    fn forget_hover(&mut self) {
+        self.hover.cell = None;
+        self.hover.pixel = None;
+        self.hover.preview = None;
+        self.hover.mask = None;
     }
 
     /// Pick the hovered cell again when the frame changed under a pointer
@@ -1040,6 +1053,8 @@ impl Application {
                 cells.len(),
                 if self.preview_omitted {
                     " Too many cells to preview."
+                } else if self.prepared.cell_slots().is_none() {
+                    " Preview unavailable for this view."
                 } else {
                     ""
                 }
@@ -3089,10 +3104,14 @@ impl Application {
                     Control::Anchor => ToolMode::Anchor,
                     _ => ToolMode::Select,
                 });
+                self.forget_hover();
                 self.sidebar_scroll = 0;
                 Ok(())
             }
-            Control::Place => self.enter_place_mode(),
+            Control::Place => {
+                self.forget_hover();
+                self.enter_place_mode()
+            }
             Control::ZoneOverlay
             | Control::ZonePalette(_)
             | Control::ZoneName
@@ -3142,7 +3161,7 @@ impl Application {
             }
             Control::TerrainRule(rule) => {
                 self.tools.set_terrain_rule(rule);
-                self.refresh_fill_preview();
+                self.forget_hover();
                 Ok(())
             }
             Control::Palette { grid, prototype } => {
@@ -4527,6 +4546,8 @@ fn native_text_event(
             ..
         } => {
             input.lose_focus();
+            // A window without focus hovers nothing.
+            app.forget_hover();
             let result = if app.tools.draft_text().is_some() {
                 app.tools
                     .cancel_preedit()
@@ -4801,6 +4822,15 @@ fn native_input_event(
             mousestate, x, y, ..
         } if !minimized && app.tools.stroke().is_some() => {
             native_stroke_motion(app, [*x, *y], mousestate.left(), logical, physical)
+        }
+        // A pointer that left the window hovers nothing; focus loss is
+        // handled with the text input (`native_text_event`).
+        Event::Window {
+            win_event: WindowEvent::MouseLeave,
+            ..
+        } => {
+            app.forget_hover();
+            Ok(())
         }
         Event::MouseMotion { x, y, .. } if !minimized && app.tools.mode() == ToolMode::Terrain => {
             native_hover(app, [*x, *y], logical, physical);

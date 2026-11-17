@@ -661,9 +661,152 @@ fn the_preview_follows_the_terrain_and_a_cancel_without_pointer_motion() {
     assert!(app.session.history().pending().is_none());
     app.refresh_ui();
     assert_eq!(app.fill_changes().unwrap().len(), 24);
-    // The rule changed with F, no motion: Replace from the same cell.
+    // The rule changed with F: nothing until the pointer moves, then
+    // Replace from the cell under it.
     route(&mut app, &key(Keycode::F)).unwrap();
     app.refresh_ui();
+    assert!(app.fill_changes().is_none() && app.hover.cell.is_none());
+    assert!(!app.status_label().contains("from ("));
+    route(&mut app, &hover(grass)).unwrap();
     assert_eq!(app.fill_changes().unwrap().len(), 24);
     assert!(app.status_label().starts_with("Replace from (1, 1)"));
+}
+
+fn window(win_event: sdl3::event::WindowEvent) -> Event {
+    Event::Window {
+        timestamp: 0,
+        window_id: 7,
+        win_event,
+    }
+}
+
+#[test]
+fn a_mode_or_rule_change_forgets_the_hover_until_the_pointer_moves() {
+    let (_temporary, mut app) = brush_application();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    let grass = cell_pixel(&mut app, 1, 1);
+    let sand = cell_pixel(&mut app, 5, 1);
+    route(&mut app, &hover(grass)).unwrap();
+    assert!(app.fill_changes().is_some());
+    // Leave Terrain mode by key, move elsewhere, come back by key: no
+    // preview of (1, 1) under a pointer that is on (5, 1).
+    route(&mut app, &key(Keycode::P)).unwrap();
+    assert!(
+        app.hover.mask.is_none(),
+        "the mask is released with the mode"
+    );
+    route(&mut app, &hover(sand)).unwrap();
+    route(&mut app, &key(Keycode::T)).unwrap();
+    app.refresh_ui();
+    assert!(app.hover.cell.is_none() && app.fill_changes().is_none());
+    assert!(marked(&mut app).is_empty());
+    assert!(
+        !app.status_label().contains("(1, 1)"),
+        "{}",
+        app.status_label()
+    );
+    route(&mut app, &hover(sand)).unwrap();
+    assert!(
+        app.status_label().starts_with("Fill from (5, 1)"),
+        "{}",
+        app.status_label()
+    );
+    // Brush, move, F: nothing until the pointer moves; Brush releases the
+    // mask.
+    route(&mut app, &key(Keycode::F)).unwrap();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    assert_eq!(app.tools.terrain_rule(), TerrainRule::Brush);
+    route(&mut app, &hover(grass)).unwrap();
+    assert!(
+        app.hover.mask.is_none(),
+        "the mask is released with the rule"
+    );
+    route(&mut app, &key(Keycode::F)).unwrap();
+    app.refresh_ui();
+    assert!(app.hover.cell.is_none() && app.fill_changes().is_none());
+    route(&mut app, &hover(grass)).unwrap();
+    assert!(app.status_label().starts_with("Fill from (1, 1)"));
+}
+
+#[test]
+fn a_pointer_that_leaves_the_window_hovers_nothing_even_after_a_rebuild() {
+    use sdl3::event::WindowEvent;
+    for leave in [WindowEvent::MouseLeave, WindowEvent::FocusLost] {
+        let (_temporary, mut app) = brush_application();
+        route(&mut app, &key(Keycode::F)).unwrap();
+        let grass = cell_pixel(&mut app, 1, 1);
+        route(&mut app, &hover(grass)).unwrap();
+        assert!(app.fill_changes().is_some());
+        route(&mut app, &window(leave)).unwrap();
+        assert!(app.hover.cell.is_none() && app.hover.pixel.is_none());
+        assert!(app.fill_changes().is_none());
+        // A keyboard rebuild (a pan) does not bring it back.
+        acknowledge_ui(&mut app);
+        route(&mut app, &key(Keycode::D)).unwrap();
+        app.refresh_ui();
+        assert!(app.hover.cell.is_none() && app.fill_changes().is_none());
+        assert!(marked(&mut app).is_empty());
+    }
+}
+
+#[test]
+fn a_still_pointer_after_a_pan_hovers_the_cell_now_under_it() {
+    let (_temporary, mut app) = brush_application();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    let at = cell_pixel(&mut app, 3, 3);
+    route(&mut app, &hover(at)).unwrap();
+    let before = app.hover.cell.as_ref().map(|cell| cell.1.clone());
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::D)).unwrap();
+    app.refresh_ui();
+    let after = app.hover.cell.as_ref().map(|cell| cell.1.clone());
+    // What a fresh exact mask says is under the same pixel now.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let truth = app
+        .prepared
+        .pick(app.view.frame_revision, at[0] as u32, at[1] as u32, true)
+        .unwrap()
+        .filter(|key| matches!(key, SelectionKey::Cell { .. }));
+    assert_ne!(after, before, "the pan moved the map under the pointer");
+    assert_eq!(after, truth);
+}
+
+#[test]
+fn a_hover_after_a_resize_picks_from_a_new_mask() {
+    use crate::workspace_ui::WorkspaceUi;
+    let (_temporary, mut app) = brush_application();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    let at = cell_pixel(&mut app, 1, 1);
+    route(&mut app, &hover(at)).unwrap();
+    let masks = app.hover.masks;
+    let frame = app.view.frame_revision;
+    app.ui = WorkspaceUi::new((720, 480), (720, 480));
+    app.view.camera.width = 720;
+    app.view.camera.height = 480;
+    app.reflow().unwrap();
+    // A reflow keeps the frame generation; only the size changed.
+    assert_eq!(frame, app.view.frame_revision);
+    acknowledge_ui(&mut app);
+    let moved = cell_pixel(&mut app, 5, 1);
+    route(&mut app, &hover(moved)).unwrap();
+    assert_eq!(app.hover.masks, masks + 1);
+    assert!(matches!(
+        app.hover.cell.as_ref().map(|cell| &cell.1),
+        Some(SelectionKey::Cell { x: 5, y: 1, .. })
+    ));
+}
+
+#[test]
+fn without_cell_slots_the_fill_line_says_the_preview_is_unavailable() {
+    let (_temporary, mut app) = brush_application();
+    assert!(app.prepared.withhold_cell_slots());
+    route(&mut app, &key(Keycode::F)).unwrap();
+    let grass = cell_pixel(&mut app, 1, 1);
+    route(&mut app, &hover(grass)).unwrap();
+    assert!(app.fill_changes().is_some());
+    assert!(crate::prototype::stroke_overlay(&app).is_empty());
+    assert_eq!(
+        app.status_label(),
+        "Fill from (1, 1) with sand: 24 cells to change; click to review. Preview unavailable for this view."
+    );
 }
