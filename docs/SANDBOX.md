@@ -208,7 +208,7 @@ by submitting often.
 
 | Request | Does | Reply members besides `ok`, `request`, `state` |
 |---|---|---|
-| `status` | Nothing. | `actor`, `client` (the label or `null`), `editor` (the version the binary reports), `receipt` (the receipt's SHA-256), `catalog` (the catalog revision), `catalog_verified` (whether the catalog and its resources still verify), `view` (`plane`, `layer`, `bounds` `[x, y, width, height]`: where grants apply), `proposals` (how many submits this run retained or found retained), `recovery_failed` (whether the recovery store refused a record in this run, after which no `accept` can succeed). |
+| `status` | Nothing. | `actor`, `client` (the label or `null`), `editor` (the version string the binary reports for itself, as `tilewright-editor version` prints it: the release version in a package, `0.1.0-dev` in any other build), `receipt` (the receipt's SHA-256), `catalog` (the catalog revision), `catalog_verified` (whether the catalog and its resources still verify), `view` (`plane`, `layer`, `bounds` `[x, y, width, height]`: where grants apply), `proposals` (how many submits this run retained or found retained), `recovery_failed` (whether the recovery store refused a record in this run, after which no `accept` can succeed). |
 | `edit` | Prepares one edit: `action` is one Action in the proposal format's form ([docs/PROPOSALS.md](PROPOSALS.md#actions)), the same form a proposal records, so there is one Action form. Its `expected` must be the current `state.revision`. | `pending`: the change now pending. |
 | `review` | Nothing. | `pending`: the pending change, or `null`. |
 | `accept` | Accepts the pending change through the engine's gate (refused while its review is incomplete: 64 KiB of excerpt, 32 files), retains its inverse in `recovery/` and publishes it into `world/`. | `applied`: the step it added (`before`, `after` and `placed`, the uid a `place` assigned, else `null`), or `null` when it removed one (an accepted undo). |
@@ -334,7 +334,7 @@ Trimmed (`…` for digests and review lines):
 
 ```text
 > {"request":"status"}
-< {"ok":true,"request":"status","actor":"agent:docs","client":"example client","editor":"0.1.0","receipt":"310c…","catalog":"6156…","catalog_verified":true,"view":{"plane":"main","layer":0,"bounds":[0,0,8,6]},"proposals":0,"recovery_failed":false,"state":{"revision":"3345…","phase":"ready","pending":false,"undo":0,"redo":0}}
+< {"ok":true,"request":"status","actor":"agent:docs","client":"example client","editor":"0.1.0-dev","receipt":"310c…","catalog":"6156…","catalog_verified":true,"view":{"plane":"main","layer":0,"bounds":[0,0,8,6]},"proposals":0,"recovery_failed":false,"state":{"revision":"3345…","phase":"ready","pending":false,"undo":0,"redo":0}}
 > {"request":"edit","action":{"kind":"move","uid":"marker_1","x":4,"y":2,"expected":"3345…"}}
 < {"ok":true,"request":"edit","pending":{"base":"3345…","result":"7f41…","complete":true,"files":[{"path":"planes/main/layers/0/0_0.jsonc","change":"modified","before_bytes":4057,"after_bytes":4057}],"files_omitted":0,"warnings":[],"warnings_omitted":0,"review":["planes/main/layers/0/0_0.jsonc / source excerpt; scroll for more",…],"review_omitted":0,"cut":false},"state":{"revision":"3345…","phase":"pending","pending":true,"undo":0,"redo":0}}
 > {"request":"accept"}

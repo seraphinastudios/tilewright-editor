@@ -150,4 +150,5 @@ Every squash merge uses a Conventional Commit PR title and semantic-release.
 Linux and Windows packages include checksums, CycloneDX SBOMs, provenance,
 license, and third-party notices; no game content, server or client, recovery
 data, or mutable project state is bundled. The original MIT neutral sample is
-included through an exact data/resource allowlist.
+included through an exact data/resource allowlist, with the prototype,
+sandbox, proposal, engine, MCP and CLI guides.
