@@ -33,9 +33,13 @@ this repository, its fixtures, goldens, docs, issues or release packages, and
 no screenshot or video showing it is published here; each project decides for
 its own channels. Tests use generated pixels, or the MIT neutral sample
 labelled `project` in a temporary copy of its catalog, never a committed one.
-`tools/check-prototype-assets.py` refuses any committed `preview.jsonc` with a
-license other than `MIT`, and `tools/package-assets.py` refuses a packaged
-sample catalog with one.
+`tools/check-prototype-assets.py` finds every committed `preview.jsonc`, in
+any directory (what Git tracks or would add; the whole tree outside a Git
+checkout), and refuses one that is not plain JSON, has a duplicate key or has
+a `license` member other than `MIT` at any depth. It also refuses any committed
+`.atx1` file that `provenance/assets.json` does not list.
+`tools/package-assets.py` refuses a packaged sample catalog that is not plain
+JSON with only `MIT` resources.
 
 Dependency notice text in `THIRD_PARTY_NOTICES.md` is retained verbatim from
 `libloading` 0.8.9 `LICENSE` (ISC; crates.io archive SHA-256

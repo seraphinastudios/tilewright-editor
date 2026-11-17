@@ -801,8 +801,9 @@ server read the world in place, without a session copy.
 its fixtures, goldens, docs, issues or release packages; please do not
 attach marked frames to issues. Tests use generated pixels, or the MIT
 sample labelled `project` in a temporary copy of its catalog. Foundation
-checks refuse any committed catalog with a license other than `MIT`, and
-packaging refuses a sample catalog with one.
+checks refuse any committed catalog, in any directory, that is not plain JSON
+with only `MIT` licenses, and any committed `.atx1` file the asset manifest
+does not list; packaging refuses a sample catalog that is not MIT only.
 
 ## Evidence and limits
 

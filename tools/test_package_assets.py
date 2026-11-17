@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import subprocess
 import tempfile
 import unittest
 
@@ -134,18 +135,78 @@ class PackageAssetTests(unittest.TestCase):
                 validation.committed_catalogs_are_mit(root)
             fixture = root/'crates/some-crate/tests/fixtures/world/preview.jsonc'
             fixture.parent.mkdir(parents=True)
-            fixture.write_text('{"format": "tilewright.editor-preview/2", "resources": [{"license": "MIT"}]}')
+            mit = '{"format": "tilewright.editor-preview/2", "resources": [{"license": "MIT"}]}'
+            fixture.write_text(mit)
             validation.committed_catalogs_are_mit(root)
             for text in (
                 '{"format": "tilewright.editor-preview/2", "resources": [{"license": "MIT"}, {"license": "project"}]}',
-                '// a comment makes it JSONC\n{"resources": [{"license" :"project"}]}',
                 '{"resources": [{"license": "MIT"}], "license": "project"}',
+                '{"resources": [{"license": "MIT"}], "editing": {"objects": [{"defaults": {"license": "GPL-2.0"}}]}}',
+                '{"resources": [{"license": 7}]}',
+                # An escaped key is the same key.
                 '{"resources": [{"licen\\u0073e": "project"}]}',
+                # A duplicate key: a reader may keep either value.
+                '{"resources": [{"license": "MIT", "license": "project"}]}',
+                '{"resources": [{"license": "MIT"}], "resources": []}',
+                # Comments, which the editor's JSONC reader accepts, are
+                # refused outright: they could hide a key from a search.
+                '// c\n{"resources": [{"license": "project"}]}',
+                '{"resources": [{"license" /* x */ : "project"}]}',
+                '{"resources": [{"license" // x\n : "project"}]}',
+                '// only a comment\n' + mit,
             ):
                 fixture.write_text(text)
-                with self.assertRaisesRegex(ValueError, 'other than MIT'):
+                with self.assertRaisesRegex(ValueError, 'plain JSON declaring only MIT'):
                     validation.committed_catalogs_are_mit(root)
 
+    def test_catalogs_and_resources_are_found_in_every_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, text in (
+                ('crates/x/fixtures/w/preview.jsonc', '{"resources": [{"license": "MIT"}]}'),
+                ('docs/examples/world/preview.jsonc', '{"resources": [{"license": "project"}]}'),
+            ):
+                (root/name).parent.mkdir(parents=True, exist_ok=True)
+                (root/name).write_text(text)
+            # Outside a Git checkout, the whole tree is walked but build
+            # output.
+            for skipped in ('target/debug',):
+                (root/skipped).mkdir(parents=True)
+                (root/skipped/'stray.atx1').write_bytes(b'ATX1')
+            files = validation.committed_files(root)
+            self.assertIn('docs/examples/world/preview.jsonc', files)
+            self.assertFalse(any(name.startswith('target/') for name in files))
+            with self.assertRaisesRegex(ValueError, 'docs/examples/world/preview.jsonc'):
+                validation.committed_catalogs_are_mit(root)
+            validation.committed_resources_are_listed(set(), root)
+            (root/'docs/examples/world/art.ATX1').write_bytes(b'ATX1')
+            with self.assertRaisesRegex(ValueError, 'outside the asset manifest: docs/examples/world/art.ATX1'):
+                validation.committed_resources_are_listed(set(), root)
+            validation.committed_resources_are_listed({'docs/examples/world/art.ATX1'}, root)
+            # In a Git checkout, what Git tracks or would add, not what it ignores.
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            (root/'.gitignore').write_text('ignored/\n')
+            (root/'ignored').mkdir()
+            (root/'ignored/x.atx1').write_bytes(b'ATX1')
+            files = validation.committed_files(root)
+            self.assertIn('docs/examples/world/art.ATX1', files)
+            self.assertNotIn('ignored/x.atx1', files)
+            with self.assertRaisesRegex(ValueError, 'docs/examples/world/preview.jsonc'):
+                validation.committed_catalogs_are_mit(root)
+
+    def test_validate_runs_both_repository_checks(self):
+        calls = []
+        catalogs, resources = validation.committed_catalogs_are_mit, validation.committed_resources_are_listed
+        try:
+            validation.committed_catalogs_are_mit = lambda *args, **kwargs: calls.append('catalogs')
+            validation.committed_resources_are_listed = lambda *args, **kwargs: calls.append('resources')
+            validation.validate()
+        finally:
+            validation.committed_catalogs_are_mit, validation.committed_resources_are_listed = catalogs, resources
+        self.assertEqual(sorted(calls), ['catalogs', 'resources'])
+        # And the script itself refuses a repository with a labelled catalog.
+        script = (ROOT/'tools/check-prototype-assets.py').read_text()
+        self.assertIn("raise SystemExit(f'prototype assets refused: {error}')", script)
 
 if __name__ == '__main__':
     unittest.main()
