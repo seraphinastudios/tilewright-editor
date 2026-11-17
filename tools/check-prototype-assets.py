@@ -4,6 +4,7 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,35 @@ REQUIRED = {'path', 'source', 'author', 'license', 'sha256', 'transformation', '
 
 def portable_relative(path, root):
     return path.relative_to(root).as_posix()
+
+
+LICENSE = re.compile(rb'"license"\s*:\s*("(?:[^"\\]|\\.)*"|[^\s,}\]]+)')
+
+
+def committed_catalogs_are_mit(root=ROOT):
+    """Every editor catalog in the repository declares only MIT resources.
+
+    Catalog format 2 lets a world label resources `project`: art a project
+    supplies under its own license. Project art never enters this
+    repository, so no committed `preview.jsonc` may carry any license but
+    MIT. Tests label the MIT sample `project` only in temporary copies.
+    """
+    found = 0
+    for path in sorted((root/'crates').rglob('preview.jsonc')):
+        found += 1
+        data = path.read_bytes()
+        try:
+            catalog = json.loads(data)
+        except ValueError:
+            catalog = None
+        resources = catalog.get('resources') if isinstance(catalog, dict) else None
+        if isinstance(resources, list) and any(not isinstance(resource, dict) or resource.get('license') != 'MIT' for resource in resources):
+            raise ValueError(f'{path.relative_to(root).as_posix()}: catalog declares a resource license other than MIT')
+        for value in LICENSE.findall(data):
+            if value != b'"MIT"':
+                raise ValueError(f'{path.relative_to(root).as_posix()}: catalog declares a resource license other than MIT')
+    if not found:
+        raise ValueError('no committed editor catalog found')
 
 
 def validate():
@@ -44,6 +74,7 @@ def validate():
     actual = {portable_relative(path, ROOT) for path in (ROOT / PREFIX).glob('*') if path.is_file()}
     if actual != seen or not seen:
         raise ValueError('asset allowlist does not exactly match authored resources')
+    committed_catalogs_are_mit()
 
 
 if __name__ == '__main__':

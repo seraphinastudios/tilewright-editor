@@ -82,6 +82,64 @@ class PackageAssetTests(unittest.TestCase):
                 assets.package_assets(root, stage)
             self.assertEqual(list(stage.iterdir()), [])
 
+    def test_a_sample_catalog_with_project_art_is_never_packaged(self):
+        # Format 2 lets a catalog label resources `project`; the packaged
+        # sample's catalog must stay MIT only. The labelled catalog exists
+        # only in this temporary copy.
+        source = ROOT/assets.PREFIX/'preview.jsonc'
+        original = source.read_bytes()
+        assets.mit_only_catalog(original)
+        catalog = json.loads(original)
+        self.assertTrue(catalog['resources'])
+        catalog['format'] = 'tilewright.editor-preview/2'
+        assets.mit_only_catalog(json.dumps(catalog).encode())
+        for index in (0, len(catalog['resources']) - 1):
+            for value in ('project', 'Project', 'GPL-2.0', None, 7):
+                labelled = json.loads(original)
+                labelled['format'] = 'tilewright.editor-preview/2'
+                labelled['resources'][index]['license'] = value
+                with self.assertRaisesRegex(ValueError, 'only MIT resources'):
+                    assets.mit_only_catalog(json.dumps(labelled).encode())
+        # A license member anywhere else, or a catalog that is not plain
+        # JSON, is refused too.
+        with self.assertRaisesRegex(ValueError, 'only MIT resources'):
+            assets.mit_only_catalog(json.dumps({**catalog, 'editing': {'license': 'project'}}).encode())
+        with self.assertRaises(ValueError):
+            assets.mit_only_catalog(b'// comment\n' + original)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)/'root'
+            sample = root/assets.PREFIX
+            sample.mkdir(parents=True)
+            (root/'policy').mkdir()
+            labelled = json.loads(original)
+            labelled['resources'][0]['license'] = 'project'
+            (sample/'preview.jsonc').write_text(json.dumps(labelled))
+            (root/'policy/package-assets.json').write_text(json.dumps({'schema_version':1,'sample':'prototype-neutral','files':[(assets.PREFIX/'preview.jsonc').as_posix()]}))
+            stage = Path(temporary)/'stage'
+            stage.mkdir()
+            with self.assertRaisesRegex(ValueError, 'only MIT resources'):
+                assets.package_assets(root, stage)
+            self.assertEqual(list(stage.rglob('*.jsonc')), [])
+
+    def test_no_committed_catalog_declares_project_art(self):
+        validation.committed_catalogs_are_mit()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, 'no committed editor catalog'):
+                validation.committed_catalogs_are_mit(root)
+            fixture = root/'crates/some-crate/tests/fixtures/world/preview.jsonc'
+            fixture.parent.mkdir(parents=True)
+            fixture.write_text('{"format": "tilewright.editor-preview/2", "resources": [{"license": "MIT"}]}')
+            validation.committed_catalogs_are_mit(root)
+            for text in (
+                '{"format": "tilewright.editor-preview/2", "resources": [{"license": "MIT"}, {"license": "project"}]}',
+                '// a comment makes it JSONC\n{"resources": [{"license" :"project"}]}',
+                '{"resources": [{"license": "MIT"}], "license": "project"}',
+            ):
+                fixture.write_text(text)
+                with self.assertRaisesRegex(ValueError, 'other than MIT'):
+                    validation.committed_catalogs_are_mit(root)
+
 
 if __name__ == '__main__':
     unittest.main()
