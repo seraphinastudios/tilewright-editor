@@ -207,6 +207,19 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let status = client.ok("status", json!({}));
     assert_eq!(status["actor"], AGENT);
     assert_eq!(status["client"], "an MCP client");
+    // The server and the sandbox report the version `version` prints.
+    let version = Command::new(env!("CARGO_BIN_EXE_tilewright-editor"))
+        .arg("version")
+        .output()
+        .unwrap()
+        .stdout;
+    let version = String::from_utf8(version).unwrap();
+    let version = version.split_whitespace().nth(1).unwrap();
+    assert_eq!(
+        discover["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
+        version
+    );
+    assert_eq!(status["editor"], version);
     let base = status["state"]["revision"].as_str().unwrap().to_owned();
     client.step(json!({"kind": "move", "uid": "marker_1", "x": 4, "y": 2}));
     // A refusal is an error result with the runner's code.

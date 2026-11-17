@@ -265,7 +265,14 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     assert_eq!(proposal.actor().as_str(), AGENT);
     assert_eq!(proposal.client(), Some(LABEL));
     assert_eq!(proposal.receipt(), sha256(&receipt));
-    assert_eq!(proposal.editor(), env!("CARGO_PKG_VERSION"));
+    // The version the binary reports for itself, as `version` prints it.
+    let version = Command::new(env!("CARGO_BIN_EXE_tilewright-editor"))
+        .arg("version")
+        .output()
+        .unwrap()
+        .stdout;
+    let version = String::from_utf8(version).unwrap();
+    assert_eq!(Some(proposal.editor()), version.split_whitespace().nth(1));
     assert_eq!(proposal.steps()[3].placed(), Some(assigned.as_str()));
     // The source was copied, never written.
     assert_eq!(tree(&source), original);

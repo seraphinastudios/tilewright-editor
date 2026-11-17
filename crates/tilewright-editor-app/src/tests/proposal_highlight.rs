@@ -596,7 +596,13 @@ fn proposal_of(actions: &[fn([u8; 32]) -> Action]) -> Twin {
         let expected = revision(&session);
         accept(&mut session, action(expected));
     }
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
     let (person, app) = person_application(|_| {});
     let mut twin = Twin {
         person,

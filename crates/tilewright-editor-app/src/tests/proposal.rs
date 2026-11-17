@@ -248,7 +248,13 @@ pub(super) fn twin(
         let expected = revision(&session);
         accept(&mut session, edit(kind, expected));
     }
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, client).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        client,
+    )
+    .unwrap();
     let (temporary, app) = person_application(|root| {
         spare_zone(root);
         person(root);
@@ -483,8 +489,8 @@ fn every_step_applies_through_prepare_and_the_persons_accept() {
             "format": "tilewright.prototype-proposal/1",
             "proposal": hex(&proposal.body_sha256()),
             "file": proposal.file_name(),
-            "editor": "0.1.0",
-            "this_editor": env!("CARGO_PKG_VERSION"),
+            "editor": crate::build_version::EDITOR_VERSION,
+            "this_editor": crate::build_version::EDITOR_VERSION,
             "agent": "agent:sandbox \"desk\" \\\\ 7",
             "client": "client\\u{1b}[31m\\u{202e}\\u{200b}\\u{2028}",
             "person": PERSON,
@@ -966,8 +972,11 @@ fn a_diverged_step_is_refused_and_changes_nothing() {
     open(&mut twin);
     let texts = panel(&mut twin.app);
     assert!(
-        texts.iter().any(|text| text
-            == "Recorded by another editor build (9.9.9-other; this is 0.1.0): steps may diverge"),
+        texts.iter().any(|text| *text
+            == format!(
+                "Recorded by another editor build (9.9.9-other; this is {}): steps may diverge",
+                crate::build_version::EDITOR_VERSION
+            )),
         "{texts:?}"
     );
     // Before preparing, the step's words come from its Action: "Other".
@@ -1364,7 +1373,13 @@ fn a_long_proposal_shows_counts_only() {
             },
         );
     }
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
     let (_person, mut app) = person_application(|_| {});
     let name = proposal.file_name();
     app.open_proposal(Some((proposal, name))).unwrap();
@@ -1423,7 +1438,13 @@ fn widest_proposal(diverged: bool) -> Proposal {
         accept(&mut session, edit(kind, expected));
     }
     let label = "c".repeat(256);
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, Some(&label)).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        Some(&label),
+    )
+    .unwrap();
     forged(&proposal, |body| {
         if diverged {
             body["steps"][1]["action"]["value"] = json!("W".repeat(30));
@@ -1824,7 +1845,13 @@ fn a_chain_that_revisits_a_revision_says_redo_continues_after_an_undo() {
             },
         );
     }
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
     assert_eq!(proposal.base(), proposal.result());
     let (_person, mut app) = person_application(|_| {});
     let name = proposal.file_name();
@@ -1880,7 +1907,13 @@ fn several_places_without_a_redo_say_what_continues() {
             },
         );
     }
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
     let (_person, mut app) = person_application(|_| {});
     let name = proposal.file_name();
     app.open_proposal(Some((proposal, name))).unwrap();
@@ -1962,7 +1995,13 @@ fn a_recorded_actor_that_is_not_an_agent_is_shown_with_a_caveat() {
     let mut session = open_session(&world, "human:x");
     let expected = revision(&session);
     accept(&mut session, edit(0, expected));
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
     let (_person, mut app) = person_application(|_| {});
     let name = proposal.file_name();
     app.open_proposal(Some((proposal, name))).unwrap();
@@ -2415,7 +2454,13 @@ fn moves_twin(xs: &[i64]) -> Twin {
             },
         );
     }
-    let proposal = Proposal::from_session(&session, "0.1.0", RECEIPT, None).unwrap();
+    let proposal = Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
     let (person, app) = person_application(spare_zone);
     Twin {
         person,

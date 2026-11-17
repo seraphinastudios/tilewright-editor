@@ -414,7 +414,7 @@ omitted from requests and results):
 
 ```text
 > {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}
-< {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[{"type":"text","text":"{\"ok\":true,…}"}],"structuredContent":{"ok":true,"request":"status","actor":"agent:docs","client":"example client","editor":"0.1.0","receipt":"…","catalog":"…","catalog_verified":true,"view":{"plane":"main","layer":0,"bounds":[0,0,8,6]},"proposals":0,"recovery_failed":false,"state":{"revision":"3345…","phase":"ready","pending":false,"undo":0,"redo":0}},"isError":false}}
+< {"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[{"type":"text","text":"{\"ok\":true,…}"}],"structuredContent":{"ok":true,"request":"status","actor":"agent:docs","client":"example client","editor":"0.1.0-dev","receipt":"…","catalog":"…","catalog_verified":true,"view":{"plane":"main","layer":0,"bounds":[0,0,8,6]},"proposals":0,"recovery_failed":false,"state":{"revision":"3345…","phase":"ready","pending":false,"undo":0,"redo":0}},"isError":false}}
 > {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"edit","arguments":{"action":{"kind":"move","uid":"marker_1","x":4,"y":2,"expected":"3345…"}}}}
 < {"jsonrpc":"2.0","id":2,"result":{…,"structuredContent":{"ok":true,"request":"edit","pending":{"base":"3345…","result":"7f41…","complete":true,"files":[{"path":"planes/main/layers/0/0_0.jsonc","change":"modified","before_bytes":4057,"after_bytes":4057}],…,"cut":false},"state":{"revision":"3345…","phase":"pending","pending":true,"undo":0,"redo":0}},"isError":false}}
 > {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"accept","arguments":{}}}

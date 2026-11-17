@@ -126,7 +126,7 @@ fn open(
     let settings = Settings {
         client: options.get("--client-label").map(str::to_owned),
         receipt,
-        editor: env!("CARGO_PKG_VERSION").to_owned(),
+        editor: crate::build_version::EDITOR_VERSION.to_owned(),
     };
     let sandbox = Sandbox::open(
         &world,
@@ -164,7 +164,7 @@ pub fn run_mcp(arguments: &[OsString]) -> Result<(), String> {
     let mut server = tilewright_editor_mcp_sandbox::server(
         sandbox,
         &world,
-        env!("CARGO_PKG_VERSION"),
+        crate::build_version::EDITOR_VERSION,
         crate::render_command::encode_with_digest,
     );
     ended(server.serve(

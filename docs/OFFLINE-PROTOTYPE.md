@@ -829,7 +829,10 @@ or CPU frames. Screenshot/video artifacts must identify which path produced
 them and the exact source revision and dependencies.
 
 Packages include the exact allowlisted OFL Unicode font pack and authored MIT sample data/resources, immutable
-registry references, notices, checksums, SBOM and provenance. Imported worlds,
+registry references, notices, checksums, SBOM and provenance, and at their top
+level this guide and the guides it links to (`SANDBOX.md`, `MCP-EDITING.md`,
+`PROPOSALS.md`, `ENGINE.md`, `MCP.md`, `CLI.md`); the design records they
+link to are not included. Imported worlds,
 real game maps/art, adapter baseline, recovery records and session evidence
 are excluded. Windows build/test/package success is not Windows durable-editing
 or native D3D12 qualification.

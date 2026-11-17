@@ -9,7 +9,16 @@ if (Test-Path $Output) { throw "release output already exists: $Output" }
 foreach ($Command in @("cargo-auditable", "syft", "python")) {
     if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) { throw "missing required tool: $Command" }
 }
-cargo auditable build --locked --release --package tilewright-editor
+# The packaged binary reports the release version for itself (`version`,
+# the MCP server): the build reads it at compile time and refuses an
+# unusable one.
+$env:TILEWRIGHT_EDITOR_RELEASE_VERSION = $Version
+try {
+    cargo auditable build --locked --release --package tilewright-editor
+    if ($LASTEXITCODE -ne 0) { throw "release build failed" }
+} finally {
+    Remove-Item Env:TILEWRIGHT_EDITOR_RELEASE_VERSION
+}
 $Metadata = cargo metadata --locked --offline --format-version 1 --no-deps | ConvertFrom-Json
 $StageRoot = Join-Path $env:RUNNER_TEMP ([System.IO.Path]::GetRandomFileName())
 $Stage = Join-Path $StageRoot "tilewright-editor-$Version"
@@ -25,7 +34,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "font package notice verification failed" }
     python tools/prepare-font-pack.py stage --root . --font-pack $FontPack --stage $Stage | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unicode font pack staging failed" }
-    & "$Stage/bin/tilewright-editor.exe" version | Out-Null
+    $Reported = & "$Stage/bin/tilewright-editor.exe" version | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $Reported.StartsWith("tilewright-editor $Version ", [System.StringComparison]::Ordinal)) {
+        throw "the packaged binary reports itself as '$($Reported.Trim())', not as $Version"
+    }
     # The packaged sample must open as a World with the packaged binary.
     & "$Stage/bin/tilewright-editor.exe" open "$Stage/samples/prototype-neutral" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "the packaged sample does not open" }
@@ -61,6 +73,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "the MCP server of the packaged binary failed" }
     if ($McpReplies.Count -ne 2 -or $McpReplies[0].id -ne 1 -or $McpReplies[1].id -ne 2) { throw "the MCP server did not answer each request once" }
     if ($McpReplies[0].result.supportedVersions[0] -ne "2026-07-28") { throw "the MCP server does not serve revision 2026-07-28" }
+    if ($McpReplies[0].result._meta.'io.modelcontextprotocol/serverInfo'.version -cne $Version) { throw "the MCP server does not report the release version" }
     $McpImage = $McpReplies[1].result.content[1]
     if ($McpReplies[1].result.isError -or $McpImage.type -ne "image" -or $McpImage.mimeType -ne "image/png") { throw "MCP render returned no PNG" }
     if ([Convert]::ToHexString([Convert]::FromBase64String($McpImage.data)) -ne [Convert]::ToHexString($Png)) { throw "the MCP image is not the PNG render writes" }

@@ -22,7 +22,7 @@ A proposal is one UTF-8 file of strict JSON (`tilewright.editor-proposal/1`):
 
 ```json
 {"body":{"actor":"agent:sandbox","base":"a07d…2bf4","catalog":"6156…360d","client":null,
- "editor":"0.1.0","receipt":"0707…0707","result":"7d06…281b","steps":[{"action":{
+ "editor":"1.47.0","receipt":"0707…0707","result":"7d06…281b","steps":[{"action":{
  "expected":"a07d…2bf4","kind":"move","uid":"marker_1","x":4,"y":2},"after":"7d06…281b",
  "before":"a07d…2bf4","placed":null,"transaction":"{\"actor\":\"agent:sandbox\",…}",
  "transaction_sha256":"6b16…d12d"}]},"body_sha256":"49e8…c67f","format":"tilewright.editor-proposal/1"}
@@ -42,7 +42,7 @@ The body, exactly these members:
 
 | Member | Value |
 |---|---|
-| `editor` | The version string the writing editor build reports for itself, as the caller passes it to `Proposal::from_session`: today the workspace crate version (0.1.0 in every release), not the release tag. 1 to 64 printable ASCII characters, no space. Informational; nothing checks it against the reader. |
+| `editor` | The version string the writing editor build reports for itself, as the caller passes it to `Proposal::from_session`: in a release package the release version (`1.47.0`), in any other build the crate version marked as a development build (`0.1.0-dev`), the string `tilewright-editor version` prints. 1 to 64 printable ASCII characters, no space. Informational; nothing checks it against the reader. |
 | `actor` | The actor of every step, a valid engine actor (1 to 256 printable ASCII characters). In a sandbox it comes from the operator's flag (`agent:<name>`, [docs/SANDBOX.md](SANDBOX.md)), never from the client. |
 | `client` | `null`, or an untrusted label of at most 256 bytes, such as the name an MCP client gave itself. It is never an actor and is shown escaped (`Proposal::client_display`). |
 | `base` | The World revision the first step starts from. |
@@ -332,8 +332,10 @@ never hides it:
 - "Recorded actor is not an agent actor", when it does not start with
   `agent:`; the proposal is still offered (the person decides);
 - "Client label (unverified): …", escaped;
-- "Recorded by this editor build (0.1.0)", or "Recorded by another editor
-  build (0.2.0; this is 0.1.0): steps may diverge";
+- "Recorded by this editor build (1.47.0)", or "Recorded by another editor
+  build (1.46.0; this is 1.47.0): steps may diverge"; the same version
+  string is the same build, except that every development build reports
+  the same `0.1.0-dev`;
 - where the world is ("World: at its base", "after step j of n", "not on
   its path", "at N places on its path");
 - "Step k of n:" and the step in words;
@@ -564,8 +566,8 @@ local file system, locked for as long as the store is held. Linux only:
 elsewhere it is refused with `proposal.store`, as recovery is.
 
 `ProposalStore::retain` writes `proposal-<body digest>.json` with the
-recovery store's sequence: stage beside it, verify the bytes and the
-private 0600 access, check the name is still free, rename, sync the
+recovery store's sequence: create a stage beside it, verify the bytes and
+the private 0600 access, check the name is still free, rename, sync the
 directory (a sync that is not durable fails), verify again. The same bytes
 already there are success and write nothing; other bytes, a link, a
 directory or a leftover stage at the name are refused and left in place.
@@ -573,18 +575,25 @@ The lock keeps cooperating writers apart; like the recovery store's, it
 does not stop a process of the same user that ignores it.
 
 Precisely, with the World crates at 0.2.2: the store never writes to the
-final name. `SourceDirectory::write` removes whatever is at the name it
-writes before creating it, so the store writes only the stage
-(`<name>.stage`), after checking nothing is there, and refuses (and keeps)
-a leftover stage. `SourceDirectory::rename` replaces its target, so the
-store renames only after checking the final name is free. Between that
-check and the rename, and between the stage check and the stage write, a
-process that ignores the lock can create an entry that the store then
-replaces: a window of a few system calls, which only a same-user process
-can use. World 0.2.2 offers a create-only write (`SourceDirectory::create`),
-which would close the stage window; the store does not use it yet, and
-adopting it is a follow-up. The final-name window needs a rename that does
-not replace, which 0.2.2 does not offer.
+final name and itself removes nothing. It makes the stage
+(`<name>.stage`) with `SourceDirectory::create`, an exclusive create that
+fails if anything is at the name, a link or a directory included, however
+recently it was made, and never removes what was at the name before the
+call: a leftover stage blocks that proposal (`proposal.store`) until a
+person removes it. A create that fails after making its file removes it
+only when the name is still that file; where it could not tell, the
+refusal says the stage may be left. `SourceDirectory::rename` replaces its
+target, and 0.2.2 offers no rename that does not, so the store renames
+only after checking the final name is free.
+
+Two windows remain, both open only to a process of the same user that
+ignores the lock:
+
+- an entry it creates at the final name between that check and the rename,
+  a few system calls, is replaced by the proposal;
+- on Unix, while a create of the stage is failing, a file it renames over
+  the new stage between World's identity check and its removal (about a
+  microsecond) is removed.
 
 `read_proposal(root, name)` reads a store's name only, at most 16 MiB
 (larger is refused before it is read), refuses a link or anything but a

@@ -58,8 +58,8 @@ pub(super) fn panel_height(bottom: u32) -> u32 {
 pub(super) const fn panel_lines_in(height: u32) -> usize {
     (height.saturating_sub(BUTTON_HEIGHT + ROW_GAP + 6) / (ROW_HEIGHT + ROW_GAP)) as usize
 }
-/// This editor's version, as a proposal's `editor` member records one.
-pub(super) const EDITOR_VERSION: &str = env!("CARGO_PKG_VERSION");
+// This editor's version, as a proposal's `editor` member records one.
+pub(super) use crate::build_version::EDITOR_VERSION;
 
 /// An open proposal and how far it is applied to this session.
 pub(super) struct OpenProposal {
