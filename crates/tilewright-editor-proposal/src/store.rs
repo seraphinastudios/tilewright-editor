@@ -14,13 +14,15 @@
 //! cooperating writers apart; like the recovery store's, it does not stop
 //! a process of the same user that ignores it.
 //!
-//! The final name is never written: World 0.2.2's `write` removes what is
-//! at its name first (0.2.2 also offers a create-only `create`, which this
-//! store does not use yet), so only the stage is written, after an absence
-//! check, and its `rename` replaces, so the stage is renamed only after
-//! the final name is found free. A process that ignores the lock can still
-//! create an entry in the few system calls between a check and the write
-//! or rename, and the store would replace it.
+//! The final name is never written. The stage is made with World's
+//! create-only `create`, an exclusive create that fails, removing and
+//! replacing nothing, if anything is at the stage name: a file, a link, a
+//! directory, made however recently. A stage already there blocks that
+//! proposal until a person removes it. World 0.2.2 has no rename that
+//! refuses to replace, so the stage is renamed only after the final name is
+//! found free. One window remains: a process that ignores the lock and
+//! creates an entry at the final name in the few system calls between that
+//! check and the rename has it replaced by the proposal.
 use tilewright_editor_ui::RefusalCode;
 use tilewright_source::{Access, AccessError, Mounts, SourceDirectory, SourceLock, SourceRoot};
 
@@ -135,6 +137,25 @@ fn access_detail(error: &AccessError) -> String {
     }
 }
 
+/// The refusal for a stage name something is already at.
+pub(crate) fn occupied_stage() -> ProposalError {
+    store("a stage of this proposal is already there; preserve it and inspect")
+}
+
+/// The refusal for a failed create of the stage.
+pub(crate) fn stage_refusal(error: &AccessError) -> ProposalError {
+    if error.already_exists() {
+        occupied_stage()
+    } else if error.may_be_left() {
+        store(format!(
+            "{}; the stage may be left at its name, partly written: preserve it and inspect",
+            access_detail(error)
+        ))
+    } else {
+        store(access_detail(error))
+    }
+}
+
 fn private_access(directory: &SourceDirectory) -> Result<Access, ProposalError> {
     let access = directory
         .own_access()
@@ -164,6 +185,9 @@ pub(crate) trait Storage {
     /// `limit` bytes, `None` when nothing is there.
     fn existing(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>, ProposalError>;
     fn check_name(&self, stage: &str, name: &str) -> Result<(), ProposalError>;
+    /// Creates the stage `name` holding `bytes` only if nothing is there;
+    /// an entry there, however recent, is refused with [`occupied_stage`]
+    /// and left as it was.
     fn stage_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), ProposalError>;
     fn verify(&self, name: &str, bytes: &[u8]) -> Result<(), ProposalError>;
     fn rename(&mut self, stage: &str, name: &str) -> Result<(), ProposalError>;
@@ -208,8 +232,8 @@ impl Storage for RootStorage {
     }
     fn stage_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), ProposalError> {
         self.directory
-            .write(name, Some(&self.access.new_file()), bytes)
-            .map_err(|error| store(access_detail(&error)))
+            .create(name, Some(&self.access.new_file()), bytes)
+            .map_err(|error| stage_refusal(&error))
     }
     fn verify(&self, name: &str, bytes: &[u8]) -> Result<(), ProposalError> {
         let found = self
@@ -242,7 +266,7 @@ impl Storage for RootStorage {
 }
 
 /// The durable sequence: an existing equal file is success; otherwise
-/// stage, verify, rename into a still-free name, sync, verify.
+/// create the stage, verify, rename into a still-free name, sync, verify.
 pub(crate) fn retain(
     storage: &mut impl Storage,
     name: &str,
@@ -264,14 +288,9 @@ pub(crate) fn retain(
         return Ok(stored(true));
     }
     let stage = format!("{name}.stage");
-    if storage.existing(&stage, limits::BYTES)?.is_some() {
-        return Err(store(
-            "a stage of this proposal is already there; preserve it and inspect",
-        ));
-    }
     storage.check_name(&stage, name)?;
-    // World's write replaces what is at the stage name; the lock and the
-    // absence check above make it a fresh name for cooperating writers.
+    // Create-only, so it is the stage's only absence check: whatever is at
+    // the stage name, made however recently, is refused and left as it was.
     storage.stage_bytes(&stage, bytes)?;
     storage.verify(&stage, bytes)?;
     if storage.existing(name, limits::BYTES)?.is_some() {
@@ -279,6 +298,9 @@ pub(crate) fn retain(
             "a file appeared at this proposal's name; nothing was replaced",
         ));
     }
+    // World's rename replaces: an entry made at the final name between the
+    // check above and this call, by a process that ignores the lock, is
+    // the one thing the store can still replace.
     storage.rename(&stage, name)?;
     if !storage.sync()? {
         return Err(store(

@@ -547,8 +547,8 @@ local file system, locked for as long as the store is held. Linux only:
 elsewhere it is refused with `proposal.store`, as recovery is.
 
 `ProposalStore::retain` writes `proposal-<body digest>.json` with the
-recovery store's sequence: stage beside it, verify the bytes and the
-private 0600 access, check the name is still free, rename, sync the
+recovery store's sequence: create a stage beside it, verify the bytes and
+the private 0600 access, check the name is still free, rename, sync the
 directory (a sync that is not durable fails), verify again. The same bytes
 already there are success and write nothing; other bytes, a link, a
 directory or a leftover stage at the name are refused and left in place.
@@ -556,18 +556,19 @@ The lock keeps cooperating writers apart; like the recovery store's, it
 does not stop a process of the same user that ignores it.
 
 Precisely, with the World crates at 0.2.2: the store never writes to the
-final name. `SourceDirectory::write` removes whatever is at the name it
-writes before creating it, so the store writes only the stage
-(`<name>.stage`), after checking nothing is there, and refuses (and keeps)
-a leftover stage. `SourceDirectory::rename` replaces its target, so the
-store renames only after checking the final name is free. Between that
-check and the rename, and between the stage check and the stage write, a
-process that ignores the lock can create an entry that the store then
-replaces: a window of a few system calls, which only a same-user process
-can use. World 0.2.2 offers a create-only write (`SourceDirectory::create`),
-which would close the stage window; the store does not use it yet, and
-adopting it is a follow-up. The final-name window needs a rename that does
-not replace, which 0.2.2 does not offer.
+final name, and never removes or replaces anything at the stage name
+(`<name>.stage`). It makes the stage with `SourceDirectory::create`, an
+exclusive create that fails if anything is at the name, a link or a
+directory included, however recently it was made, and leaves it as it was:
+a leftover stage blocks that proposal (`proposal.store`) until a person
+removes it. A create that fails after making its file removes it only when
+the name is still that file; where it could not tell, the refusal says the
+stage may be left. `SourceDirectory::rename` replaces its target, and 0.2.2
+offers no rename that does not, so the store renames only after checking
+the final name is free. One window remains: an entry that a process
+ignoring the lock creates at the final name between that check and the
+rename, a few system calls, is replaced by the proposal. Only a same-user
+process can use it.
 
 `read_proposal(root, name)` reads a store's name only, at most 16 MiB
 (larger is refused before it is read), refuses a link or anything but a

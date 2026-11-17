@@ -102,7 +102,7 @@ fn other_bytes_a_link_or_a_stage_at_the_name_are_refused_and_kept() {
     let name = proposal.file_name();
     let target = directory();
     fs::write(target.path().join("elsewhere"), b"kept").unwrap();
-    let plants: [(&str, Plant); 4] = [
+    let plants: [(&str, Plant); 5] = [
         (
             "other bytes",
             Box::new(|p| fs::write(p.join(&name), b"other").unwrap()),
@@ -119,22 +119,42 @@ fn other_bytes_a_link_or_a_stage_at_the_name_are_refused_and_kept() {
             "stage",
             Box::new(|p| fs::write(p.join(format!("{name}.stage")), b"stage").unwrap()),
         ),
+        (
+            "stage link",
+            Box::new(|p| {
+                symlink(
+                    target.path().join("elsewhere"),
+                    p.join(format!("{name}.stage")),
+                )
+                .unwrap();
+            }),
+        ),
     ];
     for (what, plant) in plants {
         let dir = directory();
         plant(dir.path());
-        let before: Vec<_> = fs::read_dir(dir.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
+        // Each entry's name and, for a file, its bytes: a replaced stage
+        // would keep its name.
+        let entries = |path: &Path| -> Vec<_> {
+            fs::read_dir(path)
+                .unwrap()
+                .map(|e| {
+                    let e = e.unwrap();
+                    (e.file_name(), fs::read(e.path()).ok())
+                })
+                .collect()
+        };
+        let before = entries(dir.path());
         let mut store = ProposalStore::open(SourceRoot::new(dir.path())).unwrap();
         let error = store.retain(&proposal).unwrap_err();
         assert_eq!(error.code(), RefusalCode::ProposalStore, "{what}: {error}");
-        let after: Vec<_> = fs::read_dir(dir.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        assert_eq!(before, after, "{what}");
+        if what.starts_with("stage") {
+            assert_eq!(
+                error.message(),
+                "a stage of this proposal is already there; preserve it and inspect"
+            );
+        }
+        assert_eq!(before, entries(dir.path()), "{what}");
     }
     assert_eq!(fs::read(target.path().join("elsewhere")).unwrap(), b"kept");
 }
