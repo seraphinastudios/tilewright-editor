@@ -180,6 +180,16 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         proto: "t".into(),
         expected: revision,
     };
+    let filled = |x, y, proto: &str| Action::FillTerrain {
+        plane: "p".into(),
+        layer: 0,
+        grid: "g".into(),
+        x,
+        y,
+        proto: proto.into(),
+        contiguous: true,
+        expected: revision,
+    };
     let mut deep = json!(1);
     for _ in 0..=limits::FIELD_VALUE_DEPTH {
         deep = json!([deep]);
@@ -187,6 +197,13 @@ fn values_outside_the_bounds_are_refused_when_writing() {
     let cases = [
         (moved(MAX + 1), RefusalCode::ProposalInvalid),
         (moved(i64::MIN), RefusalCode::ProposalInvalid),
+        (filled(MAX + 1, 0, "t"), RefusalCode::ProposalInvalid),
+        (filled(0, -MAX - 1, "t"), RefusalCode::ProposalInvalid),
+        (filled(0, 0, "nul \u{0}"), RefusalCode::ProposalInvalid),
+        (
+            filled(0, 0, &"t".repeat(limits::TEXT_BYTES + 1)),
+            RefusalCode::ProposalBudget,
+        ),
         (field(json!(u64::MAX)), RefusalCode::ProposalInvalid),
         (
             field(json!({"a": ["nul \u{0}"]})),
