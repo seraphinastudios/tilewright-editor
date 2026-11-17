@@ -121,13 +121,13 @@ ordered; a view holds at most 4,096 cells, so a fill always fits, but the
 rule is still checked), the terrain grant and view checks, one
 `terrain.set` setting `proto` with each cell expecting its committed value
 (`null` for no terrain) and cells already holding `proto` left out. A fill
-of an area that already holds `proto` is `change.none`. Filling a region of
+of an area that already holds `proto` is refused with the code change.none. Filling a region of
 a chunk that does not exist creates it, as a stroke there does.
 
 The start tile is checked first, exactly as a one-cell `Paint` there: an
-ungranted grid or value is `grant.missing` wherever the tile is, a tile
-outside the view is `scope.outside_view`, and a stale revision is
-`revision.stale`. No refusal code is new. Because the cells are expanded
+ungranted grid or value is refused with the code grant.missing wherever
+the tile is, a tile outside the view with scope.outside_view, and a stale
+revision with revision.stale. No refusal code is new. Because the cells are expanded
 from the committed World each time, a recorded fill prepared again on the
 same World gives the same transaction byte for byte (and under another actor,
 all but the actor), and one whose covered cells changed since is refused by
