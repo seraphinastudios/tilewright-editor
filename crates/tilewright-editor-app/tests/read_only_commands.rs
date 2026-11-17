@@ -267,7 +267,7 @@ fn listing(
 fn labelled(directory: &std::path::Path, name: &str, project: &[&str]) -> std::path::PathBuf {
     let root = directory.join(name);
     copy_tree(&fixture_world("prototype-neutral"), &root);
-    tilewright_editor_testkit::label_project_art(&root, project);
+    label_project_art(&root, project);
     root
 }
 
@@ -330,4 +330,16 @@ fn render_files_and_mcp_images_with_project_art_are_the_same_marked_png() {
     assert_eq!(image["mimeType"], "image/png");
     assert_eq!(decode_base64(image["data"].as_str().unwrap()), marked);
     assert_eq!(reply["result"]["structuredContent"], report);
+}
+
+/// Labels resources `ids` of the world copy at `root` as project art (see
+/// `tilewright_editor_testkit::project_art_catalog`).
+fn label_project_art(root: &std::path::Path, ids: &[&str]) {
+    let path = root.join("preview.jsonc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        path,
+        tilewright_editor_testkit::project_art_catalog(&text, ids),
+    )
+    .unwrap();
 }

@@ -22,17 +22,18 @@ pub fn fixture_world(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Labels the resources `ids` of the world copy at `world` as project art:
-/// its catalog becomes format 2 and those resources' `license` `project`.
-/// Their pixels are unchanged. Tests never use project art: they label the
-/// MIT neutral sample, in a temporary copy, and nothing labelled `project`
-/// is ever committed (`tools/check-prototype-assets.py` refuses it).
+/// The editor catalog text `catalog` with the resources `ids` labelled as
+/// project art: format 2, and those resources' `license` `project`. Their
+/// files are unchanged. Tests never use project art: they label the MIT
+/// neutral sample in a temporary copy, and nothing labelled `project` is
+/// ever committed (`tools/check-prototype-assets.py` refuses it). Pure: the
+/// caller reads and writes the copy.
 ///
 /// # Panics
-/// When the copy's catalog cannot be read or written, or an id is not one
-/// of its MIT resources.
-pub fn label_project_art(world: &Path, ids: &[&str]) {
-    edit_catalog(world, |catalog| {
+/// When `catalog` is not JSON, or an id is not one of its MIT resources.
+#[must_use]
+pub fn project_art_catalog(catalog: &str, ids: &[&str]) -> String {
+    edited(catalog, |catalog| {
         catalog["format"] = "tilewright.editor-preview/2".into();
         let mut found = 0;
         for resource in catalog["resources"].as_array_mut().unwrap() {
@@ -43,16 +44,23 @@ pub fn label_project_art(world: &Path, ids: &[&str]) {
             }
         }
         assert_eq!(found, ids.len(), "unknown resource id in {ids:?}");
-    });
+    })
 }
 
-/// Replaces resource `id` of the world copy at `world` with a generated
-/// `width` × `height` ATX1 image of one `color`, and its catalog entry's
-/// digest and dimensions with the new file's.
+/// A generated `width` × `height` ATX1 image of one `color`, and
+/// `catalog` with resource `id`'s digest and dimensions set to the image's.
+/// The caller writes the image at the resource's path. Pure.
 ///
 /// # Panics
-/// When the copy cannot be read or written, or `id` is not a resource.
-pub fn replace_resource(world: &Path, id: &str, width: u32, height: u32, color: [u8; 4]) {
+/// When `catalog` is not JSON or `id` is not one of its resources.
+#[must_use]
+pub fn generated_resource(
+    catalog: &str,
+    id: &str,
+    width: u32,
+    height: u32,
+    color: [u8; 4],
+) -> (Vec<u8>, String) {
     let mut bytes = b"ATX1".to_vec();
     bytes.extend(width.to_le_bytes());
     bytes.extend(height.to_le_bytes());
@@ -63,27 +71,24 @@ pub fn replace_resource(world: &Path, id: &str, width: u32, height: u32, color: 
     for byte in <sha2::Sha256 as sha2::Digest>::digest(&bytes) {
         write!(digest, "{byte:02x}").unwrap();
     }
-    edit_catalog(world, |catalog| {
+    let catalog = edited(catalog, |catalog| {
         let resource = catalog["resources"]
             .as_array_mut()
             .unwrap()
             .iter_mut()
             .find(|resource| resource["id"] == id)
             .unwrap();
-        let path = resource["path"].as_str().unwrap().to_owned();
-        std::fs::write(world.join(path), &bytes).unwrap();
         resource["sha256"] = digest.clone().into();
         resource["width"] = width.into();
         resource["height"] = height.into();
     });
+    (bytes, catalog)
 }
 
-fn edit_catalog(world: &Path, change: impl FnOnce(&mut serde_json::Value)) {
-    let path = world.join("preview.jsonc");
-    let mut catalog: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+fn edited(catalog: &str, change: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut catalog: serde_json::Value = serde_json::from_str(catalog).unwrap();
     change(&mut catalog);
-    std::fs::write(path, serde_json::to_string_pretty(&catalog).unwrap()).unwrap();
+    serde_json::to_string_pretty(&catalog).unwrap()
 }
 
 #[derive(Default)]

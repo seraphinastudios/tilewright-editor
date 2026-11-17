@@ -2130,7 +2130,7 @@ fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
 #[test]
 fn evidence_frames_with_project_art_carry_the_mark_and_say_so() {
     let (temporary, mut app) = application_with_source(|world| {
-        tilewright_editor_testkit::label_project_art(world, &["grass", "marker"]);
+        label_project_art(world, &["grass", "marker"]);
     });
     assert_eq!(app.session.catalog().project_art_resources(), 2);
     let composed = app.workspace_frame().unwrap();
@@ -2183,7 +2183,7 @@ fn the_desktop_shows_while_project_art_is_loaded() {
             .collect::<Vec<_>>()
     };
     let (_temporary, mut app) = application_with_source(|world| {
-        tilewright_editor_testkit::label_project_art(world, &["stone"]);
+        label_project_art(world, &["stone"]);
     });
     let shown = label(&mut app);
     assert_eq!(shown.len(), 1);
@@ -2204,7 +2204,18 @@ fn the_desktop_shows_while_project_art_is_loaded() {
     }
     let (_plain, mut app) = application();
     assert!(label(&mut app).is_empty());
-    let (_two, mut app) =
-        application_with_source(|world| tilewright_editor_testkit::label_project_art(world, &[]));
+    let (_two, mut app) = application_with_source(|world| label_project_art(world, &[]));
     assert!(label(&mut app).is_empty());
+}
+
+/// Labels resources `ids` of the world copy at `root` as project art (see
+/// `tilewright_editor_testkit::project_art_catalog`).
+fn label_project_art(root: &std::path::Path, ids: &[&str]) {
+    let path = root.join("preview.jsonc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        path,
+        tilewright_editor_testkit::project_art_catalog(&text, ids),
+    )
+    .unwrap();
 }

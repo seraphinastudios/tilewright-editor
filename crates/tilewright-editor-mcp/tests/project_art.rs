@@ -14,7 +14,7 @@ use std::path::Path;
 
 fn labelled(project: &[&str]) -> (tempfile::TempDir, std::path::PathBuf) {
     let (directory, root) = common::fixture_copy("prototype-neutral");
-    tilewright_editor_testkit::label_project_art(&root, project);
+    label_project_art(&root, project);
     (directory, root)
 }
 
@@ -101,9 +101,9 @@ fn the_marks_rows_count_against_the_image_caps() {
     let side = tilewright_editor_mcp::MAXIMUM_IMAGE_SIDE;
     let tall = |art: u32, project: bool| {
         let (directory, root) = labelled(&[]);
-        tilewright_editor_testkit::replace_resource(&root, "marker", 24, art, [9, 9, 9, 255]);
+        tall_marker(&root, art);
         if project {
-            tilewright_editor_testkit::label_project_art(&root, &["grass"]);
+            label_project_art(&root, &["grass"]);
         }
         (directory, root)
     };
@@ -139,4 +139,27 @@ fn the_marks_rows_count_against_the_image_caps() {
     let report = fits.structured.unwrap();
     assert_eq!(report["image"]["mark_rows"], 12);
     assert!(report["image"]["height"].as_u64().unwrap() <= u64::from(side));
+}
+
+/// Labels resources `ids` of the world copy at `root` as project art (see
+/// `tilewright_editor_testkit::project_art_catalog`).
+fn label_project_art(root: &std::path::Path, ids: &[&str]) {
+    let path = root.join("preview.jsonc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        path,
+        tilewright_editor_testkit::project_art_catalog(&text, ids),
+    )
+    .unwrap();
+}
+
+/// Replaces the neutral sample's `marker` resource in the copy at `root`
+/// with a generated 24 × `height` image.
+fn tall_marker(root: &std::path::Path, height: u32) {
+    let path = root.join("preview.jsonc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let (bytes, catalog) =
+        tilewright_editor_testkit::generated_resource(&text, "marker", 24, height, [9, 9, 9, 255]);
+    std::fs::write(root.join("preview-assets/marker.atx1"), bytes).unwrap();
+    std::fs::write(path, catalog).unwrap();
 }

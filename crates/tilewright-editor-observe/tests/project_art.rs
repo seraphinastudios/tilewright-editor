@@ -37,7 +37,7 @@ fn labelled(format: &str, project: &[&str]) -> (tempfile::TempDir, PathBuf) {
     let root = directory.path().join("world");
     copy_tree(&fixture_world("prototype-neutral"), &root);
     if format.ends_with("/2") {
-        tilewright_editor_testkit::label_project_art(&root, project);
+        label_project_art(&root, project);
     } else {
         assert!(project.is_empty());
     }
@@ -236,9 +236,9 @@ fn the_marked_image_keeps_within_the_image_bounds() {
 /// in format 2 with grass labelled `project` when `project` is set.
 fn tall(height: u32, project: bool) -> (tempfile::TempDir, PathBuf) {
     let (directory, root) = labelled("tilewright.editor-preview/2", &[]);
-    tilewright_editor_testkit::replace_resource(&root, "marker", 24, height, [9, 9, 9, 255]);
+    tall_marker(&root, height);
     if project {
-        tilewright_editor_testkit::label_project_art(&root, &["grass"]);
+        label_project_art(&root, &["grass"]);
     }
     (directory, root)
 }
@@ -286,4 +286,27 @@ fn a_marked_image_past_the_side_bound_is_refused_and_one_within_it_is_not() {
         framed_size(&tall(art, true).1, 1),
         Ok(([width, unmarked + 12], Some(12)))
     );
+}
+
+/// Labels resources `ids` of the world copy at `root` as project art (see
+/// `tilewright_editor_testkit::project_art_catalog`).
+fn label_project_art(root: &std::path::Path, ids: &[&str]) {
+    let path = root.join("preview.jsonc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        path,
+        tilewright_editor_testkit::project_art_catalog(&text, ids),
+    )
+    .unwrap();
+}
+
+/// Replaces the neutral sample's `marker` resource in the copy at `root`
+/// with a generated 24 × `height` image.
+fn tall_marker(root: &std::path::Path, height: u32) {
+    let path = root.join("preview.jsonc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let (bytes, catalog) =
+        tilewright_editor_testkit::generated_resource(&text, "marker", 24, height, [9, 9, 9, 255]);
+    std::fs::write(root.join("preview-assets/marker.atx1"), bytes).unwrap();
+    std::fs::write(path, catalog).unwrap();
 }
