@@ -711,6 +711,18 @@ fn a_mode_or_rule_change_forgets_the_hover_until_the_pointer_moves() {
         "{}",
         app.status_label()
     );
+    // The same through Zone mode, whose key goes through the mode controls.
+    route(&mut app, &key(Keycode::N)).unwrap();
+    route(&mut app, &hover(grass)).unwrap();
+    route(&mut app, &key(Keycode::T)).unwrap();
+    app.refresh_ui();
+    assert!(app.hover.cell.is_none() && app.fill_changes().is_none());
+    assert!(
+        !app.status_label().contains("(5, 1)"),
+        "{}",
+        app.status_label()
+    );
+    route(&mut app, &hover(sand)).unwrap();
     // Brush, move, F: nothing until the pointer moves; Brush releases the
     // mask.
     route(&mut app, &key(Keycode::F)).unwrap();
