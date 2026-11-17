@@ -22,7 +22,7 @@ A proposal is one UTF-8 file of strict JSON (`tilewright.editor-proposal/1`):
 
 ```json
 {"body":{"actor":"agent:sandbox","base":"a07d…2bf4","catalog":"6156…360d","client":null,
- "editor":"0.1.0","receipt":"0707…0707","result":"7d06…281b","steps":[{"action":{
+ "editor":"1.47.0","receipt":"0707…0707","result":"7d06…281b","steps":[{"action":{
  "expected":"a07d…2bf4","kind":"move","uid":"marker_1","x":4,"y":2},"after":"7d06…281b",
  "before":"a07d…2bf4","placed":null,"transaction":"{\"actor\":\"agent:sandbox\",…}",
  "transaction_sha256":"6b16…d12d"}]},"body_sha256":"49e8…c67f","format":"tilewright.editor-proposal/1"}
@@ -42,7 +42,7 @@ The body, exactly these members:
 
 | Member | Value |
 |---|---|
-| `editor` | The version string the writing editor build reports for itself, as the caller passes it to `Proposal::from_session`: today the workspace crate version (0.1.0 in every release), not the release tag. 1 to 64 printable ASCII characters, no space. Informational; nothing checks it against the reader. |
+| `editor` | The version string the writing editor build reports for itself, as the caller passes it to `Proposal::from_session`: in a release package the release version (`1.47.0`), in any other build the crate version marked as a development build (`0.1.0-dev`), the string `tilewright-editor version` prints. 1 to 64 printable ASCII characters, no space. Informational; nothing checks it against the reader. |
 | `actor` | The actor of every step, a valid engine actor (1 to 256 printable ASCII characters). In a sandbox it comes from the operator's flag (`agent:<name>`, [docs/SANDBOX.md](SANDBOX.md)), never from the client. |
 | `client` | `null`, or an untrusted label of at most 256 bytes, such as the name an MCP client gave itself. It is never an actor and is shown escaped (`Proposal::client_display`). |
 | `base` | The World revision the first step starts from. |
@@ -318,8 +318,10 @@ never hides it:
 - "Recorded actor is not an agent actor", when it does not start with
   `agent:`; the proposal is still offered (the person decides);
 - "Client label (unverified): …", escaped;
-- "Recorded by this editor build (0.1.0)", or "Recorded by another editor
-  build (0.2.0; this is 0.1.0): steps may diverge";
+- "Recorded by this editor build (1.47.0)", or "Recorded by another editor
+  build (1.46.0; this is 1.47.0): steps may diverge"; the same version
+  string is the same build, except that every development build reports
+  the same `0.1.0-dev`;
 - where the world is ("World: at its base", "after step j of n", "not on
   its path", "at N places on its path");
 - "Step k of n:" and the step in words;

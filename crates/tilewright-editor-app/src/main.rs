@@ -3,6 +3,7 @@
 
 #![deny(unsafe_code)]
 
+mod build_version;
 mod font_pack;
 mod native_input;
 mod prototype;
@@ -19,7 +20,7 @@ fn main() {
     match command.as_str() {
         "version" | "--version" => println!(
             "tilewright-editor {} toolkit={} renderer={}",
-            env!("CARGO_PKG_VERSION"),
+            build_version::EDITOR_VERSION,
             tilewright_editor_document::TOOLKIT_COMPATIBILITY,
             tilewright_editor_preview::RENDERER_COMPATIBILITY
         ),
@@ -126,7 +127,7 @@ fn mcp() {
     }
     let mut server = tilewright_editor_mcp::Server::open(
         std::path::Path::new(root),
-        env!("CARGO_PKG_VERSION"),
+        build_version::EDITOR_VERSION,
         render_command::encode_with_digest,
     );
     match server.serve(
