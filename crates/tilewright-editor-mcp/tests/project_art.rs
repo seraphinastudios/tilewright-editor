@@ -163,3 +163,78 @@ fn tall_marker(root: &std::path::Path, height: u32) {
     std::fs::write(root.join("preview-assets/marker.atx1"), bytes).unwrap();
     std::fs::write(path, catalog).unwrap();
 }
+
+/// An encoder that keeps the pixels: width and height (little-endian u32)
+/// then the RGBA8 bytes, so a test can compare the image itself.
+#[allow(clippy::unnecessary_wraps)]
+fn raw_encode(frame: &tilewright_editor_preview::ReferenceFrame) -> Option<(Vec<u8>, [u8; 32])> {
+    let mut bytes = frame.width.to_le_bytes().to_vec();
+    bytes.extend(frame.height.to_le_bytes());
+    bytes.extend(&frame.rgba8);
+    Some((bytes, [7; 32]))
+}
+
+fn raw_image(root: &Path, region: [i64; 4]) -> (tilewright_editor_preview::ReferenceFrame, Value) {
+    let mut server = tilewright_editor_mcp::Server::open(root, "0.0.0-test", raw_encode);
+    let called = common::call(&mut server, "render", &json!({"region": region}));
+    let image = &called.reply["result"]["content"][1];
+    assert_eq!(image["type"], "image");
+    let text = image["data"].as_str().unwrap();
+    let bytes = decode_base64(text);
+    let width = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+    let height = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    (
+        tilewright_editor_preview::ReferenceFrame {
+            width,
+            height,
+            rgba8: bytes[8..].to_vec(),
+        },
+        called.structured.unwrap(),
+    )
+}
+
+fn decode_base64(text: &str) -> Vec<u8> {
+    let value = |byte: u8| -> u32 {
+        match byte {
+            b'A'..=b'Z' => u32::from(byte - b'A'),
+            b'a'..=b'z' => u32::from(byte - b'a') + 26,
+            b'0'..=b'9' => u32::from(byte - b'0') + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => panic!("not base64: {byte}"),
+        }
+    };
+    let mut bytes = Vec::new();
+    for chunk in text.as_bytes().chunks(4) {
+        let data: Vec<u8> = chunk.iter().copied().filter(|byte| *byte != b'=').collect();
+        let group = data.iter().enumerate().fold(0_u32, |group, (index, byte)| {
+            group | value(*byte) << (18 - 6 * index)
+        });
+        for index in 0..data.len().saturating_sub(1) {
+            bytes.push(u8::try_from((group >> (16 - 8 * index)) & 0xff).unwrap());
+        }
+    }
+    bytes
+}
+
+#[test]
+fn the_render_image_is_the_marked_image() {
+    let (_plain_directory, plain) = labelled(&[]);
+    let (_directory, root) = labelled(&["grass"]);
+    // A region as wide as the mark needs, and a one-tile one that is
+    // widened for it.
+    for (region, columns) in [([0, 0, 4, 3], false), ([3, 2, 1, 1], true)] {
+        let (unmarked, before) = raw_image(&plain, region);
+        let (image, report) = raw_image(&root, region);
+        assert_eq!(
+            Some(&image),
+            tilewright_editor_preview::mark::marked(&unmarked).as_ref(),
+            "{region:?}"
+        );
+        assert_ne!(image, unmarked);
+        assert_eq!(report["image"]["width"], image.width);
+        assert_eq!(report["image"]["height"], image.height);
+        assert_eq!(report["image"].get("mark_columns").is_some(), columns);
+        assert!(before["image"].get("mark_rows").is_none());
+    }
+}
