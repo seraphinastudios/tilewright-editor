@@ -733,12 +733,13 @@ both values. A format 1 catalog keeps accepting only `MIT`, and refuses
 every format 2 catalog ("unsupported preview format"), so an older editor
 never shows project art unmarked. A format 2 catalog with only `MIT`
 resources loads, draws and reports exactly as the same catalog in format 1.
-The version rule: a format version changes when an existing member's
-meaning changes, as here, where a resource stops being MIT by definition.
-Optional members and new values of a closed set may be added within a
-version, as the `editing` members have been, because every catalog object
-and value set is closed: an older editor refuses a catalog with a member or
-value it does not know.
+The version rule: a format tag is a promise about what a catalog may hold,
+so a change that weakens it needs a new version. Any new `license` value
+does: format 2 means "every resource is `MIT` or `project`", nothing else.
+Optional members may be added within a version, as the `editing` members
+have been, because every format member is closed (only user-keyed maps such
+as `defaults` hold names the format does not list): an older editor refuses
+a catalog with a member it does not know.
 
 **What a project does.** Its own tools, outside this repository, write the
 art as ATX1 files and the catalog entries. The editor has no image decoder
@@ -746,13 +747,19 @@ and converts nothing. An ATX1 file is the four bytes `ATX1`, the width and
 the height as little-endian unsigned 32-bit integers, then `width × height`
 pixels of four bytes each (red, green, blue, alpha), tightly packed, row by
 row from the top, as the released `tilewright-render-resources` 0.7.1 crate
-defines the envelope; the repository's
+defines the envelope. Width and height are at least 1. Alpha is straight,
+not premultiplied: both renderers blend the stored colour by its alpha
+(source over), and the values are used as stored, with no gamma conversion
+(the GPU textures are `Rgba8Unorm`), so write the colours as they should
+appear; the repository's
 `crates/tilewright-editor-testkit/fixtures/prototype-neutral/generate_assets.py`
 writes the sample's.
 The catalog entry gives the file's lowercase SHA-256, which the loader
 checks, and its width and height, which must match the header. Limits: a
-side of at most 8,192 pixels and 16,777,216 pixels per image; 16 MiB per
-file; 64 MiB of resources and 1,024 resources per catalog; a catalog of at
+side of at most 8,192 pixels; 16 MiB (16,777,216 bytes) per file, the
+12-byte header included, so at most 4,194,301 pixels per image (a 2,048 ×
+2,048 image, 12 bytes over, is refused; 2,048 × 2,047 fits); 64 MiB of
+resource files and 1,024 resources per catalog; a catalog of at
 most 1 MiB. The provisioning helpers copy the whole world, `preview-assets/`
 included, within their own limits (4,096 entries, 64 MiB, depth 32), so
 uncompressed art reaches them sooner than compressed files would. Each
@@ -785,7 +792,10 @@ unchanged. They are a dark separator and an amber band reading `PROJECT
 ART: CHECK ITS LICENSE BEFORE SHARING` in black capitals from a fixed
 bitmap font (`PROJECT ART` on an image narrower than 276 pixels), scaled
 with the width: 12 rows on a narrow image, 24 on a 720-pixel evidence frame,
-48 from 1,104 pixels. Without project art nothing is marked and every frame,
+48 from 1,104 pixels. An image narrower than the 72 pixels `PROJECT ART`
+needs (a one-tile `render`, say) is widened to 72 pixels with band-coloured
+columns right of it, its full height, so the mark always reads whole; its
+own pixels stay at the top left. Without project art nothing is marked and every frame,
 record and report is as before.
 
 **Where copies go.** The editor never bundles, uploads or copies project

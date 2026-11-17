@@ -1129,3 +1129,30 @@ fn the_project_license_is_refused_in_format_1_and_every_other_value_in_both() {
         .remove("notice");
     assert!(load_catalog(dir.path(), &root, &world, &catalog).is_err());
 }
+
+#[test]
+fn the_file_limit_counts_the_header_so_2048_by_2048_is_refused() {
+    // docs/OFFLINE-PROTOTYPE.md (Project art) states these numbers.
+    let (dir, root, world, original) = fixture(false, false);
+    let limit = PreviewLimits::default().maximum_resource_bytes;
+    assert_eq!(limit, 16 * 1024 * 1024);
+    assert_eq!((limit - 12) / 4, 4_194_301);
+    for (height, fits) in [(2047, true), (2048, false)] {
+        let bytes = atx(2048, height, [1, 2, 3, 255]);
+        assert_eq!(bytes.len() <= limit, fits);
+        fs::write(dir.path().join("preview-assets/grass.atx1"), &bytes).unwrap();
+        let mut catalog = original.clone();
+        catalog["resources"][0]["sha256"] = json!(digest(&bytes));
+        catalog["resources"][0]["width"] = json!(2048);
+        catalog["resources"][0]["height"] = json!(height);
+        assert_eq!(
+            load_catalog(dir.path(), &root, &world, &catalog).is_ok(),
+            fits,
+            "{height}"
+        );
+    }
+    // Width and height are at least 1.
+    let mut catalog = original;
+    catalog["resources"][0]["width"] = json!(0);
+    assert!(load_catalog(dir.path(), &root, &world, &catalog).is_err());
+}

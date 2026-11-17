@@ -159,9 +159,10 @@ other worlds are unchanged. Every report with a `catalog` member has it:
   line, column, byte span, code and message), when the world does not load.
 - `tilewright.editor-render/1`: `catalog` (status, view, presentation),
   `image` (plane, layer, `region` `[x, y, width, height]`, `tiles`, `scale`,
-  `width` and `height` in pixels, and `mark_rows` when the image carries
-  the project-art mark: its last `mark_rows` rows are the mark, and `height`
-  counts them), `diagnostics` (the notes the preview adds
+  `width` and `height` in pixels of the image written, and `mark_rows` when
+  the image carries the project-art mark: its last `mark_rows` rows are the
+  mark, and `height` counts them; on an image widened for the mark also
+  `mark_columns`, its last columns, which `width` counts), `diagnostics` (the notes the preview adds
   when it prepares the region, each a `code` and a `message`) and `png`
   (`bytes`, and `sha256` of the file written). The report never names the
   output path.
@@ -230,12 +231,16 @@ from, and writes it as an RGBA PNG.
   resources with the license `project`), the image carries the project-art
   mark: rows added below the drawn view, never drawn over it, a dark
   separator and an amber band reading `PROJECT ART: CHECK ITS LICENSE
-  BEFORE SHARING` (`PROJECT ART` on an image narrower than 276 pixels, cut
-  at the edge if narrower still), in a fixed bitmap font scaled with the
-  image width (12, 24, 36 or 48 rows). The drawn view's pixels and
-  coordinates are those of the unmarked image. The report's
-  `catalog.project_art` gives the number of project resources, and
-  `image.height` and `image.mark_rows` include and name the mark's rows.
+  BEFORE SHARING` (`PROJECT ART` on an image narrower than 276 pixels), in
+  a fixed bitmap font scaled with the image width (12, 24, 36 or 48 rows).
+  A narrow render, such as one tile, is narrower than the 72 pixels
+  `PROJECT ART` needs: the marked image is then widened to 72 pixels with
+  band-coloured columns right of the drawn view, its full height, so the
+  text is always whole. The drawn view's pixels and coordinates are those of
+  the unmarked image, at the top left. The report's `catalog.project_art`
+  gives the number of project resources; `image.width` and `image.height`
+  are the marked image's, and `image.mark_rows` and `image.mark_columns`
+  (only when columns were added) name the mark's rows and columns.
   The marked image must keep within the bounds below. The mark depends on
   the catalog, not on what the region draws: a region with no project art
   in it is marked too. The art is under the project's own license; checking
@@ -267,7 +272,7 @@ from, and writes it as an RGBA PNG.
   an isometric neighbour) is never drawn into it.
 - **Bounds.** The image is at most 8,192 pixels a side and 16,777,216 pixels
   in all, the reference renderer's own target limits, the project-art
-  mark's rows included; past them `render` is refused (`output.budget`). The region is first compiled in an 8,194 ×
+  mark's rows and columns included; past them `render` is refused (`output.budget`). The region is first compiled in an 8,194 ×
   8,194 viewport, the largest image and a pixel more on every side, to find
   what it draws; if any object or tile of the region has no art in that
   viewport, it is refused the same way. A region the desktop's default view

@@ -170,8 +170,18 @@ followed by `<list>_cursor` as well as `<list>_more`.
   after the text content; nothing is written. While the catalog contains
   project art, the image is the marked one `render --out` writes, the mark's
   rows count against the image caps, and the report has
-  `catalog.project_art` and `image.mark_rows` (see
+  `catalog.project_art` and `image.mark_rows`; a narrow render (one tile,
+  say) is widened to 72 pixels with band-coloured columns for the mark's
+  text, which count against the caps too, and `image.mark_columns` names
+  them (see
   [Project art](#project-art)).
+
+Every report names `revision`, the World revision (the lowercase hex
+SHA-256 of the files World's load read) it was computed at. Every tool
+but `refresh` takes an optional `revision`, 64 lowercase hex digits: when
+the snapshot is not at that World revision, the call fails with
+`revision.changed`. A world that does not load has no revision, so any
+`revision` given fails then.
 
 ### Project art
 
@@ -183,20 +193,15 @@ serves such a world like any other, by the owner's decision of 2026-11-17
 is not refused and needs no start option. Every report with a `catalog`
 member has `catalog.project_art` (`{"resources": N}`) then, and lint a
 `catalog.project_art` info finding, so a client knows before it renders;
-every `render` image carries the visible project-art mark below the view.
+every `render` image carries the visible project-art mark below the view,
+widened with band-coloured columns when the view is narrower than the
+mark's text.
 The server's instructions and the `render` description say the same.
 
 **`render` sends the art's pixels to the client.** With an AI agent as the
 client, that usually means to a model provider. The editor cannot know
 what the art's license allows; checking that it allows this is the user's
 responsibility. This is not legal advice.
-
-Every report names `revision`, the World revision (the lowercase hex
-SHA-256 of the files World's load read) it was computed at. Every tool
-but `refresh` takes an optional `revision`, 64 lowercase hex digits: when
-the snapshot is not at that World revision, the call fails with
-`revision.changed`. A world that does not load has no revision, so any
-`revision` given fails then.
 
 ## Paging
 
