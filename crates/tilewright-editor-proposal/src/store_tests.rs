@@ -225,8 +225,8 @@ fn a_create_refused_by_world_for_an_occupied_name_is_the_stage_refusal() {
     assert_eq!(refusal.code(), RefusalCode::ProposalStore);
     assert_eq!(refusal.message(), occupied_stage().message());
     assert_eq!(
-        std::fs::read(directory.path().join(STAGE)).unwrap(),
-        b"first"
+        root.read(STAGE, 64).unwrap().as_deref(),
+        Some(&b"first"[..])
     );
     // Any other failure is its category, never a path.
     let other = opened.create("a/b", None, b"x").unwrap_err();
