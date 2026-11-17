@@ -106,6 +106,11 @@ class PackageAssetTests(unittest.TestCase):
             assets.mit_only_catalog(json.dumps({**catalog, 'editing': {'license': 'project'}}).encode())
         with self.assertRaises(ValueError):
             assets.mit_only_catalog(b'// comment\n' + original)
+        # A key spelled with an escape still names the license.
+        escaped = json.dumps(catalog).replace('"license"', '"licen\\u0073e"', 1).replace('"MIT"', '"project"', 1)
+        self.assertEqual(json.loads(escaped)['resources'][0]['license'], 'project')
+        with self.assertRaisesRegex(ValueError, 'only MIT resources'):
+            assets.mit_only_catalog(escaped.encode())
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)/'root'
             sample = root/assets.PREFIX
@@ -135,6 +140,7 @@ class PackageAssetTests(unittest.TestCase):
                 '{"format": "tilewright.editor-preview/2", "resources": [{"license": "MIT"}, {"license": "project"}]}',
                 '// a comment makes it JSONC\n{"resources": [{"license" :"project"}]}',
                 '{"resources": [{"license": "MIT"}], "license": "project"}',
+                '{"resources": [{"licen\\u0073e": "project"}]}',
             ):
                 fixture.write_text(text)
                 with self.assertRaisesRegex(ValueError, 'other than MIT'):
