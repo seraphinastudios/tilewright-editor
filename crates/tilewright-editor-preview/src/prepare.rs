@@ -293,6 +293,7 @@ pub fn prepare(
         catalog_revision: catalog.revision(),
         frame_revision: view.frame_revision,
         diagnostics,
+        project_art_resources: catalog.project_art_resources(),
     })
 }
 
