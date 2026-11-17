@@ -95,7 +95,7 @@ fn member(kind: &str, name: &str) -> String {
             layer(),
             cell()
         ),
-        "contiguous" => r#"{"type":"boolean","description":"true fills the region connected to the start cell through edge neighbours; false replaces every cell of the view with the start cell's value."}"#.to_owned(),
+        "contiguous" => r#"{"type":"boolean","description":"The fill rule. true: set proto on the cells joined to the start cell (x, y) through edge neighbours (not diagonals) that hold the start cell's terrain (or no terrain), within the catalog's active view. false: set proto on every cell of the active view that holds the start cell's terrain. The start cell must be in the active view; cells already holding proto are left out."}"#.to_owned(),
         "name" | "parent" => optional_text(),
         "zone" if kind == "paint_zones" => optional_text(),
         _ => text(),

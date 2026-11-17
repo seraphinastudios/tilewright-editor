@@ -212,6 +212,28 @@ struct FillPreview {
     changes: std::result::Result<Vec<[i64; 2]>, String>,
 }
 
+/// The pointer over the map in Terrain mode: where it is, and with the Fill
+/// or Replace rule the hovered cell and its preview.
+#[derive(Default)]
+struct Hover {
+    /// The hovered cell and the frame whose exact cell mask it was picked
+    /// from.
+    cell: Option<(u64, SelectionKey)>,
+    /// The exact cell mask hovers are picked from: built once for the
+    /// frame it names, on its first hover, like a stroke's `stroke_mask`,
+    /// and dropped when the frame is rebuilt or reflowed.
+    mask: Option<PickMask>,
+    /// How many hover masks were built, for tests: one per frame hovered.
+    masks: u64,
+    /// The physical pixel the pointer last hovered over the map, so a
+    /// rebuilt frame (after Cancel, Accept or a pan) picks its hovered cell
+    /// again without waiting for the pointer to move.
+    pixel: Option<(u32, u32)>,
+    /// What the hovered fill would change, computed when the hover, the
+    /// rule, the terrain, the World or the frame changes, never per frame.
+    preview: Option<FillPreview>,
+}
+
 struct Application {
     session: Session,
     recovery: DurableRecovery,
@@ -231,12 +253,9 @@ struct Application {
     presented_text_revision: Option<tilewright_editor_ui::text_input::TextRevision>,
     /// The exact cell mask of the frame a running brush stroke samples.
     stroke_mask: Option<PickMask>,
-    /// With Terrain mode's Fill or Replace rule, the cell under the pointer
-    /// and the frame whose exact cell mask it was picked from.
-    hover: Option<(u64, SelectionKey)>,
-    /// What the hovered fill would change, computed when the hover, the
-    /// rule, the terrain, the World or the frame changes, never per frame.
-    fill_preview: Option<FillPreview>,
+    /// The pointer over the map in Terrain mode, and with the Fill or
+    /// Replace rule what it previews.
+    hover: Hover,
     /// How many times the World scene has been prepared. Pointer samples
     /// during a stroke never prepare it; presses, dispatched actions (a
     /// release among them) and view changes do.
@@ -337,8 +356,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         displayed_text: None,
         presented_text_revision: None,
         stroke_mask: None,
-        hover: None,
-        fill_preview: None,
+        hover: Hover::default(),
         prepared_scenes: 1,
         preview_omitted: false,
         highlight_omitted: false,
@@ -443,7 +461,8 @@ impl Application {
     fn rebuild_inner(&mut self) -> Result<()> {
         self.presented_generation = None;
         self.interrupt_stroke();
-        self.hover = None;
+        self.hover.cell = None;
+        self.hover.mask = None;
         self.tools.cancel();
         self.session
             .invalidate_frame()
@@ -483,7 +502,8 @@ impl Application {
     fn reflow(&mut self) -> Result<()> {
         self.presented_generation = None;
         self.interrupt_stroke();
-        self.hover = None;
+        self.hover.cell = None;
+        self.hover.mask = None;
         self.prepare_scene()
     }
 
@@ -865,7 +885,7 @@ impl Application {
     /// there is none; `None` without a hovered cell of the current frame or
     /// outside Terrain mode's Fill and Replace rules.
     fn hovered_fill(&self) -> Option<std::result::Result<Action, String>> {
-        let (frame, cell) = self.hover.as_ref()?;
+        let (frame, cell) = self.hover.cell.as_ref()?;
         if *frame != self.view.frame_revision || !self.tools.filling() {
             return None;
         }
@@ -885,11 +905,11 @@ impl Application {
     /// what decides it changed.
     fn refresh_fill_preview(&mut self) {
         let Some(Ok(action)) = self.hovered_fill() else {
-            self.fill_preview = None;
+            self.hover.preview = None;
             return;
         };
         let (frame, generation) = (self.view.frame_revision, self.session.generation());
-        if self.fill_preview.as_ref().is_some_and(|preview| {
+        if self.hover.preview.as_ref().is_some_and(|preview| {
             preview.frame == frame && preview.generation == generation && preview.action == action
         }) {
             return;
@@ -898,7 +918,7 @@ impl Application {
             .session
             .fill_changes(&action)
             .map_err(|error| error.to_string());
-        self.fill_preview = Some(FillPreview {
+        self.hover.preview = Some(FillPreview {
             frame,
             generation,
             action,
@@ -909,7 +929,7 @@ impl Application {
     /// The cells the fill preview marks: only a preview of the current
     /// frame and session, for a hovered fill that is still the one shown.
     fn fill_changes(&self) -> Option<&[[i64; 2]]> {
-        let preview = self.fill_preview.as_ref()?;
+        let preview = self.hover.preview.as_ref()?;
         let current = preview.frame == self.view.frame_revision
             && self.prepared.frame_revision == self.view.frame_revision
             && preview.generation == self.session.generation()
@@ -919,17 +939,55 @@ impl Application {
     }
 
     /// Hover in Terrain mode's Fill and Replace rules: the cell under
-    /// physical pixel `(x, y)` from the current frame's exact cell mask, or
-    /// none off the map.
+    /// physical pixel `(x, y)`, picked from the frame's one hover mask, or
+    /// none off the map. Nothing is computed while the session cannot
+    /// prepare a change (a change pending, or blocked), and nothing more
+    /// than the pick while the pointer stays in the same cell.
     fn hover_at(&mut self, pixel: Option<(u32, u32)>) {
-        let cell = pixel.and_then(|(x, y)| {
-            match self.prepared.pick(self.view.frame_revision, x, y, true) {
-                Ok(Some(key @ SelectionKey::Cell { .. })) => Some(key),
-                _ => None,
-            }
+        self.hover.pixel = pixel;
+        if self.blocked.is_some() || !self.session.can_prepare() || !self.tools.filling() {
+            self.hover.cell = None;
+            self.hover.preview = None;
+            return;
+        }
+        let cell = pixel.and_then(|(x, y)| match self.hover_mask_pick(x, y) {
+            Some(key @ SelectionKey::Cell { .. }) => Some(key),
+            _ => None,
         });
-        self.hover = cell.map(|cell| (self.view.frame_revision, cell));
+        let hover = cell.map(|cell| (self.view.frame_revision, cell));
+        if hover == self.hover.cell {
+            return;
+        }
+        self.hover.cell = hover;
         self.refresh_fill_preview();
+    }
+
+    /// Pick the hovered cell again when the frame changed under a pointer
+    /// that has not moved: at most one mask for the new frame.
+    fn rehover(&mut self) {
+        let stale = self
+            .hover
+            .cell
+            .as_ref()
+            .is_none_or(|(frame, _)| *frame != self.view.frame_revision);
+        if stale && let Some(pixel) = self.hover.pixel {
+            self.hover_at(Some(pixel));
+        }
+    }
+
+    /// The key under physical pixel `(x, y)` in the current frame's exact
+    /// cell mask, built at most once per frame.
+    fn hover_mask_pick(&mut self, x: u32, y: u32) -> Option<SelectionKey> {
+        let viewport = self.prepared.cell_scene.viewport();
+        let current = self.hover.mask.as_ref().is_some_and(|mask| {
+            mask.generation() == self.view.frame_revision
+                && mask.size() == [viewport.width, viewport.height]
+        });
+        if !current {
+            self.hover.mask = self.prepared.mask(self.view.frame_revision, true).ok();
+            self.hover.masks += 1;
+        }
+        self.hover.mask.as_ref()?.pick(x, y).ok().flatten()
     }
 
     /// A click with the Fill or Replace rule: select the cell through the
@@ -956,6 +1014,11 @@ impl Application {
 
     /// The status line while hovering with the Fill or Replace rule.
     fn fill_status(&self) -> Option<String> {
+        // A pending change, a block or a proposal step under review keeps
+        // its own status line.
+        if self.blocked.is_some() || !self.session.can_prepare() {
+            return None;
+        }
         let action = match self.hovered_fill()? {
             Ok(action) => action,
             Err(reason) => return Some(reason),
@@ -981,7 +1044,7 @@ impl Application {
                     ""
                 }
             ),
-            None => match self.fill_preview.as_ref().map(|preview| &preview.changes) {
+            None => match self.hover.preview.as_ref().map(|preview| &preview.changes) {
                 Some(Err(reason)) => format!("{rule} from ({x}, {y}) refused: {reason}"),
                 _ => format!("{rule} from ({x}, {y}) with {proto}"),
             },
@@ -994,6 +1057,7 @@ impl Application {
     }
 
     fn refresh_ui(&mut self) {
+        self.rehover();
         self.refresh_fill_preview();
         let key = self.zone_view_key();
         if self.zone_view.as_ref().is_none_or(|view| view.key != key) {
@@ -2022,10 +2086,10 @@ impl Application {
         }
     }
 
-    /// Terrain mode's rules, after the palette so the rows above keep their
-    /// places: the brush drags, fill and replace click.
+    /// Terrain mode's rules, after the palette: the brush drags, fill and
+    /// replace click. The current one is also named in the rule row above
+    /// the scrolled rows.
     fn rule_rows(&self, rows: &mut UiRows) {
-        rows.push(("Rule  F".into(), None, true, false));
         for rule in TerrainRule::ALL {
             rows.push((
                 match rule {
@@ -2437,6 +2501,9 @@ impl Application {
             y = self.filter_field(ui, y);
             y = self.placing_row(ui, y);
         }
+        if self.tools.mode() == ToolMode::Terrain {
+            y = self.rule_row(ui, y);
+        }
         if let Some(snapshot) = self
             .tools
             .draft_snapshot()
@@ -2708,6 +2775,30 @@ impl Application {
     /// when the filter hides its palette row. It never scrolls, and is
     /// dimmed while a pending change blocks placing. Returns the next free
     /// row.
+    /// Terrain mode's current rule, above the scrolled rows so it is always
+    /// on screen; pressing it moves to the next rule, as F does.
+    fn rule_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
+        let rule = self.tools.terrain_rule();
+        let name = match rule {
+            TerrainRule::Brush => "Brush",
+            TerrainRule::Fill => "Fill",
+            TerrainRule::Replace => "Replace",
+        };
+        ui.widget(
+            Rect {
+                x: ui.sidebar_x(),
+                y,
+                width: ui.sidebar_width(),
+                height: TEXT_ROW_HEIGHT,
+            },
+            format!("Rule: {name}  F"),
+            Some(Control::TerrainRule(rule.next())),
+            true,
+            false,
+        );
+        y + TEXT_ROW_HEIGHT + ROW_GAP
+    }
+
     fn placing_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
         let catalog = self.session.catalog();
         let (text, thumbnail) = match self.tools.placement_choice() {
@@ -3444,7 +3535,7 @@ impl Application {
         });
         match (
             self.fill_changes(),
-            self.fill_preview.as_ref().map(|p| &p.changes),
+            self.hover.preview.as_ref().map(|p| &p.changes),
         ) {
             (Some(cells), _) => {
                 record["cells"] = cells.len().into();
@@ -4175,7 +4266,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                 dirty = true;
             }
             let stroke_before = app.tools.stroke().map(|s| (s.len(), s.capped()));
-            let hover_before = app.hover.clone();
+            let hover_before = app.hover.cell.clone();
             let scroll_before = (app.sidebar_scroll, app.review_scroll);
             let composing = app.tools.is_composing();
             let draft_before = app.tools.input_revision().map(|revision| revision.draft);
@@ -4250,7 +4341,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             dirty |= update_input_presentation(&mut app, scroll_before)
                 || result.is_err()
                 || stroke_before != app.tools.stroke().map(|s| (s.len(), s.capped()))
-                || hover_before != app.hover;
+                || hover_before != app.hover.cell;
             if let Err(error) = result {
                 eprintln!("{}", terminal_field(&error));
                 app.notice = Some(error);
@@ -4711,7 +4802,7 @@ fn native_input_event(
         } if !minimized && app.tools.stroke().is_some() => {
             native_stroke_motion(app, [*x, *y], mousestate.left(), logical, physical)
         }
-        Event::MouseMotion { x, y, .. } if !minimized && app.tools.filling() => {
+        Event::MouseMotion { x, y, .. } if !minimized && app.tools.mode() == ToolMode::Terrain => {
             native_hover(app, [*x, *y], logical, physical);
             Ok(())
         }
@@ -4848,8 +4939,9 @@ fn native_pointer_selection(
     }
 }
 
-/// Pointer motion with Terrain mode's Fill or Replace rule: the hovered cell
-/// of the map under it, or none over a panel or outside the window.
+/// Pointer motion in Terrain mode: where the pointer is over the map, and
+/// with the Fill or Replace rule the hovered cell under it; none over a
+/// panel or outside the window.
 fn native_hover(
     app: &mut Application,
     position: [f32; 2],
@@ -5157,7 +5249,7 @@ fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
 /// The hover preview of a fill or replace: the cells a click would change,
 /// marked like a terrain stroke's, through the same overlay.
 fn fill_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
-    let (Some(changes), Some(preview)) = (app.fill_changes(), app.fill_preview.as_ref()) else {
+    let (Some(changes), Some(preview)) = (app.fill_changes(), app.hover.preview.as_ref()) else {
         return Vec::new();
     };
     let Action::FillTerrain {

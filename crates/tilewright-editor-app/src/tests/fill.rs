@@ -84,6 +84,24 @@ fn under_panel(app: &mut Application) -> Option<[f32; 2]> {
     #[allow(clippy::cast_precision_loss)]
     Some([(index % width) as f32 + 0.5, (index / width) as f32 + 0.5])
 }
+/// The centre of the rule header row, when it is laid out within the
+/// window.
+fn rule_header(app: &mut Application) -> Option<[f32; 2]> {
+    app.refresh_ui();
+    let (_, height) = app.ui.size;
+    let widget = app
+        .ui
+        .widgets
+        .iter()
+        .find(|widget| widget.text.starts_with("Rule: "))?;
+    (widget.bounds.y + widget.bounds.height <= height).then(|| {
+        #[allow(clippy::cast_precision_loss)]
+        [
+            (widget.bounds.x + widget.bounds.width / 2) as f32,
+            (widget.bounds.y + widget.bounds.height / 2) as f32,
+        ]
+    })
+}
 /// The region the engine expands, read from the committed World directly.
 fn region(app: &Application, at: [i64; 2], contiguous: bool) -> Vec<[i64; 2]> {
     fill::region(
@@ -115,25 +133,48 @@ fn terrain_value(app: &Application, x: i64, y: i64) -> Option<String> {
 fn f_and_the_rule_rows_choose_the_brush_fill_or_replace() {
     let (_temporary, mut app) = brush_application();
     let texts = sidebar_texts(&mut app);
-    let rule = texts.iter().position(|text| text == "Rule  F").unwrap();
-    // After the palette, so every row above keeps its place.
+    // The current rule heads the sidebar; the rule rows follow the palette.
+    let header = texts
+        .iter()
+        .position(|text| text == "Rule: Brush  F")
+        .unwrap();
+    let fill = texts
+        .iter()
+        .position(|text| text.starts_with("Fill: click"))
+        .unwrap();
     let palette = texts
         .iter()
         .position(|text| text == "floor / sand")
         .unwrap();
-    assert!(rule > palette, "{texts:?}");
+    assert!(header < palette && fill > palette, "{texts:?}");
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Brush);
-    for expected in [TerrainRule::Fill, TerrainRule::Replace, TerrainRule::Brush] {
+    for (expected, name) in [
+        (TerrainRule::Fill, "Fill"),
+        (TerrainRule::Replace, "Replace"),
+        (TerrainRule::Brush, "Brush"),
+    ] {
         route(&mut app, &key(Keycode::F)).unwrap();
         assert_eq!(app.tools.terrain_rule(), expected);
+        assert!(sidebar_texts(&mut app).contains(&format!("Rule: {name}  F")));
     }
+    // Pressing the header moves to the next rule, as F does.
+    let header = rule_header(&mut app).unwrap();
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, header)).unwrap();
+    assert_eq!(app.tools.terrain_rule(), TerrainRule::Fill);
+    route(&mut app, &key(Keycode::F)).unwrap();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    assert_eq!(app.tools.terrain_rule(), TerrainRule::Brush);
     // A rule row, pressed with the pointer, chooses its rule and is marked.
     app.refresh_ui();
     let widget = app
         .ui
         .widgets
         .iter()
-        .find(|widget| widget.control == Some(Control::TerrainRule(TerrainRule::Replace)))
+        .find(|widget| {
+            widget.control == Some(Control::TerrainRule(TerrainRule::Replace))
+                && !widget.text.starts_with("Rule:")
+        })
         .cloned()
         .unwrap();
     assert!(!widget.active);
@@ -184,6 +225,7 @@ fn f_and_the_rule_rows_choose_the_brush_fill_or_replace() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
     let (temporary, mut app) = brush_application();
     let chunk = temporary
@@ -194,7 +236,7 @@ fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
     let sand = cell_pixel(&mut app, 5, 1);
     // With the brush rule, a hover is nothing.
     route(&mut app, &hover(grass)).unwrap();
-    assert!(app.hover.is_none() && app.fill_preview.is_none());
+    assert!(app.hover.cell.is_none() && app.hover.preview.is_none());
     assert!(marked(&mut app).is_empty());
 
     route(&mut app, &key(Keycode::F)).unwrap();
@@ -206,7 +248,7 @@ fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
         .tools
         .fill_action(
             app.session.catalog(),
-            &app.hover.as_ref().unwrap().1,
+            &app.hover.cell.as_ref().unwrap().1,
             app.session.history().document().revision(),
             false,
         )
@@ -220,7 +262,8 @@ fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
     );
     // Computed once: redrawing and hovering the same cell keep it.
     let kept = app
-        .fill_preview
+        .hover
+        .preview
         .as_ref()
         .unwrap()
         .changes
@@ -231,7 +274,8 @@ fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
     route(&mut app, &hover(grass)).unwrap();
     app.refresh_ui();
     assert_eq!(
-        app.fill_preview
+        app.hover
+            .preview
             .as_ref()
             .unwrap()
             .changes
@@ -270,7 +314,7 @@ fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
     let x = app.ui.sidebar_x();
     #[allow(clippy::cast_precision_loss)]
     route(&mut app, &hover([x as f32 + 4.0, 200.0])).unwrap();
-    assert!(app.hover.is_none() && app.fill_preview.is_none());
+    assert!(app.hover.cell.is_none() && app.hover.preview.is_none());
     assert!(marked(&mut app).is_empty());
     // A map cell drawn under the sidebar is under the panel, not hovered:
     // pan the view right until the east columns lie beneath it.
@@ -279,7 +323,7 @@ fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
     acknowledge_ui(&mut app);
     let covered = under_panel(&mut app).expect("a cell drawn under the sidebar");
     route(&mut app, &hover(covered)).unwrap();
-    assert!(app.hover.is_none() && app.fill_preview.is_none());
+    assert!(app.hover.cell.is_none() && app.hover.preview.is_none());
     app.view.camera.center[0] += 8.0;
     app.rebuild().unwrap();
     acknowledge_ui(&mut app);
@@ -378,7 +422,7 @@ fn the_scripted_fill_demonstration_changes_nothing_and_restores_the_brush() {
     assert_eq!(app.session.history().depths(), (0, 0));
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Brush);
     assert_eq!(app.tools.terrain_choice().cloned(), choice);
-    assert!(app.hover.is_none());
+    assert!(app.hover.cell.is_none());
     let read = |name: &str| -> serde_json::Value {
         serde_json::from_slice(&fs::read(temporary.path().join("evidence").join(name)).unwrap())
             .unwrap()
@@ -392,4 +436,234 @@ fn the_scripted_fill_demonstration_changes_nothing_and_restores_the_brush() {
     assert_eq!(read("replace-preview.json")["fill_preview"]["cells"], 23);
     assert_eq!(read("replace-pending.json")["pending"], true);
     assert!(read("replace-pending.json").get("fill_preview").is_none());
+}
+
+/// A 1280x800 Terrain-mode workspace like `brush_application`, over a world
+/// prepared by `prepare`.
+fn terrain_application(prepare: impl FnOnce(&std::path::Path)) -> (tempfile::TempDir, Application) {
+    use crate::workspace_ui::WorkspaceUi;
+    let (temporary, mut app) = super::application_with_source(prepare);
+    app.ui = WorkspaceUi::new(super::BRUSH_WINDOW, super::BRUSH_WINDOW);
+    app.view.camera.width = super::BRUSH_WINDOW.0;
+    app.view.camera.height = super::BRUSH_WINDOW.1;
+    app.rebuild().unwrap();
+    app.control(Control::Terrain).unwrap();
+    choose(&mut app, "sand");
+    acknowledge_ui(&mut app);
+    (temporary, app)
+}
+
+#[test]
+fn the_rule_header_stays_on_screen_with_an_object_selected() {
+    use crate::workspace_ui::WorkspaceUi;
+    for size in [(1280, 800), (720, 480)] {
+        let (_temporary, mut app) = super::application();
+        app.ui = WorkspaceUi::new(size, size);
+        app.view.camera.width = size.0;
+        app.view.camera.height = size.1;
+        app.rebuild().unwrap();
+        app.control(Control::Terrain).unwrap();
+        app.action(Action::Select {
+            generation: app.session.generation(),
+            key: SelectionKey::Object {
+                uid: "gate_west".into(),
+            },
+        })
+        .unwrap();
+        assert!(app.session.selection().is_some());
+        route(&mut app, &key(Keycode::F)).unwrap();
+        assert!(rule_header(&mut app).is_some(), "{size:?}");
+        assert!(sidebar_texts(&mut app).contains(&"Rule: Fill  F".to_owned()));
+    }
+}
+
+#[test]
+fn hovering_builds_one_mask_per_frame_changes_no_state_and_rests_while_pending() {
+    let (_temporary, mut app) = brush_application();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    let pixels: Vec<[f32; 2]> = [[0, 0], [1, 1], [2, 3], [5, 1], [7, 5], [3, 4]]
+        .iter()
+        .map(|&[x, y]| cell_pixel(&mut app, x, y))
+        .collect();
+    let selection = app.session.selection().cloned();
+    let revision = app.session.history().document().revision();
+    let depths = app.session.history().depths();
+    let records = app.recovery.records().len();
+    let generation = app.session.generation();
+    let before = app.hover.masks;
+    let started = std::time::Instant::now();
+    let mut events = 0u32;
+    for round in 0..20 {
+        for (index, &[x, y]) in pixels.iter().enumerate() {
+            // The cell centre and a pixel beside it: the same cell twice.
+            route(&mut app, &hover([x, y])).unwrap();
+            route(&mut app, &hover([x + 1.0, y])).unwrap();
+            events += 2;
+            if round == 0 && index == 0 {
+                assert_eq!(app.hover.masks, before + 1);
+            }
+        }
+    }
+    let per_event = started.elapsed() / events;
+    eprintln!(
+        "hover: {events} events, {per_event:?} each, {} masks",
+        app.hover.masks - before
+    );
+    // One mask for the frame, whatever the number of motion events.
+    assert_eq!(app.hover.masks, before + 1);
+    assert!(app.hover.preview.is_some());
+    // Hovering changes no session state.
+    assert_eq!(app.session.selection().cloned(), selection);
+    assert_eq!(app.session.history().document().revision(), revision);
+    assert_eq!(app.session.history().depths(), depths);
+    assert_eq!(app.recovery.records().len(), records);
+    assert_eq!(app.session.generation(), generation);
+    assert!(app.session.history().pending().is_none());
+    // A pending change: hovering builds nothing and previews nothing.
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, pixels[1])).unwrap();
+    assert!(app.session.history().pending().is_some());
+    let masks = app.hover.masks;
+    for &at in &pixels {
+        route(&mut app, &hover(at)).unwrap();
+        app.refresh_ui();
+    }
+    assert_eq!(app.hover.masks, masks);
+    assert!(app.hover.cell.is_none() && app.hover.preview.is_none());
+}
+
+#[test]
+fn a_pending_changes_status_lines_outrank_the_fill() {
+    // A pending fill: its review line stays through pointer motion.
+    let (_temporary, mut app) = brush_application();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    let at = cell_pixel(&mut app, 2, 3);
+    let other = cell_pixel(&mut app, 5, 1);
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, at)).unwrap();
+    let pending = app.status_label();
+    assert_eq!(pending, "Review changes, then Accept or Cancel.");
+    for point in [at, other] {
+        route(&mut app, &hover(point)).unwrap();
+        assert_eq!(app.status_label(), pending);
+    }
+    // A refused click's notice stays through pointer motion.
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    choose(&mut app, "grass");
+    route(&mut app, &key(Keycode::F)).unwrap();
+    acknowledge_ui(&mut app);
+    let grass = cell_pixel(&mut app, 1, 1);
+    acknowledge_ui(&mut app);
+    let refused = route(&mut app, &button(true, grass)).unwrap_err();
+    assert!(refused.contains("fill changes no cell"), "{refused}");
+    // The native loop keeps a refusal as the notice.
+    app.notice = Some(refused);
+    assert_eq!(app.status_label(), "Input not applied. Details below.");
+    route(&mut app, &hover(other)).unwrap();
+    assert_eq!(app.status_label(), "Input not applied. Details below.");
+
+    // A pending change whose review is cut short keeps the review-limit line.
+    let (_temporary, mut app) = terrain_application(|world| {
+        let schema_path = world.join("profile/schema/object.jsonc");
+        let mut schema: serde_json::Value =
+            serde_json::from_slice(&fs::read(&schema_path).unwrap()).unwrap();
+        schema["fields"]["label"]["max_length"] = serde_json::Value::from(80_000);
+        fs::write(schema_path, serde_json::to_vec_pretty(&schema).unwrap()).unwrap();
+        let path = world.join("planes/main/layers/0/0_0.jsonc");
+        let mut source: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        source["objects"][0]["fields"]["label"] = serde_json::Value::String("a".repeat(70_000));
+        fs::write(path, serde_json::to_vec(&source).unwrap()).unwrap();
+    });
+    route(&mut app, &key(Keycode::F)).unwrap();
+    app.action(Action::SetField {
+        uid: "marker_1".into(),
+        field: "label".into(),
+        value: serde_json::Value::String("b".repeat(100)),
+        expected: app.session.history().document().revision(),
+    })
+    .unwrap();
+    assert!(!app.source_review().complete);
+    let grass = cell_pixel(&mut app, 1, 1);
+    route(&mut app, &hover(grass)).unwrap();
+    assert_eq!(
+        app.status_label(),
+        tilewright_editor_ui::review::REVIEW_LIMIT_MESSAGE
+    );
+}
+
+#[test]
+fn a_proposal_step_keeps_its_status_and_the_fill_preview_wins_its_cells() {
+    let mut twin = super::proposal::twin(3, |_| {}, |_| {}, None);
+    super::proposal::open(&mut twin);
+    let app = &mut twin.app;
+    app.control(Control::Terrain).unwrap();
+    choose(app, "sand");
+    route(app, &key(Keycode::F)).unwrap();
+    acknowledge_ui(app);
+    // Step 1 moves marker_1 from (3, 2) to (4, 2). The fill from (1, 1)
+    // previews the grass of columns 0 to 3, so (3, 2) shows the preview and
+    // only (4, 2) the highlight.
+    let grass = cell_pixel(app, 1, 1);
+    route(app, &hover(grass)).unwrap();
+    assert!(app.fill_changes().unwrap().contains(&[3, 2]));
+    app.refresh_ui();
+    let highlighted: Vec<[i64; 2]> = crate::prototype::proposal_overlay(app)
+        .iter()
+        .map(
+            |quad| match app.prepared.cell_picks.get(&quad.semantic_id) {
+                Some(SelectionKey::Cell { x, y, .. }) => [*x, *y],
+                _ => panic!("a highlight copy of no cell"),
+            },
+        )
+        .collect();
+    assert!(highlighted.contains(&[4, 2]), "{highlighted:?}");
+    assert!(!highlighted.contains(&[3, 2]), "{highlighted:?}");
+    // The step pending: its status line stays through pointer motion.
+    acknowledge_ui(app);
+    route(app, &key(Keycode::G)).unwrap();
+    assert!(app.session.history().pending().is_some());
+    let status = app.status_label();
+    assert!(
+        status.starts_with("Step 1 of 3 matches its recording"),
+        "{status}"
+    );
+    route(app, &hover(grass)).unwrap();
+    assert_eq!(app.status_label(), status);
+}
+
+#[test]
+fn the_preview_follows_the_terrain_and_a_cancel_without_pointer_motion() {
+    let (_temporary, mut app) = brush_application();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    let grass = cell_pixel(&mut app, 1, 1);
+    route(&mut app, &hover(grass)).unwrap();
+    assert_eq!(app.fill_changes().unwrap().len(), 24);
+    // Grass on grass changes nothing: no preview, the refusal instead.
+    choose(&mut app, "grass");
+    app.refresh_ui();
+    assert!(app.fill_changes().is_none());
+    assert!(
+        app.status_label().contains("refused"),
+        "{}",
+        app.status_label()
+    );
+    choose(&mut app, "sand");
+    app.refresh_ui();
+    assert_eq!(app.fill_changes().unwrap().len(), 24);
+    // Click, then Cancel: the preview comes back with no new motion.
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, grass)).unwrap();
+    assert!(app.session.history().pending().is_some());
+    app.refresh_ui();
+    assert!(app.fill_changes().is_none());
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    assert!(app.session.history().pending().is_none());
+    app.refresh_ui();
+    assert_eq!(app.fill_changes().unwrap().len(), 24);
+    // The rule changed with F, no motion: Replace from the same cell.
+    route(&mut app, &key(Keycode::F)).unwrap();
+    app.refresh_ui();
+    assert_eq!(app.fill_changes().unwrap().len(), 24);
+    assert!(app.status_label().starts_with("Replace from (1, 1)"));
 }

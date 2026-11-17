@@ -237,7 +237,9 @@ The brush never saves on release: there is no autosave.
 
 ### Fill and replace
 
-Terrain mode's sidebar ends with its rule, after the palette: **Brush**
+Terrain mode's sidebar names the current rule in a header row right after
+the inspector's rows ("Rule: Brush  F", always laid out, even at the
+smallest window), and lists the rules after the palette: **Brush**
 (drag paints, the default), **Fill** (a click fills the joined area) or
 **Replace** (a click replaces every match in the view). A row chooses its
 rule; **F** cycles Brush, Fill, Replace in Terrain mode and does nothing
@@ -274,6 +276,23 @@ accepted, undone and redone whole like a stroke. A full 64 by 64 view, the
 largest the catalog allows, is 4,096 cells, the stroke cap: its review
 (four changed chunk files, about 14 KB of excerpt) is complete, so it can
 be accepted.
+
+Hovering picks the cell from one exact cell mask per presented frame, built
+on the first hover of that frame and dropped when the frame is rebuilt, as
+a stroke's samples do; while a change is pending, or editing is blocked,
+hovering does nothing at all, and the status line stays the pending
+change's, the review limit's or the proposal step's.
+
+To try it by hand in a real window:
+
+1. In Terrain mode press F until the rule row says Fill, then move the
+   pointer around a large grass area: the pointer and the white preview
+   should keep up, also on a HiDPI screen or a large view.
+2. Click to fill. Without pressing anything, move the pointer over the map:
+   the status line stays "Review changes, then Accept or Cancel." Accept,
+   then Undo, and check that one step restores the area.
+3. Replace from a cell with no terrain in a sparse view: every empty cell of
+   the view, and only of the view, is marked. Cancel.
 
 ### Deleting objects
 

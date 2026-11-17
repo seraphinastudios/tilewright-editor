@@ -768,3 +768,93 @@ fn the_tool_builds_the_rules_fill_and_never_a_stroke_under_it() {
             .is_err()
     );
 }
+
+#[test]
+fn a_view_larger_than_the_stroke_cap_is_refused_before_any_expansion() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_tree(&fixture_world("prototype-neutral"), dir.path());
+    let document = WorldDocument::open(dir.path()).unwrap();
+    let load = |bounds: [i64; 4]| {
+        edit_json(dir.path(), "preview.jsonc", |catalog| {
+            catalog["view"]["bounds"] = json!(bounds);
+        });
+        let document = WorldDocument::open(dir.path()).unwrap();
+        loader::load(
+            document.source(),
+            document.world(),
+            PreviewLimits {
+                maximum_cells: 1 << 20,
+                ..PreviewLimits::default()
+            },
+        )
+        .unwrap()
+        .0
+    };
+    let world = document.world();
+    for (bounds, refused) in [
+        ([0, 0, 64, 64], false),
+        ([0, 0, 4097, 1], true),
+        ([0, 0, 1000, 1000], true),
+    ] {
+        let catalog = load(bounds);
+        for contiguous in [true, false] {
+            let found = fill::region(world, &catalog, "main", 0, "floor", [7, 0], contiguous);
+            if refused {
+                assert_eq!(
+                    found.unwrap_err().code(),
+                    RefusalCode::InputBudget,
+                    "{bounds:?}"
+                );
+            } else {
+                assert!(found.unwrap().cells.len() <= 4096);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_fill_on_another_ground_grid_reads_that_grid() {
+    // Grant the second ground grid, `edge`, and give it values that
+    // disagree with `floor`: sand down column 2, grass elsewhere.
+    let (_dir, mut session) = fixture_with(|root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["terrain"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"grid": "edge", "values": ["grass", "sand"]}));
+        });
+        edit_json(root, EAST, |chunk| {
+            let rows: Vec<String> = (0..32)
+                .map(|y| {
+                    if y < 6 {
+                        "ggsggggg".to_owned()
+                    } else {
+                        String::new()
+                    }
+                })
+                .map(|row| format!("{row:.<32}"))
+                .collect();
+            chunk["terrain"]["edge"] =
+                json!({"palette": {"g": "grass", "s": "sand"}, "rows": rows});
+        });
+    });
+    let world = session.history().document().world();
+    // On edge, (0, 0) is grass cut off from x > 2 by the sand column; on
+    // floor it is joined to all of columns 0 to 3.
+    let edge = fill::region(world, session.catalog(), "main", 0, "edge", [0, 0], true).unwrap();
+    assert_eq!(edge.value, Some("grass"));
+    assert_eq!(edge.cells.len(), 12);
+    assert!(edge.cells.iter().all(|&[x, _]| x < 2));
+    let floor = fill::region(world, session.catalog(), "main", 0, "floor", [0, 0], true).unwrap();
+    assert_eq!(floor.cells.len(), 24);
+    let mut records = Records::default();
+    let mut action = fill_action(&session, [0, 0], "sand", true);
+    if let Action::FillTerrain { grid, .. } = &mut action {
+        *grid = "edge".into();
+    }
+    assert_eq!(session.fill_changes(&action).unwrap(), edge.cells);
+    session.dispatch(action, &mut records).unwrap();
+    let operation = &sealed(&session)["operations"][0];
+    assert_eq!(operation["grid"], "edge");
+    assert_eq!(operation["cells"].as_array().unwrap().len(), 12);
+}

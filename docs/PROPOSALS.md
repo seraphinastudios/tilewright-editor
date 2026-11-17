@@ -97,7 +97,11 @@ a proposal.
 A `fill_terrain` step records the fill as it was meant (where it starts,
 the terrain, fill or replace), not its cells: the engine works the cells
 out from the world each time the step is prepared ([docs/ENGINE.md](ENGINE.md#fill-and-replace)),
-so on the world it was recorded from it gives the same transaction again.
+so on the world it was recorded from, under the same active view, it gives
+the same transaction again. The view is an input of a fill: under a catalog
+with other view bounds the same step covers other cells, prepares another
+change and is refused with `proposal.step_diverged`, where a paint or a
+stroke step would either reproduce or be refused as outside the view.
 An editor from before `fill_terrain` refuses a whole proposal that holds
 one, with `proposal.invalid` (an unknown action kind) when it reads it,
 before anything is prepared: such a proposal needs an editor release that

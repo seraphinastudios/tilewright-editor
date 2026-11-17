@@ -129,9 +129,12 @@ ungranted grid or value is refused with the code grant.missing wherever
 the tile is, a tile outside the view with scope.outside_view, and a stale
 revision with revision.stale. No refusal code is new. Because the cells are expanded
 from the committed World each time, a recorded fill prepared again on the
-same World gives the same transaction byte for byte (and under another actor,
-all but the actor), and one whose covered cells changed since is refused by
-World's per-cell `expect`, or differs, and is not applied.
+same World under the same active view gives the same transaction byte for
+byte (and under another actor, all but the actor), and one whose covered
+cells changed since is refused by World's per-cell `expect`, or differs, and
+is not applied. The active view is an input of a fill as much as the World:
+under a catalog with other view bounds, the same fill on the same World
+covers other cells, so it prepares another change.
 
 `Session::fill_changes` answers, for a `FillTerrain`, the cells dispatching
 it would change now, from the same code; it prepares nothing. The desktop's
