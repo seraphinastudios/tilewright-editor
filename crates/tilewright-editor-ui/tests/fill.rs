@@ -682,3 +682,89 @@ fn a_fill_of_cells_with_no_chunk_creates_the_chunk_as_a_stroke_does() {
     assert!(missing.exists());
     assert_eq!(value(&session, [39, 0]).as_deref(), Some("grass"));
 }
+
+#[test]
+fn the_tool_builds_the_rules_fill_and_never_a_stroke_under_it() {
+    use tilewright_editor_ui::SelectionKey;
+    use tilewright_editor_ui::tools::{TerrainRule, ToolMode, ToolState};
+    let (_dir, session) = fixture_with(|_| {});
+    let catalog = session.catalog();
+    let cell = |grid: &str| SelectionKey::Cell {
+        plane: "main".into(),
+        layer: 0,
+        grid: grid.into(),
+        x: 2,
+        y: 3,
+    };
+    let expected = revision(&session);
+    let mut tools = ToolState::default();
+    tools.set_mode(ToolMode::Terrain);
+    tools.choose_terrain(catalog, "floor", "sand").unwrap();
+    // The brush rule makes no fill.
+    assert!(!tools.filling());
+    assert!(
+        tools
+            .fill_action(catalog, &cell("floor"), expected, false)
+            .is_err()
+    );
+    for (rule, contiguous) in [(TerrainRule::Fill, true), (TerrainRule::Replace, false)] {
+        tools.set_terrain_rule(rule);
+        assert!(tools.filling());
+        assert_eq!(
+            tools.fill_action(catalog, &cell("floor"), expected, false),
+            Ok(Action::FillTerrain {
+                plane: "main".into(),
+                layer: 0,
+                grid: "floor".into(),
+                x: 2,
+                y: 3,
+                proto: "sand".into(),
+                contiguous,
+                expected,
+            })
+        );
+        // A pending change, another grid or an object: no fill.
+        assert!(
+            tools
+                .fill_action(catalog, &cell("floor"), expected, true)
+                .is_err()
+        );
+        assert!(
+            tools
+                .fill_action(catalog, &cell("edge"), expected, false)
+                .is_err()
+        );
+        let object = SelectionKey::Object {
+            uid: "marker_1".into(),
+        };
+        assert!(
+            tools
+                .fill_action(catalog, &object, expected, false)
+                .is_err()
+        );
+        // A press never begins a stroke under the rule.
+        let floor = cell("floor");
+        let inspected = tilewright_editor_ui::inspector::inspect(
+            session.world(),
+            catalog,
+            Some(&floor),
+            session.generation(),
+            expected,
+        );
+        assert!(
+            tools
+                .begin_stroke(&inspected, &cell("floor"), false)
+                .is_err()
+        );
+        assert!(tools.stroke().is_none());
+    }
+    assert_eq!(TerrainRule::Replace.next(), TerrainRule::Brush);
+    // Outside Terrain mode there is no fill, whatever the rule.
+    tools.set_mode(ToolMode::Select);
+    assert!(!tools.filling());
+    assert!(
+        tools
+            .fill_action(catalog, &cell("floor"), expected, false)
+            .is_err()
+    );
+}

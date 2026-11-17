@@ -5,6 +5,8 @@
 //! events, on the CPU scene path the scripted demonstration captures: the
 //! rule rows and key, the hover preview, and the one pending change a click
 //! prepares.
+// Colours are copied, never computed, so they compare exactly.
+#![allow(clippy::float_cmp)]
 use super::zones::{button, key, route, sidebar_texts};
 use super::{acknowledge_ui, brush_application, cell_pixel};
 use crate::prototype::Application;

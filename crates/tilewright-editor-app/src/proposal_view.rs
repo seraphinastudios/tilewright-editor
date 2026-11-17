@@ -323,37 +323,7 @@ pub(super) fn step_tiles<'a>(
             .take(HIGHLIGHT_TILES)
             .map(|at| Some((Role::Cell, plane.as_str(), *layer, *at)))
             .collect(),
-        // The start cell, then every cell the engine's own fill would
-        // change in the person's world; the start cell alone when it would
-        // change none (already that terrain, or it starts outside the view).
-        Action::FillTerrain {
-            plane,
-            layer,
-            grid,
-            x,
-            y,
-            proto,
-            contiguous,
-            ..
-        } => {
-            let start = [*x, *y];
-            let changed = fill_changes(
-                world,
-                catalog,
-                plane,
-                *layer,
-                grid,
-                start,
-                proto,
-                *contiguous,
-            )
-            .unwrap_or_default();
-            std::iter::once(start)
-                .chain(changed.into_iter().filter(|at| *at != start))
-                .take(HIGHLIGHT_TILES)
-                .map(|at| Some((Role::Cell, plane.as_str(), *layer, at)))
-                .collect()
-        }
+        Action::FillTerrain { .. } => fill_tiles(action, world, catalog),
         Action::Place {
             plane, layer, x, y, ..
         } => vec![Some((Role::Target, plane.as_str(), *layer, [*x, *y]))],
@@ -1610,25 +1580,7 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             shown(grid),
             shown(plane)
         ),
-        Action::FillTerrain {
-            plane,
-            layer,
-            grid,
-            x,
-            y,
-            proto,
-            contiguous,
-            ..
-        } => fill_words(
-            world,
-            catalog,
-            plane,
-            *layer,
-            grid,
-            [*x, *y],
-            proto,
-            *contiguous,
-        ),
+        Action::FillTerrain { .. } => fill_words(action, world, catalog),
         Action::PaintZones {
             plane,
             layer,
@@ -1792,26 +1744,41 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
     }
 }
 
-/// The region a fill covers in `world`
+/// The region fill `action` covers in `world`
 /// ([`tilewright_editor_ui::fill::region`], the engine's own expansion) and
-/// the cells of it the fill would change: none when the region already
-/// holds `proto`, as the engine skips cells that hold it. `None` when the
-/// engine would not expand the fill at all (outside the view, unknown grid).
-#[allow(clippy::too_many_arguments)]
+/// how many of its cells the fill would change: none when the region
+/// already holds the fill's terrain, as the engine leaves out cells that
+/// hold it. `None` for another action, or when the engine would not expand
+/// the fill at all (outside the view, an unknown grid).
 fn fill_region<'w>(
+    action: &Action,
     world: &'w World,
     catalog: &PreviewCatalog,
-    plane: &str,
-    layer: i32,
-    grid: &str,
-    at: [i64; 2],
-    proto: &str,
-    contiguous: bool,
 ) -> Option<(tilewright_editor_ui::fill::Region<'w>, usize)> {
-    let region =
-        tilewright_editor_ui::fill::region(world, catalog, plane, layer, grid, at, contiguous)
-            .ok()?;
-    let changed = if region.value == Some(proto) {
+    let Action::FillTerrain {
+        plane,
+        layer,
+        grid,
+        x,
+        y,
+        proto,
+        contiguous,
+        ..
+    } = action
+    else {
+        return None;
+    };
+    let region = tilewright_editor_ui::fill::region(
+        world,
+        catalog,
+        plane,
+        *layer,
+        grid,
+        [*x, *y],
+        *contiguous,
+    )
+    .ok()?;
+    let changed = if region.value == Some(proto.as_str()) {
         0
     } else {
         region.cells.len()
@@ -1819,63 +1786,71 @@ fn fill_region<'w>(
     Some((region, changed))
 }
 
-/// The cells a fill would change in `world`, in the engine's order.
-#[allow(clippy::too_many_arguments)]
-fn fill_changes(
-    world: &World,
-    catalog: &PreviewCatalog,
-    plane: &str,
-    layer: i32,
-    grid: &str,
-    at: [i64; 2],
-    proto: &str,
-    contiguous: bool,
-) -> Option<Vec<[i64; 2]>> {
-    let (region, changed) = fill_region(world, catalog, plane, layer, grid, at, proto, contiguous)?;
-    Some(if changed == 0 {
-        Vec::new()
-    } else {
-        region.cells
-    })
+/// The tiles of fill `action`: its start cell, then every cell the
+/// engine's fill would change in the person's world, at most
+/// [`HIGHLIGHT_TILES`]; the start cell alone when it would change none
+/// (already that terrain, or it starts outside the view).
+fn fill_tiles<'a>(
+    action: &'a Action,
+    world: &'a World,
+    catalog: &'a PreviewCatalog,
+) -> Vec<Option<Named<'a>>> {
+    let Action::FillTerrain {
+        plane, layer, x, y, ..
+    } = action
+    else {
+        return Vec::new();
+    };
+    let start = [*x, *y];
+    let changed = match fill_region(action, world, catalog) {
+        Some((region, changed)) if changed > 0 => region.cells,
+        _ => Vec::new(),
+    };
+    std::iter::once(start)
+        .chain(changed.into_iter().filter(|at| *at != start))
+        .take(HIGHLIGHT_TILES)
+        .map(|at| Some((Role::Cell, plane.as_str(), *layer, at)))
+        .collect()
 }
 
-/// A fill or replace in words: the rule, where it starts and the terrain
-/// first, then what the person's world holds there and how many cells it
-/// would change.
-#[allow(clippy::too_many_arguments)]
-fn fill_words(
-    world: &World,
-    catalog: &PreviewCatalog,
-    plane: &str,
-    layer: i32,
-    grid: &str,
-    at: [i64; 2],
-    proto: &str,
-    contiguous: bool,
-) -> String {
-    let start = tile(catalog, plane, layer, at);
-    let place = format!("({} on {}/{layer})", shown(grid), shown(plane));
-    let Some((region, changed)) =
-        fill_region(world, catalog, plane, layer, grid, at, proto, contiguous)
+/// Fill `action` in words: the rule, where it starts and the terrain first,
+/// then what the person's world holds there and how many cells it would
+/// change.
+fn fill_words(action: &Action, world: &World, catalog: &PreviewCatalog) -> String {
+    let Action::FillTerrain {
+        plane,
+        layer,
+        grid,
+        x,
+        y,
+        proto,
+        contiguous,
+        ..
+    } = action
     else {
-        let rule = if contiguous { "Fill" } else { "Replace" };
-        return format!("{rule} from {start} with {} {place}", shown(proto));
+        return String::new();
+    };
+    let start = tile(catalog, plane, *layer, [*x, *y]);
+    let on = format!("({} on {}/{layer})", shown(grid), shown(plane));
+    let Some((region, changed)) = fill_region(action, world, catalog) else {
+        let rule = if *contiguous { "Fill" } else { "Replace" };
+        return format!("{rule} from {start} with {} {on}", shown(proto));
     };
     let held = region.value.map(shown);
     let effect = if changed == 0 {
         format!("no change, already {}", shown(proto))
     } else {
         match &held {
-            Some(value) if contiguous => format!("{} of {value}", cells_words(changed)),
-            None if contiguous => format!("{} with no terrain", cells_words(changed)),
+            Some(value) if *contiguous => format!("{} of {value}", cells_words(changed)),
+            None if *contiguous => format!("{} with no terrain", cells_words(changed)),
             _ => cells_words(changed),
         }
     };
-    if contiguous {
-        format!("Fill from {start} with {}: {effect} {place}", shown(proto))
+    if *contiguous {
+        format!("Fill from {start} with {}: {effect} {on}", shown(proto))
     } else {
         format!(
-            "Replace every {} in the view with {}: {effect}, from {start} {place}",
+            "Replace every {} in the view with {}: {effect}, from {start} {on}",
             held.unwrap_or_else(|| "cell with no terrain".into()),
             shown(proto)
         )

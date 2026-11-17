@@ -273,6 +273,30 @@ fn tiles_on_another_layer_outside_the_view_or_not_placed_are_not_drawn() {
     };
     let main = || String::from("main");
     let not_placed = (Concerns::NotPlaced, Vec::new());
+    // A fill that would change nothing, or starts outside the view, names
+    // only its start cell; one that would names the start cell first.
+    let fill = |x: i64, proto: &str, contiguous: bool| Action::FillTerrain {
+        plane: main(),
+        layer: 0,
+        grid: "floor".into(),
+        x,
+        y: 0,
+        proto: proto.into(),
+        contiguous,
+        expected,
+    };
+    assert_eq!(
+        of(fill(0, "grass", true)),
+        (Concerns::Tiles, main0(&[("cell", [0, 0])]))
+    );
+    assert_eq!(
+        of(fill(100, "sand", false)),
+        (Concerns::Tiles, main0(&[("cell", [100, 0])]))
+    );
+    let (_, replaced) = of(fill(3, "sand", false));
+    assert_eq!(replaced.len(), 24);
+    assert_eq!(replaced[0].3, [3, 0]);
+    assert_eq!(replaced[1].3, [0, 0]);
     assert_eq!(
         of(Action::Move {
             uid: "missing".into(),
