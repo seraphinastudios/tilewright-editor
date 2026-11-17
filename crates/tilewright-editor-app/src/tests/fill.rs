@@ -64,6 +64,26 @@ fn marked(app: &mut Application) -> Vec<[i64; 2]> {
     );
     cells
 }
+/// A pixel of the exact cell mask that a panel covers, if any.
+fn under_panel(app: &mut Application) -> Option<[f32; 2]> {
+    use crate::workspace_ui::Hit;
+    app.refresh_ui();
+    let frame = app.frame(true).unwrap();
+    let cells: std::collections::BTreeSet<u32> =
+        app.prepared.cell_picks.keys().map(|id| id.0).collect();
+    let width = usize::try_from(frame.width).unwrap();
+    let index = frame
+        .semantic_ids
+        .iter()
+        .enumerate()
+        .position(|(index, sample)| {
+            let px = u32::try_from(index % width).unwrap();
+            let py = u32::try_from(index / width).unwrap();
+            cells.contains(sample) && !matches!(app.ui.hit(px, py), Hit::World(..))
+        })?;
+    #[allow(clippy::cast_precision_loss)]
+    Some([(index % width) as f32 + 0.5, (index / width) as f32 + 0.5])
+}
 /// The region the engine expands, read from the committed World directly.
 fn region(app: &Application, at: [i64; 2], contiguous: bool) -> Vec<[i64; 2]> {
     fill::region(
@@ -252,6 +272,17 @@ fn hovering_previews_the_engines_cells_once_and_prepares_nothing() {
     route(&mut app, &hover([x as f32 + 4.0, 200.0])).unwrap();
     assert!(app.hover.is_none() && app.fill_preview.is_none());
     assert!(marked(&mut app).is_empty());
+    // A map cell drawn under the sidebar is under the panel, not hovered:
+    // pan the view right until the east columns lie beneath it.
+    app.view.camera.center[0] -= 8.0;
+    app.rebuild().unwrap();
+    acknowledge_ui(&mut app);
+    let covered = under_panel(&mut app).expect("a cell drawn under the sidebar");
+    route(&mut app, &hover(covered)).unwrap();
+    assert!(app.hover.is_none() && app.fill_preview.is_none());
+    app.view.camera.center[0] += 8.0;
+    app.rebuild().unwrap();
+    acknowledge_ui(&mut app);
     // A hover that would change nothing shows the engine's refusal.
     route(&mut app, &hover(grass)).unwrap();
     assert!(app.fill_changes().is_none());
