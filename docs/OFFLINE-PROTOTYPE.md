@@ -713,6 +713,97 @@ Pending scenes are never export input. Keep the original content tree read-only
 and export into a new task-owned output. See the adapter's own usage and tests
 for its manifest/stale-source/unsupported-edit rejection contract.
 
+## Project art
+
+The preview draws the resources its `preview.jsonc` catalog lists: raw
+RGBA8 images in `preview-assets/*.atx1` files inside the world. The neutral
+sample's are original MIT art. A project may also show **its own art**, under
+its own license, by the owner's decision of 2026-11-17
+([ADR 0004](../decisions/0004-project-art-in-the-preview.md)). This is not
+legal advice: the user is responsible for their art's license, for every
+copy the editor makes of it (below), and for where those copies go.
+
+**The catalog.** Format `tilewright.editor-preview/2` is format 1 with one
+change: a resource's `license` may be `MIT` or `project`, exactly so and
+nothing else. `project` declares art the world's project supplies under its
+own license; `author` and `notice` are still required and kept as written.
+The value is self-declared: the editor cannot check it. A catalog may mix
+both values. A format 1 catalog keeps accepting only `MIT`, and refuses
+`project` with its usual error. An editor that knows only format 1 refuses
+every format 2 catalog ("unsupported preview format"), so an older editor
+never shows project art unmarked. A format 2 catalog with only `MIT`
+resources loads, draws and reports exactly as the same catalog in format 1.
+The version rule: a format version changes when an existing member's
+meaning changes, as here, where a resource stops being MIT by definition.
+Optional members and new values of a closed set may be added within a
+version, as the `editing` members have been, because every catalog object
+and value set is closed: an older editor refuses a catalog with a member or
+value it does not know.
+
+**What a project does.** Its own tools, outside this repository, write the
+art as ATX1 files and the catalog entries. The editor has no image decoder
+and converts nothing. An ATX1 file is the four bytes `ATX1`, the width and
+the height as little-endian unsigned 32-bit integers, then `width × height`
+pixels of four bytes each (red, green, blue, alpha), tightly packed, row by
+row from the top, as the released `tilewright-render-resources` 0.7.1 crate
+defines the envelope; the repository's
+`crates/tilewright-editor-testkit/fixtures/prototype-neutral/generate_assets.py`
+writes the sample's.
+The catalog entry gives the file's lowercase SHA-256, which the loader
+checks, and its width and height, which must match the header. Limits: a
+side of at most 8,192 pixels and 16,777,216 pixels per image; 16 MiB per
+file; 64 MiB of resources and 1,024 resources per catalog; a catalog of at
+most 1 MiB. The provisioning helpers copy the whole world, `preview-assets/`
+included, within their own limits (4,096 entries, 64 MiB, depth 32), so
+uncompressed art reaches them sooner than compressed files would. Each
+prototype is drawn with one whole resource, anchored `ground` or `standing`,
+on one tile: there are no atlas frames, anchor offsets or multi-tile
+footprints yet.
+
+**What "project art is loaded" means.** The loaded catalog has at least one
+resource with the license `project`, whether or not any is drawn in the
+current view or region. The editor records nothing about the art beyond
+that count; the catalog revision already identifies the catalog's text.
+
+**What is marked.** While project art is loaded:
+
+- the desktop shows `Project art loaded` on the review row, beside Accept
+  and Cancel, in every mode;
+- every evidence frame (`<name>.png`) carries the project-art mark, and its
+  `<name>.json` record gains `"project_art": {"resources": N,
+  "mark_rows": R}`;
+- every `render --out` file and every MCP `render` image carries the same
+  mark, and its report `catalog.project_art` and `image.mark_rows`
+  ([docs/CLI.md](CLI.md#render), [docs/MCP.md](MCP.md#project-art));
+- `overview`, `tile`, `catalog` and `lint` report `catalog.project_art`, and
+  lint a `catalog.project_art` info finding, so a reader knows before
+  rendering.
+
+The mark is one rule for every PNG the editor makes: rows added below the
+image, never drawn over it, so the image's own pixels and coordinates are
+unchanged. They are a dark separator and an amber band reading `PROJECT
+ART: CHECK ITS LICENSE BEFORE SHARING` in black capitals from a fixed
+bitmap font (`PROJECT ART` on an image narrower than 276 pixels), scaled
+with the width: 12 rows on a narrow image, 24 on a 720-pixel evidence frame,
+48 from 1,104 pixels. Without project art nothing is marked and every frame,
+record and report is as before.
+
+**Where copies go.** The editor never bundles, uploads or copies project
+art anywhere but the session and its outputs: the provisioned session copy
+and sandbox copies (which persist until the user deletes them), evidence
+frames, `render` files, and the images the MCP servers return to their
+client. MCP `render` is always allowed: with an AI agent as the client, its
+images usually go to a model provider, and whether the art's license allows
+that is the user's to check. The read-only commands and the read-only MCP
+server read the world in place, without a session copy.
+
+**Never in these repositories.** Project art never enters this repository,
+its fixtures, goldens, docs, issues or release packages; please do not
+attach marked frames to issues. Tests use generated pixels, or the MIT
+sample labelled `project` in a temporary copy of its catalog. Foundation
+checks refuse any committed catalog with a license other than `MIT`, and
+packaging refuses a sample catalog with one.
+
 ## Evidence and limits
 
 `--demo-script` drives the same session actions, command history and scene
@@ -762,7 +853,9 @@ level this guide and the guides it links to (`SANDBOX.md`, `MCP-EDITING.md`,
 `PROPOSALS.md`, `ENGINE.md`, `MCP.md`, `CLI.md`); the design records they
 link to are not included. Imported worlds,
 real game maps/art, adapter baseline, recovery records and session evidence
-are excluded. Windows build/test/package success is not Windows durable-editing
+are excluded, as is any project art ([Project art](#project-art)); the
+packaged sample's catalog declares only `MIT` resources, which packaging
+checks. Windows build/test/package success is not Windows durable-editing
 or native D3D12 qualification.
 
 Later work includes a full widget/text-editing system, arbitrary-root

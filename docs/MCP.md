@@ -167,7 +167,29 @@ followed by `<list>_cursor` as well as `<list>_more`.
   packaging smoke tests check this on Linux and Windows). Its report's
   `png` gives the PNG's `bytes` and `sha256`. The image is returned as
   image content (`type` `image`, base64 `data`, `mimeType` `image/png`)
-  after the text content; nothing is written.
+  after the text content; nothing is written. While the catalog contains
+  project art, the image is the marked one `render --out` writes, the mark's
+  rows count against the image caps, and the report has
+  `catalog.project_art` and `image.mark_rows` (see
+  [Project art](#project-art)).
+
+### Project art
+
+A world's catalog may contain project art: catalog format 2 resources with
+the license `project`, art the world's project supplies under its own
+license ([Project art](OFFLINE-PROTOTYPE.md#project-art)). This server
+serves such a world like any other, by the owner's decision of 2026-11-17
+(see [ADR 0004](../decisions/0004-project-art-in-the-preview.md)): `render`
+is not refused and needs no start option. Every report with a `catalog`
+member has `catalog.project_art` (`{"resources": N}`) then, and lint a
+`catalog.project_art` info finding, so a client knows before it renders;
+every `render` image carries the visible project-art mark below the view.
+The server's instructions and the `render` description say the same.
+
+**`render` sends the art's pixels to the client.** With an AI agent as the
+client, that usually means to a model provider. The editor cannot know
+what the art's license allows; checking that it allows this is the user's
+responsibility. This is not legal advice.
 
 Every report names `revision`, the World revision (the lowercase hex
 SHA-256 of the files World's load read) it was computed at. Every tool
