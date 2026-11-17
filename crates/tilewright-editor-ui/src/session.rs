@@ -83,6 +83,25 @@ pub enum Action {
         proto: String,
         expected: [u8; 32],
     },
+    /// Fill (`contiguous`) or replace terrain from plane tile `x, y` of the
+    /// active view on ground grid `grid`. The engine expands it from the
+    /// committed World when it is prepared ([`crate::fill::region`]): with
+    /// `contiguous`, the cells reachable from the start tile through edge
+    /// neighbours that hold its value, within the view; without, every cell
+    /// of the view holding that value. Those cells then go through the brush
+    /// stroke's planner: one reviewed `terrain.set` setting `proto`, each
+    /// cell expecting its committed value, cells already holding `proto`
+    /// left out.
+    FillTerrain {
+        plane: String,
+        layer: i32,
+        grid: String,
+        x: i64,
+        y: i64,
+        proto: String,
+        contiguous: bool,
+        expected: [u8; 32],
+    },
     /// One zone brush gesture: every covered cell of the active view gets
     /// `zone`, or is emptied (`None`, the plane's default zone), in one
     /// reviewed `terrain.set` on the grid `zone`. Needs `editing.zones.paint`.
@@ -711,19 +730,10 @@ impl Session {
         }
         Ok(changes)
     }
-    /// The cells a running brush stroke would change if it were released
-    /// now: exactly the `at` of every cell in the `terrain.set` that
-    /// dispatching its [`Action::PaintStroke`] would prepare, in the same
-    /// order, computed by the same code. Covered cells that already hold the
-    /// stroke's terrain are not included. It reads only the committed World
-    /// in memory and prepares nothing; release still revalidates the
-    /// catalog and reloads the source, and an external change found then
-    /// refuses the whole stroke. An error means the release would be
-    /// refused too, including a stroke that changes no cell.
-    pub fn stroke_changes(
-        &self,
-        stroke: &crate::brush::Stroke,
-    ) -> Result<Vec<[i64; 2]>, SessionError> {
+    /// Whether a preview of an edit made for revision `expected` may be
+    /// computed: the session could prepare it now, and `expected` is the
+    /// committed revision.
+    fn previewable(&self, expected: [u8; 32]) -> Result<(), SessionError> {
         if !self.can_prepare() {
             // The message predates the code; a blocked session says so by code.
             let code = if self.status.phase == SessionPhase::Blocked || self.history.needs_reload()
@@ -737,9 +747,25 @@ impl Session {
                 "review pending transaction: Accept or Cancel before another edit",
             ));
         }
-        if stroke.expected() != self.history.document().revision() {
+        if expected != self.history.document().revision() {
             return Err(refuse(RefusalCode::RevisionStale, "stale source revision"));
         }
+        Ok(())
+    }
+    /// The cells a running brush stroke would change if it were released
+    /// now: exactly the `at` of every cell in the `terrain.set` that
+    /// dispatching its [`Action::PaintStroke`] would prepare, in the same
+    /// order, computed by the same code. Covered cells that already hold the
+    /// stroke's terrain are not included. It reads only the committed World
+    /// in memory and prepares nothing; release still revalidates the
+    /// catalog and reloads the source, and an external change found then
+    /// refuses the whole stroke. An error means the release would be
+    /// refused too, including a stroke that changes no cell.
+    pub fn stroke_changes(
+        &self,
+        stroke: &crate::brush::Stroke,
+    ) -> Result<Vec<[i64; 2]>, SessionError> {
+        self.previewable(stroke.expected())?;
         let cells: Vec<[i64; 2]> = stroke.cells().collect();
         let changes = match stroke.target() {
             crate::brush::StrokeTarget::Terrain(proto) => {
@@ -749,6 +775,71 @@ impl Session {
                 self.zone_plan(stroke.plane(), stroke.layer(), &cells, zone.as_deref())?
             }
         };
+        Ok(changes.into_iter().map(|(at, _)| at).collect())
+    }
+    /// The cells a fill from `at` changes, each with its committed value,
+    /// in increasing order of x, then y. Dispatch of
+    /// [`Action::FillTerrain`] and [`Session::fill_changes`] both use this.
+    /// The start cell is checked first exactly as a one-cell paint is
+    /// (grant, then view), so a fill is refused with the same codes; then
+    /// the region ([`crate::fill::region`], from the committed World) goes
+    /// through the stroke rule and the stroke planner.
+    fn fill_plan<'w>(
+        &'w self,
+        plane: &str,
+        layer: i32,
+        grid: &str,
+        at: [i64; 2],
+        proto: &str,
+        contiguous: bool,
+    ) -> Result<Vec<TerrainChange<'w>>, SessionError> {
+        self.terrain_changes(plane, layer, grid, &[at], proto, false)?;
+        let region = crate::fill::region(
+            self.history.document().world(),
+            &self.catalog,
+            plane,
+            layer,
+            grid,
+            at,
+            contiguous,
+        )?;
+        // A view holds at most the stroke cap's cells, so this cannot
+        // refuse a region of a view the catalog loaded; it is checked, not
+        // assumed.
+        stroke_cells(&region.cells)?;
+        let changes = self.terrain_changes(plane, layer, grid, &region.cells, proto, true)?;
+        if changes.is_empty() {
+            return Err(refuse(
+                RefusalCode::ChangeNone,
+                "fill changes no cell: the region already has this terrain",
+            ));
+        }
+        Ok(changes)
+    }
+    /// The cells dispatching `fill`, an [`Action::FillTerrain`], would
+    /// change now: exactly the `at` of every cell of the `terrain.set` it
+    /// would prepare, in the same order, computed by the same code. Like
+    /// [`Session::stroke_changes`] it reads only the committed World in
+    /// memory and prepares nothing; dispatch still revalidates the catalog
+    /// and reloads the source. An error means dispatch would be refused
+    /// too, including a fill that changes no cell. Any other action is
+    /// refused with [`RefusalCode::InputInvalid`].
+    pub fn fill_changes(&self, fill: &Action) -> Result<Vec<[i64; 2]>, SessionError> {
+        let Action::FillTerrain {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+            proto,
+            contiguous,
+            expected,
+        } = fill
+        else {
+            return Err(refuse(RefusalCode::InputInvalid, "not a fill action"));
+        };
+        self.previewable(*expected)?;
+        let changes = self.fill_plan(plane, *layer, grid, [*x, *y], proto, *contiguous)?;
         Ok(changes.into_iter().map(|(at, _)| at).collect())
     }
     /// The cells of one zone stroke whose `zone` cell `zone` changes, each
@@ -854,19 +945,12 @@ impl Session {
             .position(|g| g == grid)
             .ok_or_else(|| refuse(RefusalCode::TargetUnknown, "unknown ground grid"))?;
         let mut changes = Vec::new();
-        for &[x, y] in cells {
-            let local = usize::try_from(y.rem_euclid(32) * 32 + x.rem_euclid(32))
-                .map_err(|_| refuse(RefusalCode::Internal, "cell overflow"))?;
-            let before = world
-                .planes()
-                .get(plane)
-                .and_then(|p| p.chunks.get(&(layer, x.div_euclid(32), y.div_euclid(32))))
-                .and_then(|c| c.ground.get(index))
-                .and_then(|g| g.value(local));
+        for &cell in cells {
+            let before = crate::fill::ground_value(world, plane, layer, index, cell)?;
             if skip_unchanged && before == Some(proto) {
                 continue;
             }
-            changes.push(([x, y], before));
+            changes.push((cell, before));
         }
         Ok(changes)
     }
@@ -1056,6 +1140,7 @@ impl Session {
                     | Action::SetField { .. }
                     | Action::Paint { .. }
                     | Action::PaintStroke { .. }
+                    | Action::FillTerrain { .. }
                     | Action::PaintZones { .. }
                     | Action::Remove { .. }
                     | Action::Place { .. }
@@ -1251,6 +1336,24 @@ impl Session {
                 );
                 // One gesture is one operation, so review, recovery, undo and
                 // redo each treat the whole stroke as a single World change.
+                self.prepare(expected,&json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":grid,"cells":cells}))
+            }
+            Action::FillTerrain {
+                plane,
+                layer,
+                grid,
+                x,
+                y,
+                proto,
+                contiguous,
+                expected,
+            } => {
+                let cells = cell_operations(
+                    self.fill_plan(&plane, layer, &grid, [x, y], &proto, contiguous)?,
+                    &proto,
+                );
+                // The same single operation as a brush stroke: replay of a
+                // recorded fill on the same World gives the same bytes.
                 self.prepare(expected,&json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":grid,"cells":cells}))
             }
             Action::PaintZones {
@@ -1521,6 +1624,7 @@ fn is_edit(action: &Action) -> bool {
         | Action::SetField { .. }
         | Action::Paint { .. }
         | Action::PaintStroke { .. }
+        | Action::FillTerrain { .. }
         | Action::PaintZones { .. }
         | Action::Remove { .. }
         | Action::Place { .. }

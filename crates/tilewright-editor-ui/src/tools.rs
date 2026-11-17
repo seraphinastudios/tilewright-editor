@@ -65,6 +65,40 @@ pub fn zone_palette<'w>(world: &'w World, catalog: &PreviewCatalog) -> Vec<&'w s
     })
 }
 
+/// What a press does with the chosen terrain in Terrain mode.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TerrainRule {
+    /// Drag the brush: every covered cell ([`Action::PaintStroke`]).
+    #[default]
+    Brush,
+    /// Click: the region joined to the cell through edge neighbours that
+    /// holds its terrain, within the view ([`Action::FillTerrain`] with
+    /// `contiguous`).
+    Fill,
+    /// Click: every cell of the view that holds the cell's terrain
+    /// ([`Action::FillTerrain`] without `contiguous`).
+    Replace,
+}
+impl TerrainRule {
+    pub const ALL: [Self; 3] = [Self::Brush, Self::Fill, Self::Replace];
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Brush => "brush",
+            Self::Fill => "fill",
+            Self::Replace => "replace",
+        }
+    }
+    /// The next rule in [`TerrainRule::ALL`], after the last the first.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Brush => Self::Fill,
+            Self::Fill => Self::Replace,
+            Self::Replace => Self::Brush,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerrainChoice {
     pub grid: String,
@@ -213,6 +247,8 @@ pub struct ToolState {
     next_draft: u64,
     brush: Brush,
     stroke: Option<Stroke>,
+    /// What a press does in Terrain mode; kept across modes like the brush.
+    terrain_rule: TerrainRule,
     zone: Option<ZoneChoice>,
     /// Whether the zone overlay shows outside Zone mode.
     show_zones: bool,
@@ -279,6 +315,20 @@ impl ToolState {
     /// A running stroke keeps the brush it began with.
     pub fn set_brush(&mut self, brush: Brush) {
         self.brush = brush.resized(0);
+    }
+    pub fn terrain_rule(&self) -> TerrainRule {
+        self.terrain_rule
+    }
+    /// Choose what a press does in Terrain mode. A running stroke ends: it
+    /// was begun under the other rule.
+    pub fn set_terrain_rule(&mut self, rule: TerrainRule) {
+        self.stroke = None;
+        self.terrain_rule = rule;
+    }
+    /// Whether a press in the view fills or replaces rather than paints:
+    /// Terrain mode with the Fill or Replace rule.
+    pub fn filling(&self) -> bool {
+        self.mode == ToolMode::Terrain && self.terrain_rule != TerrainRule::Brush
     }
     pub fn zone_choice(&self) -> Option<&ZoneChoice> {
         self.zone.as_ref()
@@ -1443,6 +1493,52 @@ impl ToolState {
 }
 
 impl ToolState {
+    /// The fill or replace (by the rule) of the chosen terrain from plane
+    /// cell `cell`, made for committed revision `expected`: what a click
+    /// there prepares, and what the hover preview shows. Needs Terrain mode
+    /// with the Fill or Replace rule, a chosen terrain of `cell`'s grid that
+    /// the palette still offers, and no pending change.
+    pub fn fill_action(
+        &self,
+        catalog: &PreviewCatalog,
+        cell: &SelectionKey,
+        expected: [u8; 32],
+        pending: bool,
+    ) -> Result<Action, ToolError> {
+        available(pending)?;
+        if !self.filling() {
+            return Err(ToolError(
+                "Fill and replace need Terrain mode's Fill or Replace rule",
+            ));
+        }
+        let choice = self
+            .terrain
+            .as_ref()
+            .ok_or(ToolError("Choose an explicit terrain palette value"))?;
+        let SelectionKey::Cell {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+        } = cell
+        else {
+            return Err(ToolError("Fill requires a cell"));
+        };
+        if grid != &choice.grid || !terrain_palette(catalog).contains(choice) {
+            return Err(ToolError("Terrain choice is unavailable for this grid"));
+        }
+        Ok(Action::FillTerrain {
+            plane: plane.clone(),
+            layer: *layer,
+            grid: grid.clone(),
+            x: *x,
+            y: *y,
+            proto: choice.prototype.clone(),
+            contiguous: self.terrain_rule == TerrainRule::Fill,
+            expected,
+        })
+    }
     pub fn stroke(&self) -> Option<&Stroke> {
         self.stroke.as_ref()
     }
@@ -1458,6 +1554,11 @@ impl ToolState {
     ) -> Result<(), ToolError> {
         if self.mode == ToolMode::Zone {
             return self.begin_zone_stroke(inspector, cell, pending);
+        }
+        if self.filling() {
+            return Err(ToolError(
+                "The Fill and Replace rules click; they do not drag",
+            ));
         }
         let Action::Paint {
             plane,
