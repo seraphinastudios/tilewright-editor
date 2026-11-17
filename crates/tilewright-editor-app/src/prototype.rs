@@ -224,6 +224,9 @@ struct Application {
     /// Whether the last composed frame left out the stroke preview because
     /// World, preview and interface together exceeded the scene limits.
     preview_omitted: bool,
+    /// Whether the last composed frame left out the open proposal's map
+    /// highlight to fit the scene limits (said in the Proposal block).
+    highlight_omitted: bool,
     /// The zone of every in-view tile, computed once per redraw for the
     /// legend and the overlay, keyed by the World source revision and the
     /// frame it was computed for.
@@ -316,6 +319,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         stroke_mask: None,
         prepared_scenes: 1,
         preview_omitted: false,
+        highlight_omitted: false,
         zone_view: None,
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
@@ -501,6 +505,7 @@ impl Application {
         let refreshed = self.rebuild();
         self.report();
         let settled = self.settle_proposal(accept.then_some(records), prepare);
+        self.refresh_highlight();
         match result {
             Err(original) => Err(original),
             Ok(()) => refreshed.and(settled),
@@ -4876,6 +4881,35 @@ fn zone_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     crate::workspace_render::zone_overlay(&app.prepared, &cells)
 }
 
+/// The open proposal's highlight of the tiles its current step concerns
+/// (`proposal_view::Highlight`): copies of their prepared cell quads in the
+/// highlight's tints, in the World's draw order like the zone tints, after
+/// them and before the brush preview. Tiles the person's own running stroke
+/// previews are left to that preview, so a cell never shows both. Empty
+/// without a proposal or a step to highlight.
+fn proposal_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    let Some(highlight) = app.proposal_highlight() else {
+        return Vec::new();
+    };
+    if highlight.tints.is_empty() || app.prepared.frame_revision != app.view.frame_revision {
+        return Vec::new();
+    }
+    let previewed: std::collections::BTreeSet<[i64; 2]> = app
+        .tools
+        .stroke()
+        .and_then(|_| stroke_changes(app))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    crate::workspace_render::tile_overlay(&app.prepared, |at| {
+        if previewed.contains(&at) {
+            None
+        } else {
+            highlight.tints.get(&at).copied()
+        }
+    })
+}
+
 /// The anchor and portal badges of the in-view tiles, over the cached
 /// prepared cell scene: shown in Anchor mode, and wherever the zone overlay
 /// shows. Anchors on other layers or out of view are listed, not drawn.
@@ -4930,37 +4964,83 @@ fn compose_with_preview(
     }
 }
 
+/// Compose the cached prepared World with `overlay` (the person's own
+/// overlays with `highlight` among them) and the interface. The proposal
+/// highlight gives way first: when the whole overlay would take the frame
+/// past the scene limits it is composed again without the highlight
+/// (`person`, the zone tints, badges and brush preview), and only when that
+/// still does not fit without any overlay ([`compose_with_preview`]).
+/// Returns the presentation, whether the person's overlays were left out
+/// and whether the highlight was.
+fn compose_highlight_first(
+    system: &mut tilewright_render_ui::TextSystem,
+    ui: &WorkspaceUi,
+    prepared: &PreparedPreview,
+    overlay: &[tilewright_scene::Quad],
+    person: &[tilewright_scene::Quad],
+    limits: tilewright_scene::SceneLimits,
+) -> std::result::Result<
+    (crate::workspace_render::Presentation, bool, bool),
+    crate::workspace_render::CompositionError,
+> {
+    if overlay.len() == person.len() {
+        return compose_with_preview(system, ui, prepared, overlay, limits)
+            .map(|(presentation, omitted)| (presentation, omitted, false));
+    }
+    match crate::workspace_render::compose_with_overlay(
+        system,
+        ui,
+        &prepared.scene,
+        prepared.resources.clone(),
+        overlay,
+        limits,
+    ) {
+        Err(crate::workspace_render::CompositionError::Scene(
+            tilewright_scene::Error::LimitExceeded,
+        )) => compose_with_preview(system, ui, prepared, person, limits)
+            .map(|(presentation, omitted)| (presentation, omitted, true)),
+        result => result.map(|presentation| (presentation, false, false)),
+    }
+}
+
 fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {
-    // Zone tints and the stroke preview take the World's cell slots: each
-    // copy draws right after its tile's terrain, and where a zone tint and
-    // a preview mark share a slot they draw in the order passed here, so
-    // the preview, passed last, draws over the tint. Badges take no cell
-    // slot: they sit in their own slot after the last World quad, above
-    // every tile and object, whatever order they are passed in.
-    let mut overlay = zone_overlay(app);
-    overlay.extend(badge_overlay(app));
-    overlay.extend(stroke_overlay(app));
-    let (mut presentation, mut omitted) = compose_with_preview(
-        &mut app.text,
-        &app.ui,
-        &app.prepared,
-        &overlay,
-        app.frame_limits,
-    )
-    .map_err(|error| error.to_string())?;
-    if app.unsupported_runs != presentation.unsupported_runs || app.preview_omitted != omitted {
-        app.unsupported_runs = presentation.unsupported_runs;
-        app.preview_omitted = omitted;
-        app.refresh_ui();
-        (presentation, omitted) = compose_with_preview(
+    // Zone tints, the proposal highlight and the stroke preview take the
+    // World's cell slots: each copy draws right after its tile's terrain,
+    // and copies sharing a slot draw in the order passed here, so the
+    // highlight draws over a zone tint and the preview, passed last, over
+    // both. Badges take no cell slot: they sit in their own slot after the
+    // last World quad, above every tile and object, whatever order they are
+    // passed in.
+    let mut person = zone_overlay(app);
+    person.extend(badge_overlay(app));
+    let stroke = stroke_overlay(app);
+    let mut overlay = person.clone();
+    overlay.extend(proposal_overlay(app));
+    overlay.extend(stroke.iter().copied());
+    person.extend(stroke);
+    let compose = |app: &mut Application| {
+        compose_highlight_first(
             &mut app.text,
             &app.ui,
             &app.prepared,
             &overlay,
+            &person,
             app.frame_limits,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())
+    };
+    let (mut presentation, mut omitted, mut highlight) = compose(app)?;
+    if app.unsupported_runs != presentation.unsupported_runs
+        || app.preview_omitted != omitted
+        || app.highlight_omitted != highlight
+    {
+        app.unsupported_runs = presentation.unsupported_runs;
         app.preview_omitted = omitted;
+        app.highlight_omitted = highlight;
+        app.refresh_ui();
+        (presentation, omitted, highlight) = compose(app)?;
+        app.preview_omitted = omitted;
+        app.highlight_omitted = highlight;
     }
     Ok(presentation)
 }

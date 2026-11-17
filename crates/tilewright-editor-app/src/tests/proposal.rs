@@ -26,9 +26,9 @@ use tilewright_editor_proposal::{Proposal, hex};
 use tilewright_editor_testkit::fixture_world;
 use tilewright_editor_ui::{Action, Actor, PortalTarget, RefusalCode, Session};
 
-const AGENT: &str = "agent:sandbox \"desk\" \\ 7";
+pub(super) const AGENT: &str = "agent:sandbox \"desk\" \\ 7";
 const PERSON: &str = "human:tester";
-const RECEIPT: [u8; 32] = [7; 32];
+pub(super) const RECEIPT: [u8; 32] = [7; 32];
 const LABEL: &str = "client\u{1b}[31m\u{202e}\u{200b}\u{2028}";
 
 #[derive(Default)]
@@ -49,14 +49,14 @@ fn spare_zone(root: &Path) {
     });
 }
 
-fn edit_json(root: &Path, path: &str, change: impl FnOnce(&mut Value)) {
+pub(super) fn edit_json(root: &Path, path: &str, change: impl FnOnce(&mut Value)) {
     let path = root.join(path);
     let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     change(&mut value);
     fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
 }
 
-fn open_session(root: &Path, actor: &str) -> Session {
+pub(super) fn open_session(root: &Path, actor: &str) -> Session {
     let document = WorldDocument::open(root).unwrap();
     let (catalog, resources) = loader::load(
         document.source(),
@@ -72,12 +72,12 @@ fn open_session(root: &Path, actor: &str) -> Session {
     )
 }
 
-fn revision(session: &Session) -> [u8; 32] {
+pub(super) fn revision(session: &Session) -> [u8; 32] {
     session.history().document().revision()
 }
 
 /// Dispatch `action` on `session` and accept it.
-fn accept(session: &mut Session, action: Action) {
+pub(super) fn accept(session: &mut Session, action: Action) {
     let kind = format!("{action:?}");
     session
         .dispatch(action, &mut Records)
@@ -89,9 +89,9 @@ fn accept(session: &mut Session, action: Action) {
 
 /// The 15 edit kinds, in an order in which each applies after the ones
 /// before it on the neutral fixture with the `spare` zone.
-const KINDS: usize = 15;
+pub(super) const KINDS: usize = 15;
 #[allow(clippy::too_many_lines)]
-fn edit(kind: usize, expected: [u8; 32]) -> Action {
+pub(super) fn edit(kind: usize, expected: [u8; 32]) -> Action {
     let main = || String::from("main");
     match kind {
         0 => Action::Move {
@@ -199,14 +199,14 @@ fn edit(kind: usize, expected: [u8; 32]) -> Action {
 /// The person's application on a copy of the neutral fixture (changed by
 /// `person`), with the person's actor; and the agent's twin copy (changed
 /// by `agent`), where `steps` edit kinds are accepted and recorded.
-struct Twin {
-    person: tempfile::TempDir,
-    agent: tempfile::TempDir,
-    app: Application,
-    proposal: Proposal,
+pub(super) struct Twin {
+    pub(super) person: tempfile::TempDir,
+    pub(super) agent: tempfile::TempDir,
+    pub(super) app: Application,
+    pub(super) proposal: Proposal,
 }
 
-fn twin(
+pub(super) fn twin(
     steps: usize,
     agent: impl FnOnce(&Path),
     person: impl FnOnce(&Path),
@@ -238,14 +238,14 @@ fn twin(
     }
 }
 
-fn scratch() -> std::path::PathBuf {
+pub(super) fn scratch() -> std::path::PathBuf {
     std::env::var_os("TILEWRIGHT_CHECKED_TEST_ROOT")
         .map_or_else(std::env::temp_dir, std::path::PathBuf::from)
 }
 
 /// The 1280x800 test application, its session rebuilt with the person's
 /// actor as `--actor human:tester` makes it.
-fn person_application(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
+pub(super) fn person_application(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
     let (temporary, mut app) = zone_application(prepare);
     let document = WorldDocument::open_prototype(&temporary.path().join("world")).unwrap();
     let (catalog, resources) = loader::load(
@@ -265,7 +265,7 @@ fn person_application(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Applic
     (temporary, app)
 }
 
-fn open(twin: &mut Twin) {
+pub(super) fn open(twin: &mut Twin) {
     let name = twin.proposal.file_name();
     twin.app
         .open_proposal(Some((twin.proposal.clone(), name)))
@@ -273,14 +273,14 @@ fn open(twin: &mut Twin) {
     acknowledge_ui(&mut twin.app);
 }
 
-fn state(app: &Application) -> State {
+pub(super) fn state(app: &Application) -> State {
     app.proposal
         .as_ref()
         .unwrap()
         .state(&app.session, app.blocked.is_some())
 }
 
-fn evidence(twin: &Twin, name: &str) -> Value {
+pub(super) fn evidence(twin: &Twin, name: &str) -> Value {
     serde_json::from_slice(&fs::read(twin.person.path().join("evidence").join(name)).unwrap())
         .unwrap()
 }
@@ -345,7 +345,7 @@ fn panel_rows(app: &mut Application) -> Vec<(Row, String)> {
 }
 
 /// Press the panel's control with the pointer, as the person would.
-fn press_control(app: &mut Application) {
+pub(super) fn press_control(app: &mut Application) {
     try_press_control(app).unwrap();
 }
 
@@ -393,7 +393,7 @@ fn control(app: &mut Application) -> Option<(String, Control, bool)> {
 
 /// Prepare the next step with the panel's button, check it is pending
 /// for review and nothing else changed, and accept it with Enter.
-fn prepare_and_accept(twin: &mut Twin, step: usize) {
+pub(super) fn prepare_and_accept(twin: &mut Twin, step: usize) {
     let app = &mut twin.app;
     assert_eq!(state(app), State::Ready { step });
     let before = revision(&app.session);
@@ -552,7 +552,7 @@ fn every_step_applies_through_prepare_and_the_persons_accept() {
     assert_eq!(
         frame["proposal"],
         json!({"proposal": hex(&proposal.body_sha256()), "steps": KINDS, "applied": KINDS,
-            "state": "finished", "pending_step": false})
+            "state": "finished", "pending_step": false, "highlight": null})
     );
 }
 
@@ -917,7 +917,7 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
 
 /// The proposal with its body changed by `change` and its transaction
 /// digests fixed up, as a writer who can recompute digests would.
-fn forged(proposal: &Proposal, change: impl FnOnce(&mut Value)) -> Proposal {
+pub(super) fn forged(proposal: &Proposal, change: impl FnOnce(&mut Value)) -> Proposal {
     let document: Value = serde_json::from_slice(proposal.bytes()).unwrap();
     let mut body = document["body"].clone();
     change(&mut body);
@@ -1201,12 +1201,13 @@ fn every_kind_reads_as_words_from_its_action_and_the_persons_world() {
             "Create anchor camp at (2, 2) on main",
             "Move anchor arrival to (6, 3), from (7, 3), on main",
             "Delete anchor lookout at (-2, 0), outside the view on main",
-            "Point the portal of gate_west to anchor arrival on main",
+            "Point the portal of gate_west to anchor arrival at (7, 3) on main",
         ]
     );
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn outside_the_view_is_said_where_the_world_has_it() {
     let (_person, app) = person_application(|root| {
         edit_json(root, "planes/main/anchors.jsonc", |anchors| {
@@ -1264,6 +1265,51 @@ fn outside_the_view_is_said_where_the_world_has_it() {
             expected
         }),
         "Point the portal of gate_west to (2, 3) on main/0"
+    );
+    // Where the words name a tile outside the view, they say so: a portal's
+    // location or anchor, and the object a field change concerns.
+    assert_eq!(
+        words(&Action::SetPortal {
+            uid: "gate_west".into(),
+            target: Some(PortalTarget::Location {
+                plane: "main".into(),
+                layer: 1,
+                at: [2, 3]
+            }),
+            expected
+        }),
+        "Point the portal of gate_west to (2, 3), outside the view on main/1"
+    );
+    assert_eq!(
+        words(&Action::SetPortal {
+            uid: "gate_west".into(),
+            target: Some(PortalTarget::Anchor {
+                plane: "main".into(),
+                anchor: "far".into()
+            }),
+            expected
+        }),
+        "Point the portal of gate_west to anchor far at (400, 3), outside the view on main"
+    );
+    assert_eq!(
+        words(&Action::SetPortal {
+            uid: "gate_west".into(),
+            target: Some(PortalTarget::Anchor {
+                plane: "main".into(),
+                anchor: "gone".into()
+            }),
+            expected
+        }),
+        "Point the portal of gate_west to anchor gone on main"
+    );
+    assert_eq!(
+        words(&Action::SetField {
+            uid: "marker_negative".into(),
+            field: "label".into(),
+            value: json!("Far"),
+            expected
+        }),
+        "Set label on marker_negative to \"Far\" (outside the view)"
     );
     assert_eq!(
         words(&Action::SetPortal {

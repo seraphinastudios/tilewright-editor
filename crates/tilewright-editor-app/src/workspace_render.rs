@@ -476,8 +476,18 @@ fn shrink(quads: Vec<Quad>, corner: Corner) -> Vec<Quad> {
 /// Composed before the stroke preview, a preview mark of the same cell
 /// draws over the tint. Tiles without a tint get no quad.
 pub fn zone_overlay(prepared: &PreparedPreview, tints: &BTreeMap<[i64; 2], [f32; 4]>) -> Vec<Quad> {
+    tile_overlay(prepared, |at| tints.get(&at).copied())
+}
+
+/// Unpickable copies of the prepared cell quads of every tile `tint` gives
+/// a colour (by plane tile), in that colour, in the World scene's draw order
+/// exactly like [`zone_overlay`].
+pub fn tile_overlay(
+    prepared: &PreparedPreview,
+    tint: impl Fn([i64; 2]) -> Option<[f32; 4]>,
+) -> Vec<Quad> {
     world_ordered_copies(prepared, |key| match key {
-        SelectionKey::Cell { x, y, .. } => tints.get(&[*x, *y]).copied(),
+        SelectionKey::Cell { x, y, .. } => tint([*x, *y]),
         SelectionKey::Object { .. } => None,
     })
 }

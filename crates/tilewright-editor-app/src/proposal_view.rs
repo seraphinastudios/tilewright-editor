@@ -80,6 +80,290 @@ pub(super) struct OpenProposal {
     pub(super) reading: Reading,
     /// The sequence number of the last step record written.
     pub(super) records: u64,
+    /// The map highlight of the current step's tiles, derived when the
+    /// proposal's state changes (`Application::refresh_highlight`), never
+    /// per frame.
+    pub(super) highlight: Option<Highlight>,
+}
+
+/// The most tiles a step's highlight holds: the stroke bound, which the
+/// proposal reader already applies to a stroke's cells.
+pub(super) const HIGHLIGHT_TILES: usize = tilewright_editor_ui::brush::MAXIMUM_STROKE_CELLS;
+/// The Proposal block's notice when the last frame left the highlight out
+/// to fit the scene limits; the status line keeps what it says.
+pub(super) const HIGHLIGHT_LEFT_OUT: &str = "Highlight left out: too many cells for one frame";
+/// The most tiles the frame evidence lists by name.
+pub(super) const FRAME_TILES: usize = 8;
+/// The highlight's tint: black at 50 % over the tile, so it darkens a tile
+/// where the brush preview ([`crate::workspace_render::STROKE_PREVIEW_TINT`])
+/// lightens one and the zone tints colour one.
+pub(super) const HIGHLIGHT_TINT: [f32; 4] = [0.0, 0.0, 0.0, 0.5];
+/// The tint of a tile something leaves (`from`): the same black at 25 %.
+pub(super) const HIGHLIGHT_FROM_TINT: [f32; 4] = [0.0, 0.0, 0.0, 0.25];
+
+/// What a highlighted tile is to its step.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Role {
+    /// Where an object or anchor is moved from.
+    From,
+    /// Where it is moved to.
+    To,
+    /// The tile of the object a field, a deletion or a portal concerns.
+    Object,
+    /// A painted cell.
+    Cell,
+    /// Where an object is placed, or where a portal leads.
+    Target,
+    /// The tile of an anchor created or deleted.
+    Anchor,
+}
+
+impl Role {
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::From => "from",
+            Self::To => "to",
+            Self::Object => "object",
+            Self::Cell => "cell",
+            Self::Target => "target",
+            Self::Anchor => "anchor",
+        }
+    }
+
+    pub(super) fn tint(self) -> [f32; 4] {
+        if self == Self::From {
+            HIGHLIGHT_FROM_TINT
+        } else {
+            HIGHLIGHT_TINT
+        }
+    }
+}
+
+/// One tile a step concerns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Tile {
+    pub(super) role: Role,
+    pub(super) plane: String,
+    pub(super) layer: i32,
+    pub(super) at: [i64; 2],
+    /// On the active view's plane and layer, inside its bounds.
+    pub(super) in_view: bool,
+}
+
+/// Why a step has no tiles, or that it has some.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Concerns {
+    Tiles,
+    /// A zone definition change: nothing on the map.
+    NoTiles,
+    /// The object or anchor it names is not placed in the person's world.
+    NotPlaced,
+}
+
+impl Concerns {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Tiles => "tiles",
+            Self::NoTiles => "no tiles",
+            Self::NotPlaced => "not placed",
+        }
+    }
+}
+
+/// The highlight of step `step`: its tiles, from its decoded Action and the
+/// person's committed world at `revision`, and the tints of those in view.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Highlight {
+    pub(super) step: usize,
+    pub(super) revision: [u8; 32],
+    pub(super) concerns: Concerns,
+    /// Distinct tiles (plane, layer and tile), at most [`HIGHLIGHT_TILES`];
+    /// a tile named twice keeps its first role.
+    pub(super) tiles: Vec<Tile>,
+    /// The in-view tiles' tints, by plane tile, as the overlay draws them.
+    pub(super) tints: std::collections::BTreeMap<[i64; 2], [f32; 4]>,
+}
+
+impl Highlight {
+    pub(super) fn of(step: usize, action: &Action, session: &Session) -> Self {
+        let world = session.history().document().world();
+        let catalog = session.catalog();
+        let (concerns, found) = step_tiles(action, world, catalog);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut tiles = Vec::new();
+        let mut tints = std::collections::BTreeMap::new();
+        // `step_tiles` names at most `HIGHLIGHT_TILES`.
+        for (role, plane, layer, at) in found {
+            if !seen.insert((plane, layer, at)) {
+                continue;
+            }
+            let in_view = catalog.tile_in_active_view(plane, layer, at[0], at[1]);
+            if in_view {
+                tints.insert(at, role.tint());
+            }
+            tiles.push(Tile {
+                role,
+                plane: plane.to_owned(),
+                layer,
+                at,
+                in_view,
+            });
+        }
+        Self {
+            step,
+            revision: session.history().document().revision(),
+            concerns,
+            tiles,
+            tints,
+        }
+    }
+
+    /// The frame evidence's `highlight` member.
+    pub(super) fn frame(&self) -> serde_json::Value {
+        let in_view = self.tiles.iter().filter(|tile| tile.in_view).count();
+        let first: Vec<_> = self
+            .tiles
+            .iter()
+            .take(FRAME_TILES)
+            .map(|tile| {
+                serde_json::json!({
+                    "role": tile.role.key(),
+                    "plane": shown(&tile.plane),
+                    "layer": tile.layer,
+                    "x": tile.at[0],
+                    "y": tile.at[1],
+                    "in_view": tile.in_view,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "step": self.step + 1,
+            "concerns": self.concerns.key(),
+            "in_view": in_view,
+            "outside_view": self.tiles.len() - in_view,
+            "tiles": first,
+        })
+    }
+}
+
+/// The step a highlight shows for `state`: the step the panel offers to
+/// prepare (ready, undone or refused) or the one pending; none otherwise.
+pub(super) fn highlighted_step(state: State) -> Option<usize> {
+    match state {
+        State::Ready { step }
+        | State::Undone { step }
+        | State::Refused { step, .. }
+        | State::Pending { step } => Some(step),
+        _ => None,
+    }
+}
+
+/// A tile a step names: its role, plane, layer and plane tile.
+pub(super) type Named<'a> = (Role, &'a str, i32, [i64; 2]);
+
+/// The tiles step `action` concerns, each with its role, plane and layer,
+/// from the decoded Action and the person's committed `world` (where an
+/// object or anchor is now), in the order the step's words name them; at
+/// most [`HIGHLIGHT_TILES`] of a stroke's cells. A step whose object or
+/// anchor is not placed in `world` names none of its tiles: without the
+/// object there is no plane and layer for a move's destination either.
+pub(super) fn step_tiles<'a>(
+    action: &'a Action,
+    world: &'a World,
+    catalog: &'a PreviewCatalog,
+) -> (Concerns, Vec<Named<'a>>) {
+    // Where object `uid` is placed, as `role`.
+    let placed = |role: Role, uid: &str| {
+        let plane = world.object_location(uid)?.plane.as_str();
+        let found = object_place(world, uid)?;
+        Some((role, plane, found.layer, found.at?))
+    };
+    let anchor = |role: Role, plane: &'a str, anchor: &str| {
+        let found = world.planes().get(plane)?.anchors.get(anchor)?;
+        Some((role, plane, found.layer, found.at))
+    };
+    // A move's destination, on the plane and layer of where it is now.
+    let to = |from: Option<Named<'a>>, x: i64, y: i64| {
+        from.map(|(_, plane, layer, _)| (Role::To, plane, layer, [x, y]))
+    };
+    let found: Vec<Option<Named<'a>>> = match action {
+        Action::Move { uid, x, y, .. } => {
+            let from = placed(Role::From, uid);
+            vec![to(from, *x, *y), from]
+        }
+        Action::SetField { uid, .. } | Action::Remove { uid, .. } => {
+            vec![placed(Role::Object, uid)]
+        }
+        Action::SetPortal { uid, target, .. } => vec![
+            placed(Role::Object, uid),
+            match target {
+                None => None,
+                Some(PortalTarget::Location { plane, layer, at }) => {
+                    Some((Role::Target, plane.as_str(), *layer, *at))
+                }
+                Some(PortalTarget::Anchor { plane, anchor: id }) => anchor(Role::Target, plane, id),
+            },
+        ],
+        Action::Paint {
+            plane, layer, x, y, ..
+        } => vec![Some((Role::Cell, plane.as_str(), *layer, [*x, *y]))],
+        Action::PaintStroke {
+            plane,
+            layer,
+            cells,
+            ..
+        }
+        | Action::PaintZones {
+            plane,
+            layer,
+            cells,
+            ..
+        } => cells
+            .iter()
+            .take(HIGHLIGHT_TILES)
+            .map(|at| Some((Role::Cell, plane.as_str(), *layer, *at)))
+            .collect(),
+        Action::Place {
+            plane, layer, x, y, ..
+        } => vec![Some((Role::Target, plane.as_str(), *layer, [*x, *y]))],
+        // Created on the active view's spatial layer.
+        Action::CreateAnchor { plane, x, y, .. } => vec![Some((
+            Role::Anchor,
+            plane.as_str(),
+            catalog.view().1,
+            [*x, *y],
+        ))],
+        Action::MoveAnchor {
+            plane,
+            anchor: id,
+            x,
+            y,
+            ..
+        } => {
+            let from = anchor(Role::From, plane, id);
+            vec![to(from, *x, *y), from]
+        }
+        Action::DeleteAnchor {
+            plane, anchor: id, ..
+        } => vec![anchor(Role::Anchor, plane, id)],
+        Action::RenameZone { .. }
+        | Action::SetZoneParent { .. }
+        | Action::CreateZone { .. }
+        | Action::DeleteZone { .. }
+        | Action::Select { .. }
+        | Action::ClearSelection
+        | Action::Accept
+        | Action::Cancel
+        | Action::Undo
+        | Action::Redo
+        | Action::Reopen => return (Concerns::NoTiles, Vec::new()),
+    };
+    let tiles: Vec<Named<'a>> = found.into_iter().flatten().collect();
+    if tiles.is_empty() {
+        (Concerns::NotPlaced, tiles)
+    } else {
+        (Concerns::Tiles, tiles)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -136,6 +420,8 @@ pub(super) enum Row {
     State,
     Counts,
     Notice,
+    /// The map highlight was left out of the last frame.
+    Highlight,
 }
 
 impl Row {
@@ -155,7 +441,9 @@ impl Row {
         match (self, line) {
             (Self::Header, _) => 0,
             (Self::Step, 0) => 1,
-            (Self::State, 0) => 2,
+            // Kept with the state's first line: the map no longer shows
+            // what the words name.
+            (Self::State, 0) | (Self::Highlight, _) => 2,
             (Self::Label, _) => 3,
             (Self::Caveat, _) => 4,
             (Self::Editor, _) => 5,
@@ -261,6 +549,7 @@ impl OpenProposal {
             last: Last::Nothing,
             reading: Reading::Idle,
             records: 0,
+            highlight: None,
         }
     }
 
@@ -666,6 +955,7 @@ impl Application {
         self.evidence
             .retain("proposal-open.json", record.as_bytes())?;
         self.proposal = Some(open);
+        self.refresh_highlight();
         Ok(())
     }
 
@@ -728,7 +1018,44 @@ impl Application {
         open.last = Last::Nothing;
         open.reading = Reading::Idle;
         self.presented_generation = None;
+        self.refresh_highlight();
         Ok(())
+    }
+
+    /// Derives the map highlight for the proposal's state after it changed
+    /// (the funnel's settle, a continue, the opening): the tiles of the step
+    /// [`highlighted_step`] names, kept while the step and the committed
+    /// revision stay the same.
+    pub(super) fn refresh_highlight(&mut self) {
+        let Some(open) = self.proposal.as_mut() else {
+            return;
+        };
+        let state = open.state(&self.session, self.blocked.is_some());
+        let revision = self.session.history().document().revision();
+        open.highlight = match highlighted_step(state) {
+            Some(step)
+                if open
+                    .highlight
+                    .as_ref()
+                    .is_some_and(|kept| kept.step == step && kept.revision == revision) =>
+            {
+                open.highlight.take()
+            }
+            Some(step) => open
+                .proposal
+                .steps()
+                .get(step)
+                .map(|recorded| Highlight::of(step, recorded.action(), &self.session)),
+            None => None,
+        };
+    }
+
+    /// The highlight to draw and record now: the stored one, while the
+    /// panel's state still names its step (a rendering failure after it was
+    /// derived blocks the session and clears it).
+    pub(super) fn proposal_highlight(&self) -> Option<&Highlight> {
+        let highlight = self.proposal.as_ref()?.highlight.as_ref()?;
+        (highlighted_step(self.proposal_state()?) == Some(highlight.step)).then_some(highlight)
     }
 
     /// The panel's control, when it is pressed or its key is used.
@@ -889,7 +1216,10 @@ impl Application {
         let x = ui.sidebar_x();
         let width = ui.sidebar_width();
         let characters = row_characters(&mut self.text, width);
-        let rows = open.rows(&self.session, state, characters);
+        let mut rows = open.rows(&self.session, state, characters);
+        if self.highlight_omitted && self.proposal_highlight().is_some() {
+            rows.push((Row::Highlight, HIGHLIGHT_LEFT_OUT.into()));
+        }
         let ready = self.blocked.is_none() && self.session.can_prepare();
         let control = open.control(state, ready);
         let budget = panel_lines_in(panel_height(ui.logical_height()));
@@ -937,6 +1267,11 @@ impl Application {
             "applied": open.progress.as_ref().map(Progress::next),
             "state": state.key(),
             "pending_step": matches!(state, State::Pending { .. }),
+            "highlight": self.proposal_highlight().map(|highlight| {
+                let mut frame = highlight.frame();
+                frame["left_out"] = self.highlight_omitted.into();
+                frame
+            }),
         }))
     }
 
@@ -1208,10 +1543,11 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
         Action::SetField {
             uid, field, value, ..
         } => format!(
-            "Set {} on {} to {}",
+            "Set {} on {} to {}{}",
             shown(field),
             shown(uid),
-            shown(&value.to_string())
+            shown(&value.to_string()),
+            object_outside(world, catalog, uid)
         ),
         Action::Paint {
             plane,
@@ -1383,16 +1719,16 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
         Action::SetPortal { uid, target, .. } => match target {
             None => format!("Clear the portal of {}", shown(uid)),
             Some(PortalTarget::Anchor { plane, anchor }) => format!(
-                "Point the portal of {} to anchor {} on {}",
+                "Point the portal of {} to anchor {}{} on {}",
                 shown(uid),
                 shown(anchor),
+                anchor_at(plane, anchor).map_or_else(String::new, |at| format!(" at {at}")),
                 shown(plane)
             ),
             Some(PortalTarget::Location { plane, layer, at }) => format!(
-                "Point the portal of {} to ({}, {}) on {}/{layer}",
+                "Point the portal of {} to {} on {}/{layer}",
                 shown(uid),
-                at[0],
-                at[1],
+                tile(catalog, plane, *layer, *at),
                 shown(plane)
             ),
         },
@@ -1403,6 +1739,19 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
         | Action::Undo
         | Action::Redo
         | Action::Reopen => "not an edit".into(),
+    }
+}
+
+/// " (outside the view)" when object `uid` is placed on a tile outside it.
+fn object_outside(world: &World, catalog: &PreviewCatalog, uid: &str) -> &'static str {
+    match object_place(world, uid) {
+        Some(Found {
+            plane,
+            layer,
+            at: Some([x, y]),
+            ..
+        }) if !catalog.tile_in_active_view(&plane, layer, x, y) => " (outside the view)",
+        _ => "",
     }
 }
 
