@@ -134,15 +134,26 @@ impl Observed {
                 .text("problem", problem),
             Catalog::Loaded(loaded) => {
                 let status = Map::new().with("status", Node::Text("loaded".into()));
-                if view {
+                let status = if view {
                     status
                         .with("view", view_node(&loaded.0))
                         .text("presentation", loaded.0.presentation())
                 } else {
                     status
-                }
+                };
+                with_project_art(status, &loaded.0)
             }
         }
+    }
+}
+
+/// `status` with `project_art: {resources}` when the catalog contains
+/// project art (resources with the license `project`), and unchanged
+/// otherwise, so reports of other worlds are as before.
+pub fn with_project_art(status: Map, catalog: &PreviewCatalog) -> Map {
+    match catalog.project_art_resources() {
+        0 => status,
+        resources => status.with("project_art", Map::new().count("resources", resources)),
     }
 }
 
