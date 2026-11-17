@@ -14,7 +14,8 @@
 //! each), and the image is that camera's viewport sized to hold
 //! everything the region draws, centred on the region: what the desktop
 //! shows of the same region, uncut. While the catalog contains project art,
-//! the image also carries the project-art mark in rows added below it
+//! the image also carries the project-art mark in rows added below it, and
+//! on an image too narrow for the mark's text in columns added right of it
 //! (`tilewright_editor_preview::mark`), and its report says so.
 use crate::cli::{EXIT_NOT_LOADED, Outcome, printed, refused};
 use crate::limits::{
@@ -148,8 +149,9 @@ pub fn draw(
         )
     };
     let mut frame = prepared.reference_frame().map_err(|_| failed())?;
-    let mark_rows = (prepared.project_art_resources > 0).then(|| mark::rows(frame.width));
-    if mark_rows.is_some() {
+    let added = (prepared.project_art_resources > 0)
+        .then(|| (mark::rows(frame.width), mark::columns(frame.width)));
+    if added.is_some() {
         frame = mark::marked(&frame).ok_or_else(failed)?;
     }
     let report = report(
@@ -157,7 +159,7 @@ pub fn draw(
         scale,
         (plane, layer, region, tiles),
         &frame,
-        mark_rows,
+        added,
         &prepared.diagnostics,
     );
     Ok((frame, report))
@@ -172,14 +174,16 @@ pub struct Framed<'a> {
 }
 
 impl Framed<'_> {
-    /// `[width, height]` of the image, the project-art mark's rows
-    /// included when the catalog contains project art.
+    /// `[width, height]` of the image, the project-art mark's rows and
+    /// columns included when the catalog contains project art.
     pub fn size(&self) -> [u32; 2] {
         let viewport = self.prepared.scene.viewport();
-        [
-            viewport.width,
-            viewport.height + self.mark_rows().unwrap_or(0),
-        ]
+        if self.mark_rows().is_some() {
+            // Within the image bounds already checked, so it cannot overflow.
+            mark::size(viewport.width, viewport.height).unwrap_or([viewport.width, viewport.height])
+        } else {
+            [viewport.width, viewport.height]
+        }
     }
 
     /// The rows the project-art mark adds below the drawn view, when the
@@ -284,9 +288,12 @@ pub fn frame_view(
     )
     .map_err(|_| unprepared())?;
     let [width, height] = frame(measured.extent()).ok_or_else(too_large)?;
-    // The project-art mark adds rows below the image; the marked image
+    // The project-art mark adds rows below the image, and columns right of
+    // a narrow one; the marked image
     // keeps within the image bounds.
-    if catalog.contains_project_art() && !fits(width, height.saturating_add(mark::rows(width))) {
+    if catalog.contains_project_art()
+        && !mark::size(width, height).is_some_and(|[width, height]| fits(width, height))
+    {
         return Err(too_large());
     }
     let prepared = tilewright_editor_preview::prepare(
@@ -310,7 +317,7 @@ fn report(
     scale: u32,
     (plane, layer, region, tiles): (&str, i32, [i64; 4], usize),
     frame: &ReferenceFrame,
-    mark_rows: Option<u32>,
+    mark: Option<(u32, u32)>,
     diagnostics: &[tilewright_editor_preview::PreviewDiagnostic],
 ) -> Map {
     let image = Map::new()
@@ -322,9 +329,11 @@ fn report(
         .with("width", frame.width)
         .with("height", frame.height);
     // Only on a marked image, so other reports are unchanged: the last
-    // `mark_rows` rows of the image are the project-art mark.
-    let image = match mark_rows {
-        Some(rows) => image.with("mark_rows", rows),
+    // `mark_rows` rows of the image are the project-art mark, and on a
+    // narrow image so are its last `mark_columns` columns.
+    let image = match mark {
+        Some((rows, 0)) => image.with("mark_rows", rows),
+        Some((rows, columns)) => image.with("mark_rows", rows).with("mark_columns", columns),
         None => image,
     };
     observed

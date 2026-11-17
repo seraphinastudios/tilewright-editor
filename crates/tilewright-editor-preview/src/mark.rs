@@ -11,11 +11,13 @@
 //! fixed bitmap font that is part of this module (no font file, no text
 //! shaping, the same pixels on every platform). The image's own pixels
 //! keep their place and their values, so a coordinate in the map part of a
-//! marked image is the coordinate in the unmarked one; only the height
-//! grows, by [`rows`]. The strip's look depends on the width alone: the
-//! glyphs are scaled by the largest whole factor up to [`MAXIMUM_SCALE`]
-//! at which [`TEXT`] fits, and an image too narrow for [`TEXT`] at factor 1
-//! gets [`SHORT_TEXT`], cut at the right edge when even that does not fit.
+//! marked image is the coordinate in the unmarked one. The height grows by
+//! [`rows`]; an image narrower than [`MINIMUM_WIDTH`], the width
+//! [`SHORT_TEXT`] needs, is also widened to it by [`columns`] of band colour
+//! on the right, the full height, so the mark is always legible. The strip's
+//! look depends on the marked width alone: the glyphs are scaled by the
+//! largest whole factor up to [`MAXIMUM_SCALE`] at which [`TEXT`] fits, and
+//! an image too narrow for [`TEXT`] at factor 1 gets [`SHORT_TEXT`].
 use crate::ReferenceFrame;
 
 /// What the mark says.
@@ -35,6 +37,11 @@ const MARGIN: u32 = 3;
 const PADDING: u32 = 2;
 /// Rows per glyph pixel: the separator, then the band.
 const ROWS_PER_SCALE: u32 = 1 + PADDING + GLYPH_HEIGHT + PADDING;
+
+/// The narrowest marked image: [`SHORT_TEXT`] whole at glyph scale 1,
+/// with its margins.
+#[allow(clippy::cast_possible_truncation)] // 11 characters.
+pub const MINIMUM_WIDTH: u32 = (SHORT_TEXT.len() as u32) * ADVANCE + 2 * MARGIN;
 
 const SEPARATOR: [u8; 4] = [24, 24, 24, 255];
 const BAND: [u8; 4] = [255, 200, 0, 255];
@@ -57,33 +64,52 @@ fn layout(width: u32) -> (&'static str, u32) {
 
 /// How many rows the mark adds below an image `width` pixels wide.
 pub fn rows(width: u32) -> u32 {
-    ROWS_PER_SCALE * layout(width).1
+    ROWS_PER_SCALE * layout(width.max(MINIMUM_WIDTH)).1
+}
+
+/// How many columns of band colour the mark adds right of an image `width`
+/// pixels wide: none from [`MINIMUM_WIDTH`] on.
+pub const fn columns(width: u32) -> u32 {
+    MINIMUM_WIDTH.saturating_sub(width)
+}
+
+/// `[width, height]` of the marked image of a `width` × `height` one, or
+/// `None` when the height overflows.
+pub fn size(width: u32, height: u32) -> Option<[u32; 2]> {
+    Some([width + columns(width), height.checked_add(rows(width))?])
 }
 
 /// The text of the mark on an image `width` pixels wide: [`TEXT`] or
-/// [`SHORT_TEXT`] (possibly cut at the right edge).
+/// [`SHORT_TEXT`], always whole.
 pub fn text(width: u32) -> &'static str {
-    layout(width).0
+    layout(width.max(MINIMUM_WIDTH)).0
 }
 
-/// `frame` with the mark added below it: the same width, [`rows`] more
-/// rows, and the frame's own rows unchanged at the top. `None` when the
+/// `frame` with the mark added: [`rows`] more rows below it and, on an
+/// image narrower than [`MINIMUM_WIDTH`], [`columns`] of band colour right
+/// of it; the frame's own pixels unchanged at the top left. `None` when the
 /// frame's pixels are not `width × height` RGBA8 or the marked size
 /// overflows.
 pub fn marked(frame: &ReferenceFrame) -> Option<ReferenceFrame> {
-    let width = usize::try_from(frame.width).ok()?;
-    let stride = width.checked_mul(4)?;
-    if Some(frame.rgba8.len()) != stride.checked_mul(usize::try_from(frame.height).ok()?) {
+    let original = usize::try_from(frame.width).ok()?.checked_mul(4)?;
+    if Some(frame.rgba8.len()) != original.checked_mul(usize::try_from(frame.height).ok()?) {
         return None;
     }
-    let (text, scale) = layout(frame.width);
-    let added = ROWS_PER_SCALE * scale;
-    let height = frame.height.checked_add(added)?;
+    let [width, height] = size(frame.width, frame.height)?;
+    let stride = usize::try_from(width).ok()?.checked_mul(4)?;
+    let (text, scale) = layout(width);
     let mut rgba8 = Vec::with_capacity(stride.checked_mul(usize::try_from(height).ok()?)?);
-    rgba8.extend_from_slice(&frame.rgba8);
-    for row in 0..added {
+    if original > 0 {
+        for row in frame.rgba8.chunks_exact(original) {
+            rgba8.extend_from_slice(row);
+            for _ in 0..columns(frame.width) {
+                rgba8.extend_from_slice(&BAND);
+            }
+        }
+    }
+    for row in 0..height - frame.height {
         let color = if row < scale { SEPARATOR } else { BAND };
-        for _ in 0..frame.width {
+        for _ in 0..width {
             rgba8.extend_from_slice(&color);
         }
     }
@@ -101,7 +127,7 @@ pub fn marked(frame: &ReferenceFrame) -> Option<ReferenceFrame> {
                         top + usize::try_from(scale * u32::try_from(glyph_row).ok()? + dy).ok()?;
                     for dx in 0..scale {
                         let x = left + scale * column + dx;
-                        if x >= frame.width {
+                        if x >= width {
                             continue;
                         }
                         let at = y * stride + usize::try_from(x).ok()? * 4;
@@ -112,7 +138,7 @@ pub fn marked(frame: &ReferenceFrame) -> Option<ReferenceFrame> {
         }
     }
     Some(ReferenceFrame {
-        width: frame.width,
+        width,
         height,
         rgba8,
     })
@@ -148,8 +174,8 @@ const fn glyph(character: u8) -> [u8; 7] {
 #[cfg(test)]
 mod tests {
     use super::{
-        ADVANCE, BAND, INK, MARGIN, MAXIMUM_SCALE, SEPARATOR, SHORT_TEXT, TEXT, glyph, marked,
-        rows, text,
+        ADVANCE, BAND, INK, MARGIN, MAXIMUM_SCALE, MINIMUM_WIDTH, SEPARATOR, SHORT_TEXT, TEXT,
+        columns, glyph, marked, rows, size, text,
     };
     use crate::ReferenceFrame;
 
@@ -202,13 +228,20 @@ mod tests {
         assert_eq!(rows(1280), 48);
         assert_eq!(rows(8192), 12 * MAXIMUM_SCALE);
         assert_eq!((text(2), rows(2)), (SHORT_TEXT, 12));
+        assert_eq!(MINIMUM_WIDTH, 72);
+        for (width, added) in [(1, 71), (32, 40), (71, 1), (72, 0), (276, 0)] {
+            assert_eq!(columns(width), added, "{width}");
+            assert_eq!(size(width, 5), Some([width + added, 5 + 12]));
+        }
+        assert_eq!(size(10, u32::MAX - 11), None);
     }
 
     #[test]
     fn the_strip_is_added_below_and_leaves_the_image_unchanged() {
-        for (width, height) in [(2, 2), (60, 10), (300, 40), (720, 480)] {
-            let original = frame(width, height);
+        for (original_width, height) in [(1, 3), (2, 2), (60, 10), (300, 40), (720, 480)] {
+            let original = frame(original_width, height);
             let marked = marked(&original).unwrap();
+            let width = original_width.max(MINIMUM_WIDTH);
             let scale = rows(width) / 12;
             assert_eq!(marked.width, width);
             assert_eq!(marked.height, height + rows(width));
@@ -217,11 +250,16 @@ mod tests {
                 (width * marked.height * 4) as usize,
                 "{width}"
             );
-            assert_eq!(
-                marked.rgba8[..original.rgba8.len()],
-                original.rgba8[..],
-                "{width}"
-            );
+            for y in 0..height {
+                for x in 0..width {
+                    let expected = if x < original_width {
+                        pixel(&original, x, y)
+                    } else {
+                        BAND
+                    };
+                    assert_eq!(pixel(&marked, x, y), expected, "{original_width} {x} {y}");
+                }
+            }
             for x in 0..width {
                 for y in height..height + scale {
                     assert_eq!(pixel(&marked, x, y), SEPARATOR);
@@ -238,10 +276,47 @@ mod tests {
                 .map(|(x, y)| pixel(&marked, x, y))
                 .collect();
             assert!(strip.iter().all(|p| [SEPARATOR, BAND, INK].contains(p)));
-            if width >= 6 {
-                assert!(strip.contains(&INK), "{width}");
+            assert!(strip.contains(&INK), "{width}");
+        }
+    }
+
+    /// Whether `text` is drawn whole at glyph scale 1 in the strip of
+    /// `marked`, whose unmarked height was `height`, and nothing else is.
+    fn reads(marked: &ReferenceFrame, height: u32, text: &str) -> bool {
+        let top = height + 3;
+        let mut expected = vec![false; (marked.width * 7) as usize];
+        for (index, character) in text.bytes().enumerate() {
+            let left = MARGIN + u32::try_from(index).unwrap() * ADVANCE;
+            for (row, bits) in glyph(character).iter().enumerate() {
+                for column in 0..5 {
+                    if bits & (1 << (4 - column)) != 0 {
+                        let x = left + column;
+                        if x >= marked.width {
+                            return false;
+                        }
+                        expected[(u32::try_from(row).unwrap() * marked.width + x) as usize] = true;
+                    }
+                }
             }
         }
+        (0..7).all(|row| {
+            (0..marked.width).all(|x| {
+                (pixel(marked, x, top + row) == INK) == expected[(row * marked.width + x) as usize]
+            })
+        })
+    }
+
+    #[test]
+    fn a_narrow_image_is_widened_so_the_short_text_is_whole() {
+        for width in [1, 32, 71, 72, 275] {
+            let original = frame(width, 9);
+            let marked = marked(&original).unwrap();
+            assert_eq!(marked.width, width.max(72), "{width}");
+            assert!(reads(&marked, 9, SHORT_TEXT), "{width}");
+            assert!(!reads(&marked, 9, "PROJECT AR"), "{width}");
+        }
+        let marked = marked(&frame(276, 9)).unwrap();
+        assert!(reads(&marked, 9, TEXT));
     }
 
     #[test]

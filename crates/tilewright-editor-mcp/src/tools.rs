@@ -690,6 +690,8 @@ fn render_schema() -> Schema {
                 .integer("height")
                 // Only on an image with the project-art mark.
                 .maybe("mark_rows", Schema::Integer)
+                // Only on an image widened for the mark.
+                .maybe("mark_columns", Schema::Integer)
                 .build(),
         )
         .list(

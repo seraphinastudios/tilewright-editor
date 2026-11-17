@@ -6623,6 +6623,9 @@
                 },
                 "mark_rows": {
                   "type": "integer"
+                },
+                "mark_columns": {
+                  "type": "integer"
                 }
               },
               "required": [

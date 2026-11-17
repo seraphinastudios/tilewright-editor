@@ -310,3 +310,49 @@ fn tall_marker(root: &std::path::Path, height: u32) {
     std::fs::write(root.join("preview-assets/marker.atx1"), bytes).unwrap();
     std::fs::write(path, catalog).unwrap();
 }
+
+#[test]
+fn a_narrow_render_is_widened_so_the_mark_reads_whole() {
+    let (_plain_directory, plain) = original();
+    let (_directory, root) = labelled("tilewright.editor-preview/2", &["grass"]);
+    let draw_region = |root: &Path| {
+        let request = Request {
+            root: root.into(),
+            out: "unused.png".into(),
+            region: Some([3, 2, 1, 1]),
+            scale: 1,
+            json: true,
+        };
+        let observed = render::open(&request).unwrap_or_else(|outcome| panic!("{outcome:?}"));
+        let rendered =
+            render::render(&observed, &request).unwrap_or_else(|outcome| panic!("{outcome:?}"));
+        let frame = rendered.frame.clone();
+        let outcome = rendered.finish(1, &[7; 32]);
+        let report: Value = serde_json::from_str(&outcome.stdout).unwrap();
+        (frame, report)
+    };
+    let (unmarked, before) = draw_region(&plain);
+    let (frame, report) = draw_region(&root);
+    assert!(unmarked.width < mark::MINIMUM_WIDTH, "{}", unmarked.width);
+    let columns = mark::MINIMUM_WIDTH - unmarked.width;
+    assert_eq!(mark::columns(unmarked.width), columns);
+    assert_eq!(frame.width, mark::MINIMUM_WIDTH);
+    assert_eq!(Some(&frame), mark::marked(&unmarked).as_ref());
+    // The map's pixels at the left, unchanged.
+    let stride = (unmarked.width * 4) as usize;
+    for row in 0..unmarked.height as usize {
+        let start = row * (frame.width as usize) * 4;
+        assert_eq!(
+            frame.rgba8[start..start + stride],
+            unmarked.rgba8[row * stride..(row + 1) * stride]
+        );
+    }
+    assert_eq!(report["image"]["width"], frame.width);
+    assert_eq!(report["image"]["height"], frame.height);
+    assert_eq!(report["image"]["mark_columns"], columns);
+    assert_eq!(report["image"]["mark_rows"], 12);
+    assert!(before["image"].get("mark_columns").is_none());
+    // A view wide enough has no columns member.
+    let (_, wide) = draw(&root, 1);
+    assert!(wide["image"].get("mark_columns").is_none());
+}
