@@ -977,9 +977,7 @@ impl Application {
     /// other edit. The step is then pending for the person's Review; this
     /// never accepts it.
     pub(super) fn prepare_proposal_step(&mut self) -> Result<()> {
-        if let Some(reason) = &self.blocked {
-            return Err(format!("rendering blocked editing: {reason}"));
-        }
+        self.refuse_while_paused()?;
         self.funnel(false, true, |app| {
             let Some(open) = app.proposal.as_mut() else {
                 return Err("no proposal is open".into());
@@ -1016,9 +1014,7 @@ impl Application {
     /// from `resume`, after the person's own edits, an undo of a settled
     /// step or a Cancel. It prepares nothing.
     pub(super) fn continue_proposal(&mut self) -> Result<()> {
-        if let Some(reason) = &self.blocked {
-            return Err(format!("rendering blocked editing: {reason}"));
-        }
+        self.refuse_while_paused()?;
         let Some(open) = self.proposal.as_mut() else {
             return Err("no proposal is open".into());
         };

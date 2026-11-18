@@ -206,9 +206,9 @@ fn the_view_words_fit_the_status_line_of_the_smallest_window() {
 /// A paint of tile (6, 4), empty in the sample, prepared at zoom 5.96,
 /// where it draws; then the zoom set to 8 and the frame rebuilt directly.
 /// At 8 the new ground bends over the steep heights around it and cannot
-/// be drawn: a render block of a pending World. (The desktop's own keys
-/// cannot reach this: zooming in is refused, and an edit that cannot be
-/// drawn is not left pending.)
+/// be drawn: a render block of a pending World. The zoom is set directly
+/// for brevity; today the keys reach the same state (twelve `+` to zoom 8,
+/// where the committed World draws, then the paint).
 fn blocked_with_a_pending_change() -> (tempfile::TempDir, Application) {
     let (temporary, mut app) = zone_application(|root| steep(root, [5, 3], 512));
     app.view.camera.zoom = 5.960_464_5;
@@ -306,7 +306,7 @@ fn the_cancel_button_works_while_blocked_and_a_changed_catalog_needs_its_bytes_b
     assert_eq!(app.status_label(), SOURCES_PAUSED);
     let lines = details(&mut app);
     assert!(
-        lines.contains("The session's catalog or art files changed on disk. Editing resumes when they match what the session loaded again"),
+        lines.contains("The session's catalog or art files changed on disk. Put them back as the session loaded them, then zoom or pan once to check again; otherwise quit and start a new session."),
         "{lines}"
     );
     assert!(
@@ -317,15 +317,31 @@ fn the_cancel_button_works_while_blocked_and_a_changed_catalog_needs_its_bytes_b
         !lines.contains("zoom out") && !lines.contains("reopen"),
         "{lines}"
     );
-    // The Cancel button drops the pending change; the block stays.
-    press(&mut app, &Control::Cancel).unwrap_err();
+    // A map click is refused in the pause's own words.
+    let refused = app.click(5, 5).unwrap_err();
+    assert_eq!(
+        refused,
+        "rendering blocked editing: preview catalog changed"
+    );
+    // The Cancel button drops the pending change and says so; the block
+    // stays, and the button is disabled with nothing pending.
+    press(&mut app, &Control::Cancel).unwrap();
     assert!(app.session.history().pending().is_none());
     assert!(app.blocked.is_some());
+    assert_eq!(
+        app.notice.as_deref(),
+        Some("Pending change cancelled. Editing stays paused.")
+    );
+    assert_eq!(app.status_label(), SOURCES_PAUSED);
+    assert!(!review_button(&mut app, &Control::Cancel).0);
     // Still changed: the next zoom is kept, the block stays.
     assert!(route(&mut app, &key(Keycode::Minus)).is_err());
     assert_eq!(app.view.camera.zoom, zoom * 0.8);
     assert_eq!(app.status_label(), SOURCES_PAUSED);
+    // Nothing checks the files on its own: restored, still paused until
+    // the next zoom.
     std::fs::write(&catalog, &original).unwrap();
+    assert_eq!(app.status_label(), SOURCES_PAUSED);
     route(&mut app, &key(Keycode::Equals)).unwrap();
     assert!(app.blocked.is_none());
     assert_eq!(app.status_label(), VIEW_RESUMED);
@@ -346,4 +362,34 @@ fn the_cancel_button_ends_a_block_of_a_pending_world_that_cannot_be_drawn() {
     paint(&mut app, 5, 0).unwrap();
     assert!(app.view_note.is_none());
     assert_eq!(app.status_label(), "Review changes, then Accept or Cancel.");
+}
+
+/// What the desktop's event loop does with an input: a refusal becomes
+/// the notice.
+fn event(app: &mut Application, event: &sdl3::event::Event) -> Result<(), String> {
+    let result = route(app, event);
+    if let Err(error) = &result {
+        app.notice = Some(error.clone());
+    }
+    result
+}
+
+#[test]
+fn ending_a_pause_by_key_or_by_button_reads_the_same() {
+    // A kept pan that still does not draw leaves a refusal notice; the
+    // Cancel that ends the pause replaces it, by Esc as by the button.
+    for by_key in [true, false] {
+        let (_temporary, mut app) = blocked_with_a_pending_change();
+        assert!(event(&mut app, &key(Keycode::D)).is_err());
+        assert_eq!(app.notice.as_deref(), Some("invalid world view"));
+        super::acknowledge_ui(&mut app);
+        if by_key {
+            event(&mut app, &key(Keycode::Escape)).unwrap();
+        } else {
+            press(&mut app, &Control::Cancel).unwrap();
+        }
+        assert!(app.blocked.is_none());
+        assert!(app.notice.is_none());
+        assert_eq!(app.status_label(), VIEW_RESUMED, "by key: {by_key}");
+    }
 }

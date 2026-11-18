@@ -928,12 +928,14 @@ the frame; while paused, zoom and pan steps are kept even when their view
 does not draw either, so stepping out one key at a time works. When the
 session's catalog or its art changed on disk ("Editing paused: catalog or
 art files changed."), editing resumes only when the files match what the
-session loaded again (any zoom or pan then checks them); otherwise quit and
-start a new session. When the frame could not be composed or shown ("Editing
-paused: the frame could not be shown."), the next zoom, pan or Cancel tries
-again. Every other action, Accept, Undo, Redo, Reopen and the proposal's
-control included, waits. The first rebuild that succeeds ends the pause and
-says "The view can be drawn again. Editing is possible again."; an open
+session loaded again: put them back, then zoom or pan once to check again
+(nothing checks them on its own); otherwise quit and start a new session.
+Cancel still drops a pending change there and says "Pending change
+cancelled. Editing stays paused." When the frame could not be composed or
+shown ("Editing paused: the frame could not be shown."), the next zoom, pan
+or Cancel tries again. Every other action, Accept, Undo, Redo, Reopen, map
+clicks and the proposal's control included, is refused with the pause's
+reason. The first rebuild that succeeds ends the pause and says "The view can be drawn again. Editing is possible again."; an open
 proposal's panel and highlight come back with it. The window title reads
 "editing paused" meanwhile. This is separate from a blocked session (an
 uncertain publication), which only Reopen ends.

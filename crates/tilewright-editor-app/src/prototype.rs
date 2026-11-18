@@ -267,6 +267,9 @@ const VIEW_RESUMED: &str = "The view can be drawn again. Editing is possible aga
 const ZOOM_IN_REFUSED: &str = "Cannot zoom in: this view cannot be drawn.";
 const ZOOM_OUT_REFUSED: &str = "Cannot zoom out: this view cannot be drawn.";
 const PAN_REFUSED: &str = "Cannot pan there: this view cannot be drawn.";
+/// The notice of a Cancel that dropped the pending change while the pause
+/// stays.
+const CANCELLED_WHILE_PAUSED: &str = "Pending change cancelled. Editing stays paused.";
 
 /// What made rendering block editing; each ends differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,7 +316,7 @@ impl Blocked {
                 "Editing resumes once the view can be drawn: zoom out, pan or Cancel."
             }
             BlockCause::Sources => {
-                "The session's catalog or art files changed on disk. Editing resumes when they match what the session loaded again; otherwise quit and start a new session."
+                "The session's catalog or art files changed on disk. Put them back as the session loaded them, then zoom or pan once to check again; otherwise quit and start a new session."
             }
             BlockCause::Present => {
                 "Editing resumes once the frame is shown again: zoom, pan or Cancel to try again."
@@ -566,6 +569,9 @@ impl Application {
         let ended = self.blocked.take().is_some();
         self.view_note = ended.then_some(ViewNote::Resumed);
         if ended {
+            // An earlier input's refusal no longer applies; if the input
+            // that ended the pause failed itself, its notice follows.
+            self.notice = None;
             // While blocked the proposal's highlight was dropped; the panel
             // reads the session again now.
             self.refresh_highlight();
@@ -660,24 +666,44 @@ impl Application {
         self.prepare_scene()
     }
 
+    /// The refusal of every input that edits, picks or prepares while
+    /// rendering pauses editing, in the pause's own words.
+    pub(super) fn refuse_while_paused(&self) -> Result<()> {
+        match &self.blocked {
+            Some(reason) => Err(format!("rendering blocked editing: {reason}")),
+            None => Ok(()),
+        }
+    }
+
     fn action(&mut self, action: Action) -> Result<()> {
         // Cancel stays open while rendering blocks editing: it changes no
         // source and goes back to the committed World.
-        if let Some(reason) = &self.blocked
-            && !matches!(action, Action::Cancel)
-        {
-            return Err(format!("rendering blocked editing: {reason}"));
+        if !matches!(action, Action::Cancel) {
+            self.refuse_while_paused()?;
         }
         if matches!(action, Action::Accept) && !self.source_review().complete {
             self.notice = Some(REVIEW_LIMIT_MESSAGE.into());
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
-        self.funnel(accept, false, |app| {
+        let paused_cancel = self.blocked.is_some() && self.session.history().pending().is_some();
+        let result = self.funnel(accept, false, |app| {
             app.session
                 .dispatch(action, &mut app.recovery)
                 .map_err(|error| error.to_string())
-        })
+        });
+        // A Cancel that dropped the pending change did what was asked, even
+        // when the pause stays (files that still differ): say so, not the
+        // pause's reason again.
+        if paused_cancel
+            && result.is_err()
+            && self.blocked.is_some()
+            && self.session.history().pending().is_none()
+        {
+            self.notice = Some(CANCELLED_WHILE_PAUSED.into());
+            return Ok(());
+        }
+        result
     }
 
     /// The one path every edit, review and history action takes, and the
@@ -748,6 +774,7 @@ impl Application {
     }
 
     fn click(&mut self, x: u32, y: u32) -> Result<()> {
+        self.refuse_while_paused()?;
         loader::revalidate(
             self.session.history().document().source(),
             self.session.catalog(),
@@ -884,6 +911,7 @@ impl Application {
     /// cell mask (empty tiles included) receives one new object of the
     /// chosen prototype, through one reviewed `object.insert`.
     fn place_at(&mut self, x: u32, y: u32) -> Result<()> {
+        self.refuse_while_paused()?;
         loader::revalidate(
             self.session.history().document().source(),
             self.session.catalog(),
@@ -3749,6 +3777,7 @@ impl Application {
     /// under it, through the exact cell mask, becomes the target. A miss
     /// keeps the step open.
     fn pick_portal_target(&mut self, x: u32, y: u32) -> Result<()> {
+        self.refuse_while_paused()?;
         loader::revalidate(
             self.session.history().document().source(),
             self.session.catalog(),

@@ -1154,6 +1154,44 @@ fn a_blocked_session_offers_nothing() {
 }
 
 #[test]
+fn the_sessions_own_block_outranks_a_rendering_pause() {
+    // Reopen while the catalog differs: the session's own Blocked phase,
+    // which only Reopen ends, and a rendering pause from the funnel's
+    // rebuild. The panel and the status line say blocked, not paused,
+    // before and after the pause ends.
+    let mut twin = twin(2, |_| {}, |_| {}, None);
+    open(&mut twin);
+    let catalog = twin.person.path().join("world/preview.jsonc");
+    let original = fs::read(&catalog).unwrap();
+    fs::write(&catalog, [original.as_slice(), b"\n"].concat()).unwrap();
+    assert!(twin.app.action(Action::Reopen).is_err());
+    assert_eq!(
+        twin.app.session.status().phase,
+        tilewright_editor_ui::SessionPhase::Blocked
+    );
+    assert!(twin.app.blocked.is_some());
+    let says_blocked = |app: &mut Application| {
+        assert_eq!(state(app), State::Blocked);
+        assert!(
+            panel(app)
+                .iter()
+                .any(|text| text == "This session cannot continue (blocked)."),
+            "{:?}",
+            panel(app)
+        );
+        assert_eq!(
+            app.status_label(),
+            "Editing blocked. Recovery details below."
+        );
+    };
+    says_blocked(&mut twin.app);
+    fs::write(&catalog, &original).unwrap();
+    route(&mut twin.app, &key(Keycode::Equals)).unwrap();
+    assert!(twin.app.blocked.is_none());
+    says_blocked(&mut twin.app);
+}
+
+#[test]
 fn hostile_labels_and_action_text_reach_no_row_unescaped() {
     let long = "x".repeat(5000);
     let label = format!(
