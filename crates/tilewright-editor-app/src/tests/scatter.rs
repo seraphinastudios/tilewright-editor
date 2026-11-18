@@ -32,7 +32,12 @@ fn with_speckle(root: &Path) {
 /// The 1280x800 brush application on a catalog with `speckle`, in Terrain
 /// mode, its session's random source seeded with `seed`.
 fn scatter_application(seed: u64) -> (tempfile::TempDir, Application) {
-    let (temporary, mut app) = application_with_source(with_speckle);
+    terrain_application(seed, with_speckle)
+}
+/// The 1280x800 application on the fixture changed by `prepare`, in
+/// Terrain mode, its session's random source seeded with `seed`.
+fn terrain_application(seed: u64, prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = application_with_source(prepare);
     app.ui = WorkspaceUi::new(BRUSH_WINDOW, BRUSH_WINDOW);
     app.view.camera.width = BRUSH_WINDOW.0;
     app.view.camera.height = BRUSH_WINDOW.1;
@@ -69,9 +74,13 @@ fn marked(app: &mut Application) -> Vec<[i64; 2]> {
 
 #[test]
 fn the_palette_rows_appear_only_with_editing_palettes() {
-    let (_plain, mut plain) = application_with_source(|_| {});
-    plain.control(Control::Terrain).unwrap();
+    let (_plain, mut plain) = terrain_application(1, |_| {});
     let texts = sidebar_texts(&mut plain);
+    // The rules are laid out, so palette rows would be too.
+    assert!(
+        texts.iter().any(|text| text.starts_with("Brush: drag")),
+        "{texts:?}"
+    );
     assert!(
         !texts.iter().any(|text| text.contains("Scatter")),
         "{texts:?}"
