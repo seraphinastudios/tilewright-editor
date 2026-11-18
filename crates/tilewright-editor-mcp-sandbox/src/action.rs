@@ -12,7 +12,7 @@ use tilewright_jsonc::Value;
 
 /// Every action kind and its members besides `kind` and `expected`, in
 /// the decoder's order. Each member's schema is [`member`]'s.
-pub const KINDS: [(&str, &[&str]); 17] = [
+pub const KINDS: [(&str, &[&str]); 18] = [
     ("move", &["uid", "x", "y"]),
     ("set_field", &["uid", "field", "value"]),
     ("paint", &["plane", "layer", "grid", "x", "y", "proto"]),
@@ -28,6 +28,7 @@ pub const KINDS: [(&str, &[&str]); 17] = [
         "scatter_terrain",
         &["plane", "layer", "grid", "cells", "palette", "seed"],
     ),
+    ("adjust_heights", &["plane", "layer", "cells", "amount"]),
     ("paint_zones", &["plane", "layer", "cells", "zone"]),
     ("remove", &["uid"]),
     ("place", &["plane", "layer", "x", "y", "proto"]),
@@ -108,6 +109,10 @@ fn member(kind: &str, name: &str) -> String {
             r#"{{"type":"integer","minimum":0,"maximum":{},"description":"The scatter seed. The same seed, palette and cell always draw the same value; choose a new one for a different pattern."}}"#,
             u32::MAX
         ),
+        "amount" => format!(
+            r#"{{"anyOf":[{{"type":"integer","minimum":-{0},"maximum":-1}},{{"type":"integer","minimum":1,"maximum":{0}}}],"description":"How much to raise (positive) or lower (negative) the tile height of each cell, once each, never 0. Needs the catalog's editing.heights range (the catalog tool reports it as heights): each cell becomes its height plus amount, kept from min to max. Cells already at that end of the range, and cells of map chunks that do not exist, are left out; a covered cell whose height is outside the range refuses the whole action."}}"#,
+            limits::HEIGHT_AMOUNT
+        ),
         "name" | "parent" => optional_text(),
         "zone" if kind == "paint_zones" => optional_text(),
         _ => text(),
@@ -152,15 +157,15 @@ pub fn action_schema() -> String {
 /// integers when they have no fraction (`3.0`, `3e0`), as JSON Schema's
 /// `integer` admits them, so that the decoder, which reads integers as
 /// written, takes what the schema takes. Only the members that are
-/// integers in every action are rewritten: `x`, `y`, `layer`, `seed`, the
-/// cells of `cells`, and a portal target's `layer` and `at`; a field `value`
+/// integers in every action are rewritten: `x`, `y`, `layer`, `seed`,
+/// `amount`, the cells of `cells`, and a portal target's `layer` and `at`; a field `value`
 /// is never touched, so it is recorded as written.
 pub fn normalized(action: &Value) -> Value {
     let mut action = action.clone();
     if let Value::Object { members, .. } = &mut action {
         for member in members {
             match member.key.as_str() {
-                "x" | "y" | "layer" | "seed" => whole(&mut member.value),
+                "x" | "y" | "layer" | "seed" | "amount" => whole(&mut member.value),
                 "cells" => {
                     if let Value::Array { items, .. } = &mut member.value {
                         items.iter_mut().for_each(pair);

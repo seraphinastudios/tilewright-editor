@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fmt::Write, fs, path::Path};
 use tilewright_editor_preview::{
-    AnchorGrant, ObjectGrant, Palette, PreviewLimits, SelectionKey, ZoneGrant, loader, prepare,
-    render_scene,
+    AnchorGrant, HeightGrant, MAXIMUM_HEIGHT, ObjectGrant, Palette, PreviewLimits, SelectionKey,
+    ZoneGrant, loader, prepare, render_scene,
 };
 use tilewright_render_api::{BackendPreference, TargetDescriptor, TargetKind};
 use tilewright_render_resources::ResourceRequest;
@@ -1355,4 +1355,79 @@ fn optional_palettes_parse_strictly_in_both_formats_and_their_absence_changes_no
             .err()
             .is_some_and(|error| error.contains("not granted"))
     );
+}
+
+#[test]
+fn an_optional_height_range_parses_strictly_in_both_formats_within_the_hard_bound() {
+    let (dir, root, world, original) = fixture(false, false);
+    let (absent, _) = load_catalog(dir.path(), &root, &world, &original).unwrap();
+    assert_eq!(absent.editing().heights, None);
+    assert_eq!(MAXIMUM_HEIGHT, 512);
+    for format in ["tilewright.editor-preview/1", "tilewright.editor-preview/2"] {
+        for (min, max) in [
+            (-64, 64),
+            (-512, 512),
+            (0, 0),
+            (-512, -512),
+            (512, 512),
+            (3, 9),
+        ] {
+            let mut granted = original.clone();
+            granted["format"] = json!(format);
+            granted["editing"]["heights"] = json!({"min": min, "max": max});
+            let (catalog, _) = load_catalog(dir.path(), &root, &world, &granted).unwrap();
+            let grant = catalog.editing().heights.unwrap();
+            assert_eq!(grant, HeightGrant { min, max });
+            assert!(grant.contains(min) && grant.contains(max));
+            assert!(!grant.contains(min - 1) && !grant.contains(max + 1));
+            // Every other capability is what the catalog without it grants.
+            let mut without = catalog.editing().clone();
+            without.heights = None;
+            assert_eq!(&without, absent.editing());
+        }
+    }
+    for (case, (heights, expected)) in [
+        (json!(null), "expected object"),
+        (json!([-1, 1]), "expected object"),
+        (json!({"min": 0}), "unknown or missing"),
+        (json!({"min": 0, "max": 1, "step": 1}), "unknown or missing"),
+        (
+            json!({"min": -513, "max": 0}),
+            "heights min must be an integer from -512 to 512",
+        ),
+        (
+            json!({"min": 0, "max": 513}),
+            "heights max must be an integer from -512 to 512",
+        ),
+        (
+            json!({"min": 0, "max": i64::from(i32::MAX) + 1}),
+            "heights max must be an integer from -512 to 512",
+        ),
+        (
+            json!({"min": 0.0, "max": 1}),
+            "heights min must be an integer from -512 to 512",
+        ),
+        (
+            json!({"min": 0, "max": 1.5}),
+            "heights max must be an integer from -512 to 512",
+        ),
+        (
+            json!({"min": "0", "max": 1}),
+            "heights min must be an integer from -512 to 512",
+        ),
+        (
+            json!({"min": 2, "max": 1}),
+            "heights min must not be greater than max",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut c = original.clone();
+        c["editing"]["heights"] = heights;
+        let Err(error) = load_catalog(dir.path(), &root, &world, &c) else {
+            panic!("case {case} loaded");
+        };
+        assert!(error.contains(expected), "case {case}: {error}");
+    }
 }

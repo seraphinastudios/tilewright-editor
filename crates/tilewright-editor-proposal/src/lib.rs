@@ -65,6 +65,9 @@ pub mod limits {
     pub const TEXT_BYTES: usize = 4096;
     /// Most cells of a stroke action: the brush's own limit.
     pub const CELLS: usize = tilewright_editor_ui::brush::MAXIMUM_STROKE_CELLS;
+    /// The largest `amount` of a height adjustment either way: the
+    /// engine's own bound. 0 is not an amount.
+    pub const HEIGHT_AMOUNT: i32 = tilewright_editor_ui::heights::MAXIMUM_AMOUNT;
     /// Most bytes of a field value, encoded, and its deepest nesting: the
     /// engine's own field budget.
     pub const FIELD_VALUE_BYTES: usize = 64 << 10;

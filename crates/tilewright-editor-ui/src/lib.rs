@@ -150,6 +150,7 @@ pub mod anchors;
 pub mod brush;
 pub mod fill;
 pub mod grants;
+pub mod heights;
 mod insertion;
 pub mod inspector;
 pub mod portals;

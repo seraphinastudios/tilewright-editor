@@ -319,6 +319,12 @@ pub(super) fn step_tiles<'a>(
             cells,
             ..
         }
+        | Action::AdjustHeights {
+            plane,
+            layer,
+            cells,
+            ..
+        }
         | Action::PaintZones {
             plane,
             layer,
@@ -1620,6 +1626,37 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
                 cells_words(cells.len()),
                 outside(catalog, plane, *layer, cells),
                 shown(grid),
+                shown(plane)
+            )
+        }
+        Action::AdjustHeights {
+            plane,
+            layer,
+            cells,
+            amount,
+            ..
+        } => {
+            // How many cells the engine's own plan would change in the
+            // person's world, as scatter's words say; nothing when it would
+            // refuse for another reason.
+            let plan =
+                tilewright_editor_ui::heights::plan(world, catalog, plane, *layer, cells, *amount);
+            let effect = match plan {
+                Ok(changes) => format!(", {} to change", changes.len()),
+                Err(error) if error.code() == tilewright_editor_ui::RefusalCode::ChangeNone => {
+                    ", none to change".to_owned()
+                }
+                Err(_) if catalog.editing().heights.is_none() => {
+                    ", not granted by this catalog".to_owned()
+                }
+                Err(_) => String::new(),
+            };
+            format!(
+                "{} {} by {}{effect}{} (on {}/{layer})",
+                if *amount < 0 { "Lower" } else { "Raise" },
+                cells_words(cells.len()),
+                amount.unsigned_abs(),
+                outside(catalog, plane, *layer, cells),
                 shown(plane)
             )
         }

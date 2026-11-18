@@ -1,0 +1,96 @@
+// Copyright 2026 Seraphina Studios
+// SPDX-License-Identifier: MIT
+
+//! Raise and lower through the editing server: on a temporary copy of the
+//! neutral sample with a height range and generated heights, `catalog`
+//! reports the range, `adjust_heights` prepares one change, `tile` shows the
+//! new heights after Accept, and the submitted proposal records the step
+//! as intent. Linux only, as the sandbox server tests are.
+#![cfg(target_os = "linux")]
+
+mod common;
+
+use common::{Layout, edit_json};
+use serde_json::json;
+
+/// Height `(x + 2y) % 7 - 3` in chunk `0_0` and the range -4 to 4.
+fn hilly(world: &std::path::Path) {
+    let rows: Vec<Vec<i64>> = (0..32_i64)
+        .map(|y| (0..32_i64).map(|x| (x + 2 * y) % 7 - 3).collect())
+        .collect();
+    edit_json(world, "planes/main/layers/0/0_0.jsonc", |chunk| {
+        chunk["terrain"]["height"] = json!({ "rows": rows });
+    });
+    edit_json(world, "preview.jsonc", |catalog| {
+        catalog["editing"]["heights"] = json!({"min": -4, "max": 4});
+    });
+}
+
+fn tile_height(
+    client: &mut common::Client<tilewright_editor_recovery::DurableRecovery>,
+    x: i64,
+    y: i64,
+) -> i64 {
+    client
+        .call(
+            "tile",
+            &json!({"plane": "main", "layer": 0, "x": x, "y": y}),
+        )
+        .ok()["height"]
+        .as_i64()
+        .unwrap()
+}
+
+#[test]
+fn an_agent_raises_and_lowers_heights_and_tile_shows_them() {
+    let layout = Layout::new(hilly);
+    let mut client = layout.open(None);
+    assert_eq!(
+        client.simple("catalog").ok()["heights"],
+        json!({"min": -4, "max": 4})
+    );
+    // (0, 0) holds -3, (2, 0) holds -1, (3, 0) holds 0, (6, 0) holds 3.
+    for (x, before) in [(0, -3), (2, -1), (3, 0), (6, 3)] {
+        assert_eq!(tile_height(&mut client, x, 0), before);
+    }
+    let cells = json!([[0, 0], [2, 0], [3, 0], [6, 0]]);
+    let edited = client.edit(
+        json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": cells, "amount": 3}),
+    );
+    edited.ok();
+    client.simple("accept").ok();
+    // Each plus 3, kept at most 4.
+    for (x, after) in [(0, 0), (2, 2), (3, 3), (6, 4)] {
+        assert_eq!(tile_height(&mut client, x, 0), after);
+    }
+    // A cell already at the top: a raise there changes nothing.
+    let none = client.edit(
+        json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": [[6, 0]], "amount": 1}),
+    );
+    none.refused("change.none");
+    // Lower, written as a whole number in floating point: the server takes
+    // it as the integer.
+    client
+        .edit(json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": cells, "amount": -8.0}))
+        .ok();
+    client.simple("accept").ok();
+    for x in [0, 2, 3, 6] {
+        assert_eq!(tile_height(&mut client, x, 0), -4);
+    }
+    // 0 is not an amount.
+    client
+        .edit(json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": cells, "amount": 0}))
+        .refused("proposal.invalid");
+    let submitted = client.simple("submit");
+    assert_eq!(submitted.ok()["proposal"]["steps"], 2);
+}
+
+#[test]
+fn without_the_grant_the_catalog_reports_no_range_and_the_edit_is_refused() {
+    let layout = Layout::new(|_| {});
+    let mut client = layout.open(None);
+    assert!(client.simple("catalog").ok().get("heights").is_none());
+    client
+        .edit(json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": [[0, 0]], "amount": 1}))
+        .refused("grant.missing");
+}

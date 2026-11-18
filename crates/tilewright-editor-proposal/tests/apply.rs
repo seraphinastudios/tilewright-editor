@@ -954,13 +954,13 @@ fn resume_reports_a_differing_catalog_too() {
     );
 }
 
-/// A proposal of one scatter step (the last kind) at the fixture's base.
+/// A proposal of one scatter step at the fixture's base.
 fn scatter_proposal() -> (tempfile::TempDir, Proposal) {
     let agent_world = world(|_| {});
     let mut session = sandbox(agent_world.path());
     let mut records = Records::default();
     let expected = revision(&session);
-    accept(&mut session, edit(KINDS - 1, expected), &mut records);
+    accept(&mut session, edit(17, expected), &mut records);
     let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
     (agent_world, proposal)
 }
@@ -1052,4 +1052,167 @@ fn a_scatter_step_with_another_seed_diverges() {
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::ProposalStepDiverged, "{error}");
     assert!(person.history().pending().is_none());
+}
+
+/// A proposal of one height adjustment (the last kind) at the base of the
+/// fixture with generated heights.
+fn heights_proposal() -> (tempfile::TempDir, Proposal) {
+    let agent_world = world(generated_heights);
+    let mut session = sandbox(agent_world.path());
+    let mut records = Records::default();
+    let expected = revision(&session);
+    accept(&mut session, edit(KINDS - 1, expected), &mut records);
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
+    (agent_world, proposal)
+}
+
+/// Heights from -3 to 6 in chunk `0_0`, so a raise by 5 reaches the end of
+/// the range -8 to 8 in some cells of the view's top rows.
+fn generated_heights(root: &Path) {
+    let rows: Vec<Vec<i64>> = (0..32_i64)
+        .map(|y| (0..32_i64).map(|x| (x * 3 + y) % 10 - 3).collect())
+        .collect();
+    common::edit_json(root, "planes/main/layers/0/0_0.jsonc", |chunk| {
+        chunk["terrain"]["height"] = json!({ "rows": rows });
+    });
+}
+
+#[test]
+fn a_height_step_replays_only_where_the_range_gives_the_same_heights() {
+    let (_agent, proposal) = heights_proposal();
+    assert_eq!(
+        body(proposal.bytes())["steps"][0]["action"]["kind"],
+        "adjust_heights"
+    );
+    // The same world and range: the same transaction, applied.
+    let same = world(generated_heights);
+    let mut person = open(same.path(), PERSON);
+    let mut records = Records::default();
+    let (mut progress, notices) = Progress::begin(&proposal, &person).unwrap();
+    assert!(notices.is_empty());
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    assert_eq!(person.history().document().revision(), proposal.result());
+
+    // A lower end that no cell reaches: the catalog differs, the heights
+    // are the same, so the step applies.
+    let lower = world(|root| {
+        generated_heights(root);
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["heights"] = json!({"min": -64, "max": 8});
+        });
+    });
+    let mut person = open(lower.path(), PERSON);
+    let (mut progress, notices) = Progress::begin(&proposal, &person).unwrap();
+    assert!(matches!(
+        notices.as_slice(),
+        [Notice::CatalogDiffers { .. }]
+    ));
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    assert_eq!(person.history().document().revision(), proposal.result());
+
+    // A higher upper end: the raise was cut at 8 in some cells and is not
+    // now, so the step diverges.
+    let higher = world(|root| {
+        generated_heights(root);
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["heights"] = json!({"min": -8, "max": 64});
+        });
+    });
+    let mut person = open(higher.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepDiverged, "{error}");
+    assert!(person.history().pending().is_none());
+
+    // A narrower range: the cells stop at another end, so the step
+    // diverges with nothing pending and the world untouched.
+    let narrower = world(|root| {
+        generated_heights(root);
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["heights"] = json!({"min": -8, "max": 7});
+        });
+    });
+    let mut person = open(narrower.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    let untouched = Untouched::of(&person, narrower.path());
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepDiverged, "{error}");
+    untouched.check(&person, narrower.path(), "narrower");
+
+    // No grant: refused with the engine's code.
+    let missing = world(|root| {
+        generated_heights(root);
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]
+                .as_object_mut()
+                .unwrap()
+                .remove("heights");
+        });
+    });
+    let mut person = open(missing.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepRefused);
+    assert_eq!(error.engine_code(), Some(RefusalCode::GrantMissing));
+    assert!(person.history().pending().is_none());
+}
+
+#[test]
+fn a_forged_height_step_is_invalid_refused_or_diverged() {
+    let (_agent, proposal) = heights_proposal();
+    let root = world(generated_heights);
+    let mut records = Records::default();
+    // Amounts the reader refuses: 0, past the bound, not an integer.
+    for amount in [
+        json!(0),
+        json!(1025),
+        json!(-1025),
+        json!(5.5),
+        json!("5"),
+        json!(null),
+    ] {
+        let mut body = body(proposal.bytes());
+        body["steps"][0]["action"]["amount"] = amount.clone();
+        fix_digests(&mut body);
+        let error = Proposal::decode(&document(&body)).unwrap_err();
+        assert_eq!(error.code(), RefusalCode::ProposalInvalid, "{amount}");
+    }
+    // Another amount: another transaction.
+    let forged_amount = forged(&proposal, |body| {
+        assert_eq!(body["steps"][0]["action"]["amount"], 5);
+        body["steps"][0]["action"]["amount"] = json!(4);
+    });
+    // Cells outside the view: the engine refuses.
+    let forged_cells = forged(&proposal, |body| {
+        body["steps"][0]["action"]["cells"] = json!([[0, 0], [8, 0]]);
+    });
+    for (forged, code, engine) in [
+        (&forged_amount, RefusalCode::ProposalStepDiverged, None),
+        (
+            &forged_cells,
+            RefusalCode::ProposalStepRefused,
+            Some(RefusalCode::ScopeOutsideView),
+        ),
+    ] {
+        let mut person = open(root.path(), PERSON);
+        let (mut progress, _) = Progress::begin(forged, &person).unwrap();
+        let error = progress
+            .prepare_step(forged, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(error.code(), code, "{error}");
+        assert_eq!(error.engine_code(), engine);
+        assert!(person.history().pending().is_none());
+    }
 }

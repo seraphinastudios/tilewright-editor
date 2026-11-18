@@ -118,6 +118,21 @@ pub enum Action {
         seed: u32,
         expected: [u8; 32],
     },
+    /// Raise (`amount > 0`) or lower (`amount < 0`) the tile heights of the
+    /// covered cells of the active view by `amount`, once each, in one
+    /// reviewed `terrain.set` on the grid `height`
+    /// ([`crate::heights::plan`]). Needs `editing.heights`: each cell
+    /// becomes `clamp(height + amount, min, max)`, and cells already at the
+    /// end it moves toward, or in chunks that do not exist, are left out;
+    /// every other cell expects its committed height. `amount` is not 0 and
+    /// at most [`crate::heights::MAXIMUM_AMOUNT`] either way.
+    AdjustHeights {
+        plane: String,
+        layer: i32,
+        cells: Vec<[i64; 2]>,
+        amount: i32,
+        expected: [u8; 32],
+    },
     /// One zone brush gesture: every covered cell of the active view gets
     /// `zone`, or is emptied (`None`, the plane's default zone), in one
     /// reviewed `terrain.set` on the grid `zone`. Needs `editing.zones.paint`.
@@ -1212,6 +1227,7 @@ impl Session {
                     | Action::PaintStroke { .. }
                     | Action::FillTerrain { .. }
                     | Action::ScatterTerrain { .. }
+                    | Action::AdjustHeights { .. }
                     | Action::PaintZones { .. }
                     | Action::Remove { .. }
                     | Action::Place { .. }
@@ -1443,6 +1459,30 @@ impl Session {
                     .collect();
                 // One gesture, one operation, as for a brush stroke.
                 self.prepare(expected,&json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":grid,"cells":cells}))
+            }
+            Action::AdjustHeights {
+                plane,
+                layer,
+                cells,
+                amount,
+                expected,
+            } => {
+                let cells: Vec<Value> = crate::heights::plan(
+                    self.history.document().world(),
+                    &self.catalog,
+                    &plane,
+                    layer,
+                    &cells,
+                    amount,
+                )?
+                .into_iter()
+                .map(|(at, before, after)| json!({"at":at,"value":after,"expect":before}))
+                .collect();
+                // One gesture, one operation, on the chunks' height grids.
+                self.prepare(
+                    expected,
+                    &json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":"height","cells":cells}),
+                )
             }
             Action::PaintZones {
                 plane,
@@ -1714,6 +1754,7 @@ fn is_edit(action: &Action) -> bool {
         | Action::PaintStroke { .. }
         | Action::FillTerrain { .. }
         | Action::ScatterTerrain { .. }
+        | Action::AdjustHeights { .. }
         | Action::PaintZones { .. }
         | Action::Remove { .. }
         | Action::Place { .. }

@@ -25,6 +25,33 @@ pub struct EditingCapabilities {
     /// Optional `editing.palettes`: named weighted sets of terrain values
     /// for the scatter brush, keyed by name. Absent, there are none.
     pub palettes: BTreeMap<String, Palette>,
+    /// Optional `editing.heights`: the range of tile heights the editor may
+    /// write in the active view. Absent, heights cannot be edited.
+    pub heights: Option<HeightGrant>,
+}
+
+/// The editor's hard bound on a granted height: `editing.heights` must lie
+/// within `-MAXIMUM_HEIGHT..=MAXIMUM_HEIGHT`. Any two heights the editor
+/// writes, and the 0 a tile without a height grid has, then differ by at
+/// most 1,024 units, which keeps a tile's bent corners within the
+/// renderer's 8,192-pixel quad limit at the largest zoom (8): see
+/// `decisions/0006-catalog-heights.md`.
+pub const MAXIMUM_HEIGHT: i32 = 512;
+
+/// `editing.heights`: the editor may write tile heights from `min` to
+/// `max`, both included, on the active view's plane and spatial layer.
+/// Raising and lowering stop at the ends; a write outside is refused.
+/// `-MAXIMUM_HEIGHT <= min <= max <= MAXIMUM_HEIGHT`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HeightGrant {
+    pub min: i32,
+    pub max: i32,
+}
+impl HeightGrant {
+    /// Whether `height` is in the granted range.
+    pub fn contains(self, height: i32) -> bool {
+        (self.min..=self.max).contains(&height)
+    }
 }
 
 /// Most palettes one catalog may name.
@@ -569,7 +596,7 @@ fn editing_specs(
     closed_optional(
         e,
         &["movable_uids", "terrain", "fields"],
-        &["objects", "zones", "anchors", "palettes"],
+        &["objects", "zones", "anchors", "palettes", "heights"],
     )?;
     let mut editing = EditingCapabilities::default();
     for uid in array(member(e, "movable_uids")?)? {
@@ -636,7 +663,28 @@ fn editing_specs(
     if let Some(palettes) = e.get("palettes") {
         editing.palettes = palette_specs(palettes, &editing.terrain)?;
     }
+    if let Some(heights) = e.get("heights") {
+        editing.heights = Some(height_grant(heights)?);
+    }
     Ok(editing)
+}
+
+/// `editing.heights`: `{min, max}`, integers with
+/// `-MAXIMUM_HEIGHT <= min <= max <= MAXIMUM_HEIGHT`.
+fn height_grant(value: &Value) -> Result<HeightGrant, PreviewError> {
+    closed(value, &["min", "max"])?;
+    let end = |key| {
+        integer(member(value, key)?)
+            .ok()
+            .and_then(|end| i32::try_from(end).ok())
+            .filter(|end| (-MAXIMUM_HEIGHT..=MAXIMUM_HEIGHT).contains(end))
+            .ok_or_else(|| failure(format!("heights {key} must be an integer from -512 to 512")))
+    };
+    let (min, max) = (end("min")?, end("max")?);
+    if min > max {
+        return Err(failure("heights min must not be greater than max"));
+    }
+    Ok(HeightGrant { min, max })
 }
 
 /// `editing.palettes`: `[{name, grid, entries: [{value, weight}]}]`. Every

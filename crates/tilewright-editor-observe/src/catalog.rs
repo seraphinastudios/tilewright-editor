@@ -3,7 +3,8 @@
 
 //! `catalog`: the editor catalog's prototypes and the terrain and zone
 //! palettes, optionally filtered as the desktop Place palette filters, and
-//! the scatter palettes (`editing.palettes`) when the catalog has any.
+//! the scatter palettes (`editing.palettes`) when the catalog has any, and
+//! the granted height range (`editing.heights`) when it has one.
 use crate::limits::{MAXIMUM_FIELDS, MAXIMUM_PROTOTYPES, MAXIMUM_TERRAIN_CHOICES, MAXIMUM_ZONES};
 use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::Observed;
@@ -112,7 +113,18 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
                     .into()
             },
         );
-    palettes(report, editing, &keep, pager)
+    let report = palettes(report, editing, &keep, pager);
+    // Only a catalog with the grant has the member, so every report of
+    // another catalog is unchanged.
+    match editing.heights {
+        Some(grant) => report.with(
+            "heights",
+            Map::new()
+                .with("min", Node::Integer(i64::from(grant.min)))
+                .with("max", Node::Integer(i64::from(grant.max))),
+        ),
+        None => report,
+    }
 }
 
 /// `palettes`, the catalog's `editing.palettes` kept by name, after the
