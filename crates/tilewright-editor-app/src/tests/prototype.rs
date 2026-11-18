@@ -2101,6 +2101,9 @@ mod stroke_preview;
 #[path = "fill.rs"]
 mod fill;
 
+#[path = "scatter.rs"]
+mod scatter;
+
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]

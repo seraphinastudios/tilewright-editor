@@ -141,6 +141,63 @@ it would change now, from the same code; it prepares nothing. The desktop's
 hover preview and a proposal step's map highlight use it, or the region
 function it is built on.
 
+## Scatter
+
+`ScatterTerrain { plane, layer, grid, cells, palette, seed, expected }`
+records a scatter brush gesture as it was meant: the covered cells, the
+name of a catalog palette (`editing.palettes`, see
+[the prototype guide](OFFLINE-PROTOTYPE.md#scatter-palettes)) and a seed
+from 0 to 2^32 − 1. When it is prepared, the engine reads the palette from
+the catalog and gives each cell one of its values, drawn by weight
+(`tilewright_editor_ui::scatter`). The cells go through the stroke rule (at
+least one, at most 4,096, distinct and ordered) and the view check; the
+result is one `terrain.set` in which each cell expects its committed value
+and cells that already hold their drawn value are left out, as a stroke
+leaves out cells that hold its terrain. A scatter that would change no cell
+is refused with change.none. A palette name the catalog does not have, or a
+palette of another grid, is refused with grant.missing (checked before the
+view, as for a paint); a cell outside the view with scope.outside_view; a
+stale revision with revision.stale. No refusal code is new.
+
+### The draw (frozen)
+
+A cell's value depends only on the seed, the spatial layer and the cell,
+never on the other cells of the stroke or their order. A replay, or a
+stroke that overlaps another with the same seed, gives a cell the same
+value. Only integer arithmetic is used, so every platform agrees. With
+wrapping 64-bit unsigned arithmetic:
+
+1. `mix(z)`: `z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9`;
+   `z = (z ^ (z >> 27)) * 0x94d049bb133111eb`; the result is `z ^ (z >> 31)`
+   (the SplitMix64 output function).
+2. With `G = 0x9e3779b97f4a7c15`: `h = mix(seed + G)`, then for each word
+   `w` of `layer`, `x`, `y` in that order (two's complement, the layer
+   sign-extended to 64 bits), `h = mix((h ^ w) + G)`.
+3. With `total` the sum of the palette's weights (at most 32 × 10,000):
+   `r = ((h >> 32) * total) >> 32`, so `0 ≤ r < total`. Take the palette's
+   values in increasing byte order of their ids, adding up their weights;
+   the cell's value is the first value whose running sum exceeds `r`.
+
+This definition is part of what a recorded `scatter_terrain` step means.
+It is frozen for this action kind: a different draw needs a new kind. The
+tests pin it with golden values computed by a separate implementation of
+the text above (`crates/tilewright-editor-ui/src/scatter.rs` and
+`tests/scatter.rs`). For example, seed 0 on layer 0 at cell (0, 0) draws
+`h = 0x2130748aaac80268`.
+
+The palette is named, not copied into the action. A recorded scatter
+prepared again under a catalog whose palette of that name has other values
+or weights draws other values, so it prepares another transaction; a
+proposal step is then reported as diverged and not applied (see
+[proposals](PROPOSALS.md)).
+
+The desktop draws a fresh seed for each scatter stroke from the session's
+uid source when the stroke begins (`Session::draw_seed`: the operating
+system's random source, or the deterministic source tests and the scripted
+demonstration install), so the live preview, the release and a replay all
+use the recorded seed. `Session::stroke_changes` answers for a scatter
+stroke too.
+
 ## Refusal codes
 
 Every `SessionError` carries a stable `RefusalCode` (`code()`, and

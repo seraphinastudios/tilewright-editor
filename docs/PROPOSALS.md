@@ -79,6 +79,7 @@ hold no NUL.
 | `paint` | `plane`, `layer`, `grid`, `x`, `y`, `proto` |
 | `paint_stroke` | `plane`, `layer`, `grid`, `cells` (1 to 4,096 `[x, y]` pairs, distinct and in increasing order, the engine's own rule for a stroke), `proto` |
 | `fill_terrain` | `plane`, `layer`, `grid`, `x`, `y`, `proto`, `contiguous` (`true` or `false`) |
+| `scatter_terrain` | `plane`, `layer`, `grid`, `cells` (as for `paint_stroke`), `palette` (a catalog palette's name), `seed` (an integer from 0 to 4,294,967,295) |
 | `paint_zones` | `plane`, `layer`, `cells` (as for `paint_stroke`), `zone` (string or `null`) |
 | `remove` | `uid` |
 | `place` | `plane`, `layer`, `x`, `y`, `proto` |
@@ -106,6 +107,19 @@ An editor from before `fill_terrain` refuses a whole proposal that holds
 one, with `proposal.invalid` (an unknown action kind) when it reads it,
 before anything is prepared: such a proposal needs an editor release that
 has the fill tool.
+
+A `scatter_terrain` step records the stroke's cells, the palette's name and
+the seed, not the values: the engine draws each cell's value again from
+the catalog's palette of that name, with the frozen draw of
+[docs/ENGINE.md](ENGINE.md#scatter), each time the step is prepared. On the
+world it was recorded from, under a catalog whose palette of that name has
+the same values and weights, it gives the same transaction again. Under a
+palette with other values or weights the step prepares another change and
+is refused with `proposal.step_diverged` (the catalog-differs notice has
+already said that the catalogs differ); under a catalog without that
+palette, with `proposal.step_refused` and the engine's grant.missing. An
+editor from before `scatter_terrain` refuses a whole proposal that holds
+one with `proposal.invalid`, as for `fill_terrain`.
 
 ### What a reader requires and what the writer emits
 
@@ -352,7 +366,9 @@ step does, to which id and where to first ("Move marker_1 to (4, 2), from
 (3, 2), on main/0", "Set label on marker_1 to …", "Create zone Z under P,
 named N, on main", "Fill from (5, 0) with grass: 23 cells of sand (floor on
 main/0)", "Replace every sand in the view with grass: 23 cells, from
-(5, 0) (floor on main/0)"), then the rest; from the world
+(5, 0) (floor on main/0)", "Scatter palette speckle over 37 cells, seed
+1234 (floor on main/0)", with "(not in this catalog)" after the palette's
+name when the person's catalog has none of that name), then the rest; from the world
 they add where an object or anchor being moved or deleted is now, how many
 objects a deleted object carries ("and the 3 objects it carries"), what a
 fill's start cell holds and how many cells the engine's fill would change
@@ -373,7 +389,7 @@ state changes, not per frame:
 | `set_field`, `remove` | the object's tile (`object`) |
 | `set_portal` | the object's tile (`object`) and, when set, where the portal leads (`target`): the location, or the named anchor's tile |
 | `paint` | the cell (`cell`) |
-| `paint_stroke`, `paint_zones` | every cell of the stroke (`cell`) |
+| `paint_stroke`, `scatter_terrain`, `paint_zones` | every cell of the stroke (`cell`) |
 | `fill_terrain` | the cell it starts from, then every cell it would change in the person's committed world (`cell`), worked out by the engine's own fill; just the start cell when it would change none |
 | `place` | the tile it places on (`target`) |
 | `create_anchor`, `delete_anchor` | the anchor's tile (`anchor`); a new anchor is on the view's layer |

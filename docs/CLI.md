@@ -148,9 +148,11 @@ other worlds are unchanged. Every report with a `catalog` member has it:
   whether placeable, and for placeable ones their layer, fields, default
   field names and portal flag, plus the terrain grids that offer them),
   `terrain_palette` (grid and value) and `zone_palette` (id and display
-  name) of the view's plane. `--match TEXT` keeps entries whose id contains
-  `TEXT`, ignoring case, exactly as the desktop Place palette filter does; it
-  takes at most 64 bytes.
+  name) of the view's plane, and, only when the catalog has
+  `editing.palettes`, `palettes` (name, grid and `entries`, each a value and
+  its weight). `--match TEXT` keeps entries whose id (a palette's name)
+  contains `TEXT`, ignoring case, exactly as the desktop Place palette
+  filter does; it takes at most 64 bytes.
 - `tilewright.editor-lint/1`: `counts` by severity and `findings`, each with a
   stable `code`, a `severity`, a `location` (some of `path`, `plane`,
   `layer`, `tile`, `uid`, `carried`, `anchor`, `zone`, `grid`, `codes`), a `message`
