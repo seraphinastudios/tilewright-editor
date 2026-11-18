@@ -178,7 +178,8 @@ magnitude at most 2^53 − 1; `layer` is a 32-bit integer; `cells` holds 1 to
 4,096 distinct `[x, y]` pairs; `contiguous` (of `fill_terrain`) is a
 boolean; `seed` (of `scatter_terrain`) is an integer from 0 to
 4,294,967,295 and `palette` names one of the catalog's palettes, which the
-`catalog` tool lists under `palettes`; a portal `target` is `null`, an anchor or a location; a field
+`catalog` tool lists under `palettes`, a paged list like the others (page it
+with `section: "palettes"`); a portal `target` is `null`, an anchor or a location; a field
 `value` is any JSON value. The kind's `const` decides the
 choice, so a member of the wrong type fails the one choice that applies;
 there is no ambiguity of the kind the revision warns about for

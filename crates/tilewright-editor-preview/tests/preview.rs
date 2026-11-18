@@ -1295,6 +1295,10 @@ fn optional_palettes_parse_strictly_in_both_formats_and_their_absence_changes_no
     // to be valid) and the entry's value.
     for (palettes, expected) in [
         (
+            json!([palette("a", good()), palette(&"m".repeat(65), good())]),
+            "palette 2: palette name too long",
+        ),
+        (
             json!([
                 palette("a", good()),
                 palette("meadow", json!([entry("grass", json!(0))]))

@@ -166,3 +166,23 @@ fn a_catalog_without_palettes_has_an_empty_palettes_section() {
     assert_eq!(page["items"], json!([]));
     assert_eq!(page["next_cursor"], Value::Null);
 }
+
+#[test]
+fn a_report_lists_all_32_palettes_when_they_fit() {
+    let (_directory, root) = common::fixture_copy("prototype-neutral");
+    common::edit(&root, "preview.jsonc", |catalog| {
+        catalog["editing"]["palettes"] = (0..32)
+            .map(|index| {
+                json!({"name": format!("p{index:02}"), "grid": "floor",
+                    "entries": [{"value": "grass", "weight": 1}]})
+            })
+            .collect();
+    });
+    let mut server = common::server(&root);
+    let report = common::call(&mut server, "catalog", &json!({"limit": 500}))
+        .structured()
+        .clone();
+    assert_eq!(report["palettes"].as_array().unwrap().len(), 32);
+    assert_eq!(report["palettes_more"], 0);
+    assert_eq!(report["palettes_cursor"], Value::Null);
+}
