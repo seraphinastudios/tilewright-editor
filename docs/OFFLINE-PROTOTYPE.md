@@ -400,12 +400,20 @@ kept across modes.
 
 The tint colours each tile of the view whose chunk exists by its stored
 height, on a fixed ramp of eight bands from dark violet (lowest) through teal
-and green to pale yellow (highest), at 60 % opacity. Lightness rises from band
-to band, so the order reads without telling hues apart, and both ends are
-darker and lighter than any zone tint. The range is the lowest and highest
-stored height among the view's tiles (tiles of chunks that do not exist are
-neither tinted nor counted), in the shown World (the pending one while a
-change is reviewed). A tile's band is the nearest of the eight evenly spaced
+and green to pale yellow (highest), at 90 % opacity, so while it shows it
+mostly hides the terrain art; it is a toggle, and H brings the art back. The
+opacity is chosen so the order of the bands survives the ground under them:
+blended over the sample's grass, its sand or a tile without ground (the dark
+clear colour shows there), each band is lighter than the band below it over
+any of them by at least 2 CIE L* (a tested property; at 60 % a band over sand
+read lighter than the next band over grass, and a tile without ground read
+three bands too low). So the order reads without telling hues apart, and
+both ends are darker and lighter than any zone tint. The range is the lowest
+and highest stored height among the view's tiles: the catalog view's bounds,
+including tiles drawn outside the window (panned or zoomed away, or lifted
+out of the frame); tiles of chunks that do not exist are neither tinted nor
+counted. It is taken in the shown World (the pending one while a change is
+reviewed, then the committed one after Accept, Cancel or Undo). A tile's band is the nearest of the eight evenly spaced
 band positions, a half rounded up, computed in integers:
 `((h - min) × 14 + (max - min)) div (2 × (max - min))`. The lowest height is
 always band 0 and the highest band 7, whatever the span. A flat view (every
@@ -414,22 +422,30 @@ the stacked ones, so a profile's `layer_height` does not change it.
 
 While the tint shows, the sidebar gives its legend under the toggle:
 "Heights 0 to 12", then "Darkest: lowest, 0" and "Lightest: highest, 12" with
-the two end bands as swatches. A flat view reads "Heights: all 0, no tint",
+the two end bands as swatches. While the zone overlay shows too, a last line
+says "Zone tints cover it: O hides them", since tiles inside zones then do
+not match the swatches. A flat view reads "Heights: all 0, no tint",
 and a view without chunks "Heights: no tiles in view". The tint is made like
 the zone tints: unpickable copies of the prepared cell-reference quads in the
 World's draw order, so objects and nearer tiles cover it, the semantic planes
 and every pick are unchanged, and a tile the prepared cell scene does not draw
 (for example ground lifted far out of the frame) has no tint either. A zone
 tint of the same tile draws over it, and the proposal highlight and the brush
-preview over both; turn the zones off to read the heights alone. When the
-cells' draw order cannot be computed the status line says "Height tint
-unavailable for this view.", and when the overlays would pass the scene
+preview over both; turn the zones off to read the heights alone. The brush
+preview (white) and the proposal highlights (black) signal by lightness too,
+so on the tint a previewed or highlighted tile can read as a neighbouring
+band (a previewed tile lighter, a highlighted one darker); turn the tint off while painting or reviewing a
+proposal to read those marks. When the cells' draw order cannot be computed
+the status line says "Height tint unavailable for this view." (or names the
+height tint with the zone overlay and stroke preview when those are wanted
+too), and when the overlays would pass the scene
 limits it says which were left out.
 
 The inspector of a selected tile shows its height after its value: "Height:
-7", or with a profile `layer_height` also the layer's base and the sum,
-"Height: 7 + base 32 = 39" (layer × `layer_height` + height, computed in
-128-bit integers; a narrow sidebar cuts the line after the stored height). A
+7", or with a profile `layer_height` the stacked height first, then the
+stored height and the layer's base: "Height: 39 (7 + base 32)" (layer ×
+`layer_height` + height, computed in 128-bit integers; a narrow sidebar cuts
+the line with "..." after the stacked height). A
 tile of a chunk that does not exist reads "Height: none, no chunk here". No
 heights are written yet, and nothing marks a slope "too steep": the profile's
 movement limits are only reported as stored (`overview`'s

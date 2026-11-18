@@ -13,9 +13,11 @@ use tilewright_editor_preview::PreviewCatalog;
 use tilewright_source::{Plane, World};
 
 /// The height ramp: eight bands from dark (low) to light (high). Lightness
-/// rises strictly from band to band (a tested property), so the order reads
-/// without telling hues apart; the hue runs from violet through teal and
-/// green to pale yellow. The ends are darker and lighter than any zone tint.
+/// rises strictly from band to band, also once drawn at [`TINT_ALPHA`] over
+/// the sample's grass, sand or a tile without ground (tested), so the order
+/// reads without telling hues apart; the hue runs from violet through teal
+/// and green to pale yellow. The ends are darker and lighter than any zone
+/// tint.
 pub const RAMP: [[f32; 3]; 8] = [
     [0.17, 0.11, 0.35],
     [0.20, 0.24, 0.52],
@@ -26,9 +28,12 @@ pub const RAMP: [[f32; 3]; 8] = [
     [0.75, 0.83, 0.30],
     [0.98, 0.93, 0.55],
 ];
-/// Opacity of a height tint over its tile: more than a zone tint's 0.4, so
-/// the lightness steps stay readable over the terrain art.
-pub const TINT_ALPHA: f32 = 0.6;
+/// Opacity of a height tint over its tile. Nearly opaque, so the terrain
+/// under a tile moves its lightness by less than one band step and the
+/// order of the bands survives any ground (at 0.85 a band over sand can
+/// read lighter than the next band over grass). It mostly hides the
+/// terrain art while the tint is shown; the tint is a toggle.
+pub const TINT_ALPHA: f32 = 0.9;
 
 /// The stored height of plane tile `x, y` on `layer`: `None` when its chunk
 /// does not exist (or the plane's chunk size is 0). A chunk without a
@@ -135,29 +140,40 @@ pub fn tints(heights: &[([i64; 2], i32)]) -> (Option<HeightRange>, BTreeMap<[i64
     (range, tints)
 }
 
+/// Says that zone tints draw over the height tint, so tiles inside zones do
+/// not match the legend's swatches.
+pub const UNDER_ZONES: &str = "Zone tints cover it: O hides them";
+
 /// The legend of the height tint: a line with the range of the view's
 /// heights, then for a range that is not flat the darkest and the lightest
-/// band, each with the band its swatch shows. The two band lines name the
+/// band, each with the band its swatch shows, and [`UNDER_ZONES`] when
+/// `under_zones` (the zone overlay shows too). The two band lines name the
 /// ends again, so they stay readable when a narrow sidebar cuts the first.
-pub fn legend(range: Option<HeightRange>) -> Vec<(String, Option<usize>)> {
+pub fn legend(range: Option<HeightRange>, under_zones: bool) -> Vec<(String, Option<usize>)> {
     match range {
         None => vec![("Heights: no tiles in view".into(), None)],
         Some(range) if range.is_flat() => {
             vec![(format!("Heights: all {}, no tint", range.min), None)]
         }
-        Some(HeightRange { min, max }) => vec![
-            (format!("Heights {min} to {max}"), None),
-            (format!("Darkest: lowest, {min}"), Some(0)),
-            (format!("Lightest: highest, {max}"), Some(RAMP.len() - 1)),
-        ],
+        Some(HeightRange { min, max }) => {
+            let mut rows = vec![
+                (format!("Heights {min} to {max}"), None),
+                (format!("Darkest: lowest, {min}"), Some(0)),
+                (format!("Lightest: highest, {max}"), Some(RAMP.len() - 1)),
+            ];
+            if under_zones {
+                rows.push((UNDER_ZONES.into(), None));
+            }
+            rows
+        }
     }
 }
 
 /// The inspector's height line for plane tile `x, y` on `layer`: its stored
 /// height, and with a profile `layer_height` also the layer's base
 /// (`layer × layer_height`) and the sum, computed in 128-bit integers, as
-/// "Height: 7 + base 32 = 39". The stored height comes first, so it stays
-/// when a narrow sidebar cuts the line.
+/// "Height: 39 (7 + base 32)": the stacked height first, so it stays when a
+/// narrow sidebar cuts the line.
 pub fn inspector_line(world: &World, plane: &str, layer: i32, x: i64, y: i64) -> String {
     let Some(h) = world
         .planes()
@@ -171,7 +187,7 @@ pub fn inspector_line(world: &World, plane: &str, layer: i32, x: i64, y: i64) ->
         Some(layer_height) => {
             let base = i128::from(layer) * i128::from(layer_height);
             let total = base + i128::from(h);
-            format!("Height: {h} + base {base} = {total}")
+            format!("Height: {total} ({h} + base {base})")
         }
     }
 }
@@ -195,6 +211,77 @@ mod tests {
         for zone in crate::zones::TINTS {
             assert!(luma(RAMP[0]) < luma(zone) && luma(zone) < luma(RAMP[7]));
         }
+    }
+
+    /// CIE L* of a gamma-encoded sRGB colour.
+    fn lightness([r, g, b]: [f64; 3]) -> f64 {
+        let linear = |c: f64| {
+            if c <= 0.040_45 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let y = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+        if y > 216.0 / 24_389.0 {
+            116.0 * y.cbrt() - 16.0
+        } else {
+            24_389.0 / 27.0 * y
+        }
+    }
+
+    /// The mean colour of a resource of the neutral sample (an `ATX1` file:
+    /// the tag, width and height as little-endian u32, then RGBA8 pixels),
+    /// as gamma-encoded sRGB in 0..1.
+    fn mean_colour(resource: &str) -> [f64; 3] {
+        let path = tilewright_editor_testkit::fixture_world("prototype-neutral")
+            .join(format!("preview-assets/{resource}.atx1"));
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(&bytes[..4], b"ATX1");
+        let pixels = &bytes[12..];
+        let count = f64::from(u32::try_from(pixels.len() / 4).unwrap());
+        let mut sum = [0.0; 3];
+        for pixel in pixels.chunks_exact(4) {
+            for (total, value) in sum.iter_mut().zip(pixel) {
+                *total += f64::from(*value);
+            }
+        }
+        sum.map(|total| total / count / 255.0)
+    }
+
+    #[test]
+    fn composited_bands_keep_their_order_over_any_ground() {
+        // Grounds: the mean colour of the sample's grass (about 92, 146, 78
+        // of 255) and sand (about 205, 180, 118) art, and the preview's
+        // clear colour (0.04, 0.05, 0.07), which shows on a tile without
+        // ground. The renderer blends in gamma-encoded sRGB:
+        // `alpha × tint + (1 − alpha) × ground`.
+        let grounds = [
+            mean_colour("grass"),
+            mean_colour("sand"),
+            [0.04, 0.05, 0.07],
+        ];
+        assert!((grounds[0][1] * 255.0 - 146.3).abs() < 0.1, "{grounds:?}");
+        assert!((grounds[1][0] * 255.0 - 205.2).abs() < 0.1, "{grounds:?}");
+        let alpha = f64::from(TINT_ALPHA);
+        let drawn = |band: usize, ground: [f64; 3]| {
+            let mut colour = [0.0; 3];
+            for (channel, value) in colour.iter_mut().enumerate() {
+                *value = alpha * f64::from(RAMP[band][channel]) + (1.0 - alpha) * ground[channel];
+            }
+            lightness(colour)
+        };
+        // Band k + 1 over any ground is lighter than band k over any ground
+        // (every pair), by at least 2 L* (2.6 at alpha 0.9).
+        let mut worst = f64::INFINITY;
+        for band in 0..RAMP.len() - 1 {
+            for low in grounds {
+                for high in grounds {
+                    worst = worst.min(drawn(band + 1, high) - drawn(band, low));
+                }
+            }
+        }
+        assert!(worst >= 2.0, "worst margin {worst} L*");
     }
 
     #[test]
@@ -249,7 +336,7 @@ mod tests {
         assert_eq!(tints[&[1, 0]], tint_color(4));
         assert_eq!(tints[&[2, 0]], tint_color(7));
         assert_eq!(
-            legend(found),
+            legend(found, false),
             [
                 ("Heights 0 to 12".to_owned(), None),
                 ("Darkest: lowest, 0".to_owned(), Some(0)),
@@ -259,13 +346,19 @@ mod tests {
         // A flat view: no tint at all, and the legend says so.
         let (flat, none) = super::tints(&[([0, 0], 5), ([1, 0], 5)]);
         assert!(none.is_empty());
-        assert_eq!(legend(flat), [("Heights: all 5, no tint".to_owned(), None)]);
+        assert_eq!(
+            legend(flat, true),
+            [("Heights: all 5, no tint".to_owned(), None)]
+        );
         let (empty, none) = super::tints(&[]);
         assert!(empty.is_none() && none.is_empty());
         assert_eq!(
-            legend(empty),
+            legend(empty, true),
             [("Heights: no tiles in view".to_owned(), None)]
         );
+        let mut under = legend(found, false);
+        under.push((UNDER_ZONES.to_owned(), None));
+        assert_eq!(legend(found, true), under);
         assert_eq!(tint_color(7)[3], TINT_ALPHA);
         assert_eq!(swatch_color(0), [0.17, 0.11, 0.35, 1.0]);
     }

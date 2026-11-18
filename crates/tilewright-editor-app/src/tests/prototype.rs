@@ -323,9 +323,11 @@ fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation(
         Keycode::Left,
         Keycode::N,
         Keycode::O,
+        Keycode::H,
     ] {
         super::native_key(&mut app, key).unwrap();
     }
+    assert!(!app.tools.heights_visible());
     app.refresh_ui();
     assert_eq!(app.tools.draft_text(), Some(draft.as_str()));
     assert_ne!(

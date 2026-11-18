@@ -36,6 +36,8 @@ const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) 
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
 const HEIGHTS_UNAVAILABLE: &str = "Height tint unavailable for this view.";
+const HEIGHTS_AND_OVERLAY_UNAVAILABLE: &str =
+    "Height tint, zone overlay and stroke preview unavailable for this view.";
 /// The desktop's indication while the catalog contains project art.
 const PROJECT_ART_LABEL: &str = "Project art loaded";
 const STROKE_INTERRUPTED: &str = "Brush stroke ended before release; nothing was prepared.";
@@ -1369,10 +1371,16 @@ impl Application {
             shown,
         ));
         if shown {
-            for (text, _) in heights::legend(self.height_view().0) {
+            for (text, _) in self.height_legend() {
                 rows.push((text, None, true, false));
             }
         }
+    }
+
+    /// The height tint's legend rows ([`heights::legend`]), with the line
+    /// about zone tints while the zone overlay shows too.
+    fn height_legend(&self) -> Vec<(String, Option<usize>)> {
+        heights::legend(self.height_view().0, self.tools.zones_visible())
     }
 
     /// The height range of the active view's tiles in the shown World (the
@@ -2749,18 +2757,26 @@ impl Application {
             }?;
             tints.get(zone).map(|tint| zones::swatch_color(*tint))
         };
-        let legend: std::collections::BTreeMap<String, usize> = if self.tools.heights_visible() {
-            heights::legend(self.height_view().0)
-                .into_iter()
-                .filter_map(|(text, band)| Some((text, band?)))
-                .collect()
-        } else {
-            std::collections::BTreeMap::new()
-        };
+        // The height legend's rows follow the height toggle row in the order
+        // `height_legend` gives them; they are found by that place, never by
+        // their text.
+        let mut legend = std::collections::BTreeMap::new();
+        if self.tools.heights_visible()
+            && let Some(toggle) = rows
+                .iter()
+                .position(|row| row.1 == Some(Control::HeightOverlay))
+        {
+            for (offset, (_, band)) in self.height_legend().into_iter().enumerate() {
+                if let Some(band) = band {
+                    legend.insert(toggle + 1 + offset, band);
+                }
+            }
+        }
         rows.iter()
-            .map(|row| match row.0.as_str() {
-                text if legend.contains_key(text) => {
-                    (Some(heights::swatch_color(legend[text])), None)
+            .enumerate()
+            .map(|(index, row)| match row.0.as_str() {
+                _ if legend.contains_key(&index) => {
+                    (Some(heights::swatch_color(legend[&index])), None)
                 }
                 ANCHOR_LEGEND => (
                     Some(crate::workspace_render::ANCHOR_BADGE),
@@ -3121,13 +3137,13 @@ impl Application {
             .into();
         }
         if self.overlay_unavailable() {
-            return if self.tools.zones_visible()
+            let others = self.tools.zones_visible()
                 || self.tools.stroke().is_some()
-                || self.fill_changes().is_some()
-            {
-                OVERLAY_UNAVAILABLE
-            } else {
-                HEIGHTS_UNAVAILABLE
+                || self.fill_changes().is_some();
+            return match (self.tools.heights_visible(), others) {
+                (true, true) => HEIGHTS_AND_OVERLAY_UNAVAILABLE,
+                (true, false) => HEIGHTS_UNAVAILABLE,
+                _ => OVERLAY_UNAVAILABLE,
             }
             .into();
         }

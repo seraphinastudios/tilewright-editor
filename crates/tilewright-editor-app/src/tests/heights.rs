@@ -215,6 +215,14 @@ fn zone_tints_draw_over_height_tints() {
     let (_temporary, mut app) = zone_application(sloped);
     app.control(Control::HeightOverlay).unwrap();
     route(&mut app, &key(Keycode::O)).unwrap();
+    // The legend says the zone tints cover the height tint, and stops
+    // saying it when they go.
+    let texts = sidebar_texts(&mut app);
+    let at = texts
+        .iter()
+        .position(|text| text == heights::UNDER_ZONES)
+        .unwrap_or_else(|| panic!("{texts:?}"));
+    assert_eq!(texts[at - 1], "Lightest: highest, 21");
     let overlay = tint_quads(&mut app);
     // 48 height tints, 48 zone tints and the sample's badges.
     assert_eq!(overlay.len(), 48 + 48 + 2 * 3);
@@ -240,6 +248,149 @@ fn zone_tints_draw_over_height_tints() {
             (overlay[zone].depth, overlay[zone].painter_order)
         );
     }
+    // The swatches stay on the band rows, found by their place after the
+    // toggle row, and the zone line has none.
+    let swatch = |app: &Application, text: &str| {
+        app.ui
+            .widgets
+            .iter()
+            .find(|widget| widget.text == text)
+            .unwrap()
+            .swatch
+    };
+    assert_eq!(
+        swatch(&app, "Lightest: highest, 21"),
+        Some(heights::swatch_color(7))
+    );
+    assert_eq!(swatch(&app, heights::UNDER_ZONES), None);
+    route(&mut app, &key(Keycode::O)).unwrap();
+    assert!(!sidebar_texts(&mut app).contains(&heights::UNDER_ZONES.to_owned()));
+}
+
+#[test]
+fn a_zone_named_like_a_legend_row_gets_no_height_swatch() {
+    // A sidebar row whose text equals a legend line is not a legend row.
+    let (_temporary, mut app) = zone_application(sloped);
+    app.control(Control::HeightOverlay).unwrap();
+    let mut rows = vec![("Darkest: lowest, -5".to_owned(), None, true, false)];
+    rows.extend(app.inspector_rows().0);
+    let swatches = app.row_swatches(&rows);
+    assert_eq!(swatches[0], (None, None));
+    let darkest = rows
+        .iter()
+        .skip(1)
+        .position(|row| row.0 == "Darkest: lowest, -5")
+        .unwrap()
+        + 1;
+    assert_eq!(swatches[darkest].0, Some(heights::swatch_color(0)));
+}
+
+#[test]
+fn unavailable_cell_slots_name_the_height_tint() {
+    let (_temporary, mut app) = zone_application(sloped);
+    assert!(app.prepared.withhold_cell_slots());
+    route(&mut app, &key(Keycode::H)).unwrap();
+    assert!(crate::prototype::height_overlay(&app).is_empty());
+    assert_eq!(app.status_label(), "Height tint unavailable for this view.");
+    route(&mut app, &key(Keycode::O)).unwrap();
+    assert_eq!(
+        app.status_label(),
+        "Height tint, zone overlay and stroke preview unavailable for this view."
+    );
+    route(&mut app, &key(Keycode::H)).unwrap();
+    assert_eq!(
+        app.status_label(),
+        "Zone overlay and stroke preview unavailable for this view."
+    );
+}
+
+/// How many height-tint copies the frame draws.
+fn tint_count(app: &mut Application) -> usize {
+    app.refresh_ui();
+    crate::prototype::height_overlay(app).len()
+}
+
+#[test]
+fn the_tint_and_legend_follow_the_pending_world_through_review() {
+    // A view straddling chunk 0_0 (heights 79 to 93 there) and the missing
+    // 1_0. Painting a tile of 1_0 creates that chunk, all height 0.
+    let (_temporary, mut app) = zone_application(|world| {
+        sloped(world);
+        edit_json(world, "preview.jsonc", |catalog| {
+            catalog["view"]["bounds"] = json!([28, 0, 8, 6]);
+        });
+    });
+    route(&mut app, &key(Keycode::H)).unwrap();
+    super::acknowledge_ui(&mut app);
+    let shows = |app: &mut Application, legend: &str, tints: usize| {
+        super::acknowledge_ui(app);
+        let texts = sidebar_texts(app);
+        assert!(texts.contains(&legend.to_owned()), "{legend}: {texts:?}");
+        assert_eq!(tint_count(app), tints, "{legend}");
+    };
+    shows(&mut app, "Heights 79 to 93", 24);
+    let paint = |app: &mut Application| {
+        let expected = app.session.history().document().revision();
+        app.action(tilewright_editor_ui::Action::Paint {
+            plane: "main".into(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 33,
+            y: 1,
+            proto: "sand".into(),
+            expected,
+        })
+    };
+    // Pending: the shown World has the new chunk.
+    paint(&mut app).unwrap();
+    shows(&mut app, "Heights 0 to 93", 48);
+    app.action(tilewright_editor_ui::Action::Cancel).unwrap();
+    shows(&mut app, "Heights 79 to 93", 24);
+    paint(&mut app).unwrap();
+    app.action(tilewright_editor_ui::Action::Accept).unwrap();
+    shows(&mut app, "Heights 0 to 93", 48);
+    app.action(tilewright_editor_ui::Action::Undo).unwrap();
+    shows(&mut app, "Heights 79 to 93", 24);
+}
+
+#[test]
+fn h_types_into_a_focused_draft_and_leaves_the_tint_alone() {
+    use super::zone_manage::{press, type_text};
+    use tilewright_editor_ui::tools::ZoneChoice;
+    // A zone name draft: the typed h reaches the draft.
+    let (_temporary, mut app) = zone_application(sloped);
+    app.control(Control::Zone).unwrap();
+    press(
+        &mut app,
+        &Control::ZonePalette(ZoneChoice::Zone("meadow".into())),
+    );
+    press(&mut app, &Control::ZoneName);
+    assert!(app.tools.draft_text().is_some());
+    route(&mut app, &key(Keycode::H)).unwrap();
+    super::acknowledge_ui(&mut app);
+    type_text(&mut app, "h");
+    assert!(
+        !app.tools.heights_visible(),
+        "H toggled while naming a zone"
+    );
+    assert!(app.tools.draft_text().unwrap().ends_with('h'));
+    // A field draft.
+    let (_temporary, mut app) = super::application();
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    crate::prototype::native_key(&mut app, Keycode::H).unwrap();
+    assert!(
+        !app.tools.heights_visible(),
+        "H toggled while editing a field"
+    );
+    // The palette filter.
+    let (_temporary, mut app) = zone_application(|_| {});
+    app.control(Control::Place).unwrap();
+    app.control(Control::PaletteFilter).unwrap();
+    assert!(app.tools.filter_focused());
+    crate::prototype::native_key(&mut app, Keycode::H).unwrap();
+    assert!(!app.tools.heights_visible(), "H toggled while filtering");
 }
 
 #[test]
@@ -309,7 +460,8 @@ fn the_inspector_shows_the_selected_cells_height() {
     let (_temporary, mut app) = zone_application(|_| {});
     select(&mut app, 0, 3, 2);
     assert_eq!(height_line(&mut app).as_deref(), Some("Height: 0"));
-    // With a profile layer_height, the layer's base and the sum follow.
+    // With a profile layer_height, the stacked height leads, then the
+    // stored height and the layer's base.
     let (_temporary, mut app) = zone_application(|world| {
         sloped(world);
         edit_json(world, "profile/profile.jsonc", |profile| {
@@ -319,7 +471,7 @@ fn the_inspector_shows_the_selected_cells_height() {
     select(&mut app, 0, 0, 5);
     assert_eq!(
         height_line(&mut app).as_deref(),
-        Some("Height: -5 + base 0 = -5")
+        Some("Height: -5 (-5 + base 0)")
     );
 }
 
@@ -398,24 +550,21 @@ fn extreme_heights_neither_overflow_nor_panic() {
             }
         });
     });
-    // The sidebar cuts the long line after the stored height; the whole
-    // line is the inspector's.
+    // A narrow sidebar cuts the long line after the stacked height; the
+    // whole line is the inspector's.
     select(&mut app, -3, 2, 2);
     let line = height_line(&mut app).unwrap();
-    assert!(line.starts_with("Height: 2147483647 + "), "{line}");
+    assert!(line.starts_with("Height: 2147287042 ("), "{line}");
     assert_eq!(
         heights::inspector_line(app.session.world(), "main", -3, 2, 2),
-        "Height: 2147483647 + base -196605 = 2147287042"
+        "Height: 2147287042 (2147483647 + base -196605)"
     );
     select(&mut app, -3, 1, 1);
-    assert!(
-        height_line(&mut app)
-            .unwrap()
-            .starts_with("Height: 0 + base -")
-    );
+    let line = height_line(&mut app).unwrap();
+    assert!(line.starts_with("Height: -196605 ("), "{line}");
     assert_eq!(
         heights::inspector_line(app.session.world(), "main", -3, 1, 1),
-        "Height: 0 + base -196605 = -196605"
+        "Height: -196605 (0 + base -196605)"
     );
     route(&mut app, &key(Keycode::H)).unwrap();
     assert!(sidebar_texts(&mut app).contains(&"Heights 0 to 2147483647".to_owned()));
@@ -461,6 +610,6 @@ fn a_world_the_preview_refuses_is_refused_before_any_tint() {
     assert_eq!(tints.len(), 48);
     assert_eq!(
         heights::inspector_line(document.world(), "main", -3, 4, 4),
-        "Height: -2147483648 + base -196605 = -2147680253"
+        "Height: -2147680253 (-2147483648 + base -196605)"
     );
 }
