@@ -203,9 +203,25 @@ mod linux {
             net::UnixListener,
         },
         path::Path,
+        process::{Child, Command, Stdio},
+        sync::{Mutex, MutexGuard, PoisonError},
     };
     use tilewright_editor_commands::{Error, History};
     use tilewright_editor_document::WorldDocument;
+
+    // From fork until exec, a child holds copies of every descriptor of this
+    // process, close-on-exec ones included. A lock that another test drops in
+    // that window stays held by the copy until the child execs, so that test
+    // could not take it again. `Command::spawn` returns only after the exec,
+    // so while this guard is held no child of this binary holds such a copy.
+    static SPAWNING: Mutex<()> = Mutex::new(());
+    fn no_spawning() -> MutexGuard<'static, ()> {
+        SPAWNING.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    fn spawn(command: &mut Command) -> Child {
+        let _spawning = no_spawning();
+        command.spawn().unwrap()
+    }
 
     fn session_root() -> tempfile::TempDir {
         let root = std::env::var_os("TILEWRIGHT_CHECKED_TEST_ROOT")
@@ -262,8 +278,10 @@ mod linux {
             0o600
         );
         assert!(!dir.path().join(format!("{}.stage", record.name)).exists());
+        let spawning = no_spawning();
         drop(store);
         assert_eq!(error(dir.path()).kind, FailureKind::ExistingEntries);
+        drop(spawning);
     }
 
     #[test]
@@ -373,6 +391,9 @@ mod linux {
         let recovery = session_root();
         let mut store = open(recovery.path()).unwrap();
         fs::write(recovery.path().join("inverse-0001.json.stage"), "preserve").unwrap();
+        // Each publication takes and releases the World project lock, and the
+        // later publications and `blocker_root.lock()` take it again.
+        let _spawning = no_spawning();
         assert!(matches!(
             history.commit(&mut store, &tilewright_edit::PublishOptions::default()),
             Err(Error::Recovery(_))
@@ -416,9 +437,9 @@ mod linux {
         // Python is already a repository validation prerequisite. Construct a
         // minimal Linux default ACL on this test-owned directory only; it need
         // not alter mode bits to prove ACL checks are distinct from mode checks.
-        let status = std::process::Command::new("python3")
+        let status = spawn(Command::new("python3")
             .args(["-c", "import os,struct,sys; a=struct.pack('<I',2)+b''.join(struct.pack('<HHI',t,p,0xffffffff) for t,p in [(1,7),(4,0),(32,0)]); os.setxattr(sys.argv[1], 'system.posix_acl_default', a)"])
-            .arg(dir.path()).status().unwrap();
+            .arg(dir.path())).wait().unwrap();
         assert!(
             status.success(),
             "checked Linux ACL fixture setup must succeed"
@@ -540,17 +561,19 @@ mod linux {
     fn checked_linux_process_exit_at_every_retention_checkpoint_preserves_state() {
         for stop in 1..=10 {
             let dir = session_root();
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "tests::linux::crash_child",
-                    "--ignored",
-                    "--nocapture",
-                ])
-                .env("TILEWRIGHT_CRASH_TEST_ROOT", dir.path())
-                .env("TILEWRIGHT_CRASH_TEST_STEP", stop.to_string())
-                .status()
-                .unwrap();
+            let status = spawn(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "tests::linux::crash_child",
+                        "--ignored",
+                        "--nocapture",
+                    ])
+                    .env("TILEWRIGHT_CRASH_TEST_ROOT", dir.path())
+                    .env("TILEWRIGHT_CRASH_TEST_STEP", stop.to_string()),
+            )
+            .wait()
+            .unwrap();
             assert_eq!(status.code(), Some(77));
             if stop < 5 {
                 assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
@@ -618,16 +641,20 @@ mod linux {
     fn checked_linux_simultaneous_process_session_is_refused() {
         let dir = session_root();
         let _owner = open(dir.path()).unwrap();
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "tests::linux::lock_child",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env("TILEWRIGHT_CRASH_TEST_ROOT", dir.path())
-            .output()
-            .unwrap();
+        let output = spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::linux::lock_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("TILEWRIGHT_CRASH_TEST_ROOT", dir.path())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .wait_with_output()
+        .unwrap();
         assert!(
             output.status.success(),
             "{}",
