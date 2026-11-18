@@ -450,8 +450,9 @@ The inspector of a selected tile shows its height after its value: "Height:
 stored height and the layer's base: "Height: 39 (7 + base 32)" (layer ×
 `layer_height` + height, computed in 128-bit integers; a narrow sidebar cuts
 the line with "..." after the stacked height). A
-tile of a chunk that does not exist reads "Height: none, no chunk here". No
-heights are written yet, and nothing marks a slope "too steep": the profile's
+tile of a chunk that does not exist reads "Height: none, no chunk here". The
+desktop writes no heights yet (agents and proposals can, under a
+[height range](#height-range)), and nothing marks a slope "too steep": the profile's
 movement limits are only reported as stored (`overview`'s
 `profile.movement`), because the format does not define what they mean.
 
@@ -472,6 +473,43 @@ Hand test (the sample has no heights, so use a copy):
 The World pixels of the existing demonstration captures are unchanged, since
 the tint is off by default; their interface changed: the sidebar has the
 height toggle row, and the inspector of a selected tile has the height line.
+
+#### Height range
+
+A catalog may let the editor change tile heights in an optional
+`editing.heights` member, next to the grants: the range of heights it may
+write in the active view's plane and spatial layer. For example, to allow
+heights from -64 to 64:
+
+```json
+"editing": {
+  "terrain": [{"grid": "floor", "values": ["grass", "sand"]}],
+  "heights": {"min": -64, "max": 64}
+}
+```
+
+`min` and `max` are integers with `min <= max` (equal is allowed), both
+from -512 to 512, the editor's hard bound; anything else, or any other
+member, refuses the whole catalog. The bound keeps every height the editor
+writes, and the 0 of a tile without a height grid, within 1,024 of each
+other, so a bent isometric tile stays inside the renderer's quad limit at
+the largest zoom ([ADR 0006](../decisions/0006-catalog-heights.md)). The
+member is the same in catalog formats 1 and 2; a catalog without it loads
+and behaves exactly as before, and an editor from before it refuses a
+catalog that has it. The `catalog` command and MCP tool report it as
+`heights` (`min` and `max`), only when the catalog has it. The neutral
+sample has none.
+
+Under a range, an `adjust_heights` action (an agent's `edit` or a proposal
+step; the desktop's sculpt mode comes later) raises or lowers the covered
+cells of the active view by a flat amount, once each, and stops at the
+range's ends ([docs/ENGINE.md](ENGINE.md#raise-and-lower)). Hand test with
+the copy above, its catalog given `"heights": {"min": -8, "max": 32}`: in a
+sandbox of it ([docs/SANDBOX.md](SANDBOX.md)), `edit` the action
+`{"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": [[3, 2]], "amount": 8}`
+with its `expected`, then `accept`: `tile` at (3, 2) reports `height` 15,
+and the submitted proposal applied in the desktop shows the raised tile
+under H.
 
 ### Zones
 

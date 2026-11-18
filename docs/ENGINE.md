@@ -78,14 +78,14 @@ descriptor it reports back with `Session::set_recovery_descriptor`.
 
 Every edit action names its target by uid, plane, layer, grid and plane
 coordinates, never by the frame selection: `Move`, `SetField`, `Remove`
-and `SetPortal` by uid; `Paint`, `PaintStroke`, `FillTerrain`, `PaintZones`
-and `Place` by plane tile; zone and anchor actions by plane and id. `Select` and
+and `SetPortal` by uid; `Paint`, `PaintStroke`, `FillTerrain`,
+`ScatterTerrain`, `AdjustHeights`, `PaintZones` and `Place` by plane tile; zone and anchor actions by plane and id. `Select` and
 `ClearSelection` only change what the desktop app highlights; an accepted
 placement selects the new object.
 
 Per-prototype object grants (`editing.objects`: moving, fields, deletion,
-placement and portals of objects), terrain and zone painting, and anchor
-creation and moves apply only in the catalog's active view: its plane,
+placement and portals of objects), terrain and zone painting, height
+adjustments, and anchor creation and moves apply only in the catalog's active view: its plane,
 spatial layer and tile bounds. Zone management and anchor deletion apply to
 the view's plane, whatever the bounds. Per-prototype object grants cover
 placed objects only; an object carried in an inventory is refused with the
@@ -202,6 +202,48 @@ demonstration install), so the live preview, the release and a replay all
 use the recorded seed. `Session::stroke_changes` answers for a scatter
 stroke too.
 
+## Raise and lower
+
+`AdjustHeights { plane, layer, cells, amount, expected }` records a raise
+(`amount > 0`) or a lower (`amount < 0`) as it was meant: the covered cells
+and a flat amount, not the heights it writes. It needs the catalog's
+`editing.heights {min, max}` range (see
+[the prototype guide](OFFLINE-PROTOTYPE.md#height-range)). When it is
+prepared, the engine (`tilewright_editor_ui::sculpt`), in this order:
+
+1. checks the stroke rule (1 to 4,096 cells, distinct and ordered:
+   `input.budget`, `input.invalid`) and the amount (not 0: `input.invalid`;
+   at most 1,024 either way: `input.budget`);
+2. refuses without the range (`grant.missing`, checked before the view, as
+   for a paint) and for a cell outside the active view
+   (`scope.outside_view`);
+3. leaves out cells of chunks that do not exist: a height is the ground's,
+   and writing one there would create a chunk that holds only heights;
+4. refuses the whole action with `target.unsupported` when a covered cell's
+   height is already outside the range, naming the cell: moving it into
+   the range could jump it any distance, and leaving it out would make a
+   lower that does not lower;
+5. gives every other cell `clamp(height + amount, min, max)`, computed in
+   64-bit integers, so no stored height or amount can overflow, and leaves
+   out the cells this does not change (those already at the end the amount
+   moves toward). If none is left the action is refused with `change.none`.
+
+The result is one `terrain.set` on the `height` grid in which each cell
+expects its committed height (0 in a chunk without a height grid, which
+World then creates; World removes it again when all its heights return to
+0). No refusal code is new. The amount applies once per cell however often
+a brush passes over it: a stroke's cells are a set. The rule above is part
+of what a recorded `adjust_heights` step means and is frozen for that kind;
+a different rule (a falloff, or a flatten) needs a new kind.
+
+The range is named by the grant, not copied into the action. A recorded
+adjustment prepared again under another range can stop at another end and
+then prepares another transaction; a proposal step is then reported as
+diverged and not applied. When no cell reaches either end the heights, and
+the transaction, are the same. `tilewright_editor_ui::sculpt::plan` answers
+which cells an adjustment would change, from the same code; a proposal
+step's words count them.
+
 ## Refusal codes
 
 Every `SessionError` carries a stable `RefusalCode` (`code()`, and
@@ -223,7 +265,7 @@ Messages are for people and may be reworded; codes are stable.
 | `target.unknown` | The named object, plane, zone, anchor, grid or field does not exist. |
 | `target.exists` | A new id is already used. |
 | `target.in_use` | The target is still referenced and cannot be deleted. |
-| `target.unsupported` | The target exists but cannot take this edit, for example an object in an inventory. |
+| `target.unsupported` | The target exists but cannot take this edit, for example an object in an inventory, or a tile whose height is outside the catalog's height range. |
 | `hierarchy.cycle` | A zone parent would make a cycle. |
 | `input.identifier` | A new id does not have the World identifier shape. |
 | `input.invalid` | The action's input is malformed, for example unordered stroke cells. |

@@ -80,6 +80,7 @@ hold no NUL.
 | `paint_stroke` | `plane`, `layer`, `grid`, `cells` (1 to 4,096 `[x, y]` pairs, distinct and in increasing order, the engine's own rule for a stroke), `proto` |
 | `fill_terrain` | `plane`, `layer`, `grid`, `x`, `y`, `proto`, `contiguous` (`true` or `false`) |
 | `scatter_terrain` | `plane`, `layer`, `grid`, `cells` (as for `paint_stroke`), `palette` (a catalog palette's name), `seed` (an integer from 0 to 4,294,967,295) |
+| `adjust_heights` | `plane`, `layer`, `cells` (as for `paint_stroke`), `amount` (an integer from -1,024 to 1,024, not 0) |
 | `paint_zones` | `plane`, `layer`, `cells` (as for `paint_stroke`), `zone` (string or `null`) |
 | `remove` | `uid` |
 | `place` | `plane`, `layer`, `x`, `y`, `proto` |
@@ -124,6 +125,20 @@ is compared is the whole transaction, never the palette. Under a catalog without
 palette, with `proposal.step_refused` and the engine's grant.missing. An
 editor from before `scatter_terrain` refuses a whole proposal that holds
 one with `proposal.invalid`, as for `fill_terrain`.
+
+An `adjust_heights` step records the cells and the amount, not the heights:
+the engine reads each covered cell's height from the world and the range
+from the catalog's `editing.heights` each time the step is prepared
+([docs/ENGINE.md](ENGINE.md#raise-and-lower)). On the world it was recorded
+from, under the same range, it gives the same transaction again. Under
+another range it may give other heights (a raise that stopped at the old
+top goes further under a higher one) and is then refused with
+`proposal.step_diverged`; when no cell reaches either end, the heights are
+the same and the step applies. Under a catalog without the range it is
+refused with `proposal.step_refused` and the engine's grant.missing. An
+amount of 0, past 1,024 or not an integer is `proposal.invalid` when the
+proposal is read. An editor from before `adjust_heights` refuses a whole
+proposal that holds one with `proposal.invalid`, as for `fill_terrain`.
 
 ### What a reader requires and what the writer emits
 
