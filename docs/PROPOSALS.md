@@ -114,9 +114,13 @@ the catalog's palette of that name, with the frozen draw of
 [docs/ENGINE.md](ENGINE.md#scatter), each time the step is prepared. On the
 world it was recorded from, under a catalog whose palette of that name has
 the same values and weights, it gives the same transaction again. Under a
-palette with other values or weights the step prepares another change and
-is refused with `proposal.step_diverged` (the catalog-differs notice has
-already said that the catalogs differ); under a catalog without that
+palette with other values or weights the engine may draw other values; the
+step then prepares another change and is refused with
+`proposal.step_diverged` (the catalog-differs notice has already said that
+the catalogs differ). It may also draw the same values (weights all scaled
+by one factor, such as 6 and 2 for 3 and 1, draw exactly the same; other
+weights can by chance on a small stroke), and then the step applies: what
+is compared is the whole transaction, never the palette. Under a catalog without that
 palette, with `proposal.step_refused` and the engine's grant.missing. An
 editor from before `scatter_terrain` refuses a whole proposal that holds
 one with `proposal.invalid`, as for `fill_terrain`.
@@ -366,13 +370,14 @@ step does, to which id and where to first ("Move marker_1 to (4, 2), from
 (3, 2), on main/0", "Set label on marker_1 to …", "Create zone Z under P,
 named N, on main", "Fill from (5, 0) with grass: 23 cells of sand (floor on
 main/0)", "Replace every sand in the view with grass: 23 cells, from
-(5, 0) (floor on main/0)", "Scatter palette speckle over 37 cells, seed
-1234 (floor on main/0)", with "(not in this catalog)" after the palette's
-name when the person's catalog has none of that name), then the rest; from the world
+(5, 0) (floor on main/0)", "Scatter palette speckle over 37 cells, 9 to
+change, seed 1234 (floor on main/0)", with "(not in this catalog)" after
+the palette's name when the person's catalog has none of that name), then the rest; from the world
 they add where an object or anchor being moved or deleted is now, how many
 objects a deleted object carries ("and the 3 objects it carries"), what a
 fill's start cell holds and how many cells the engine's fill would change
-there ("no change, already sand" when none), and
+there ("no change, already sand" when none), how many cells a scatter would
+change there by the engine's own draw ("none to change" when none), and
 "outside the view" for a tile outside it. Every string from the proposal
 or the world is escaped with the observe crate's set (controls,
 bidirectional and line separators, invisible characters) and a backslash,

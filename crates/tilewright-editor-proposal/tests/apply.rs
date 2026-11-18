@@ -966,7 +966,7 @@ fn scatter_proposal() -> (tempfile::TempDir, Proposal) {
 }
 
 #[test]
-fn a_scatter_step_replays_only_under_the_palette_it_was_recorded_with() {
+fn a_scatter_step_replays_only_where_the_palette_draws_the_same_values() {
     let (_agent, proposal) = scatter_proposal();
     // The same palette: the same transaction, applied.
     let same = world(|_| {});
@@ -980,8 +980,28 @@ fn a_scatter_step_replays_only_under_the_palette_it_was_recorded_with() {
     person.dispatch(Action::Accept, &mut records).unwrap();
     assert_eq!(person.applied_steps().len(), 1);
 
+    // Every weight scaled by the same factor (grass 6, sand 2): the
+    // catalog differs, but every draw is the same, so the step applies.
+    let scaled = world(|root| {
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["palettes"][0]["entries"][0]["weight"] = json!(6);
+            catalog["editing"]["palettes"][0]["entries"][1]["weight"] = json!(2);
+        });
+    });
+    let mut person = open(scaled.path(), PERSON);
+    let (mut progress, notices) = Progress::begin(&proposal, &person).unwrap();
+    assert!(matches!(
+        notices.as_slice(),
+        [Notice::CatalogDiffers { .. }]
+    ));
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    assert_eq!(person.history().document().revision(), proposal.result());
+
     // Other weights under the same name: the catalog differs, the engine
-    // draws other values, and the step diverges with nothing pending.
+    // draws other values here, and the step diverges with nothing pending.
     let reweighted = world(|root| {
         common::edit_json(root, "preview.jsonc", |catalog| {
             catalog["editing"]["palettes"][0]["entries"][1]["weight"] = json!(30);

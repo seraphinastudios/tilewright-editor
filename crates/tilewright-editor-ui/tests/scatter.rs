@@ -561,3 +561,29 @@ fn a_palette_scatters_only_on_its_own_grid() {
     assert_eq!(on("edge"), Err(RefusalCode::GrantMissing));
     assert_eq!(on("floor"), Ok(()));
 }
+
+#[test]
+fn scaling_every_weight_by_one_factor_changes_no_draw() {
+    let palette = |weights: [u32; 3]| Palette {
+        grid: "floor".into(),
+        entries: [
+            ("a".to_owned(), weights[0]),
+            ("b".to_owned(), weights[1]),
+            ("c".to_owned(), weights[2]),
+        ]
+        .into(),
+    };
+    let base = palette([3, 1, 7]);
+    for factor in [2, 3, 1_000] {
+        let scaled = palette([3 * factor, factor, 7 * factor]);
+        for x in -30..30 {
+            for y in -30..30 {
+                assert_eq!(
+                    scatter::value(&scaled, 99, 0, [x, y]),
+                    scatter::value(&base, 99, 0, [x, y]),
+                    "{factor} ({x}, {y})"
+                );
+            }
+        }
+    }
+}

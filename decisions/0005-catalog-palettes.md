@@ -48,9 +48,12 @@ decisions; the owner can revisit any of them.
   value, whatever order the catalog lists them in.
 - **Named, not copied.** A scatter action records the palette's name and is
   resolved against the catalog when it is prepared. A recorded step under a
-  catalog whose palette of that name has other values or weights prepares
-  another transaction and is reported as diverged; no new mechanism was
-  needed, because a proposal step must reproduce its transaction exactly.
+  catalog whose palette of that name has other values or weights may draw
+  other values, and then prepares another transaction and is reported as
+  diverged. It may also draw the same values (every weight scaled by one
+  factor draws exactly the same), and then it applies. No new mechanism was
+  needed: a proposal step must reproduce its whole transaction exactly,
+  which is what makes this safe.
 - **A frozen draw.** Each cell's value comes from a hash of the seed, the
   spatial layer and the cell (SplitMix64's output function, then an
   integer weighted choice), defined in

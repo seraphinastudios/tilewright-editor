@@ -650,39 +650,50 @@ fn palette_specs(
         return Err(failure("too many palettes"));
     }
     let mut palettes = BTreeMap::new();
-    for p in list {
-        closed(p, &["name", "grid", "entries"])?;
-        let name = identifier(member(p, "name")?)?;
+    for (index, p) in list.iter().enumerate() {
+        // Before its name is known to be a short identifier, a palette is
+        // named by its place in the list; after, by its name, which is then
+        // safe to quote.
+        let place = |error: PreviewError| failure(format!("palette {}: {}", index + 1, error.0));
+        closed(p, &["name", "grid", "entries"]).map_err(place)?;
+        let name = identifier(member(p, "name").map_err(place)?).map_err(place)?;
         if name.len() > MAXIMUM_PALETTE_NAME_BYTES {
-            return Err(failure("palette name too long"));
+            return Err(place(failure("palette name too long")));
         }
-        let grid = identifier(member(p, "grid")?)?;
+        let named = |error: PreviewError| failure(format!("palette {name}: {}", error.0));
+        let grid = identifier(member(p, "grid").map_err(named)?).map_err(named)?;
         let granted = terrain
             .get(&grid)
-            .ok_or_else(|| failure("palette grid has no terrain capability"))?;
-        let items = array(member(p, "entries")?)?;
+            .ok_or_else(|| named(failure("palette grid has no terrain capability")))?;
+        let items = array(member(p, "entries").map_err(named)?).map_err(named)?;
         if items.is_empty() || items.len() > MAXIMUM_PALETTE_ENTRIES {
-            return Err(failure("a palette holds 1 to 32 entries"));
+            return Err(named(failure("a palette holds 1 to 32 entries")));
         }
         let mut entries = BTreeMap::new();
         for entry in items {
-            closed(entry, &["value", "weight"])?;
-            let value = identifier(member(entry, "value")?)?;
+            closed(entry, &["value", "weight"]).map_err(named)?;
+            let value = identifier(member(entry, "value").map_err(named)?).map_err(named)?;
+            let valued =
+                |error: PreviewError| failure(format!("palette {name} value {value}: {}", error.0));
             if !granted.contains(&value) {
-                return Err(failure("palette value is not granted on its grid"));
+                return Err(valued(failure("palette value is not granted on its grid")));
             }
-            let weight = integer(member(entry, "weight")?)
+            let weight = integer(member(entry, "weight").map_err(valued)?)
                 .ok()
                 .and_then(|weight| u32::try_from(weight).ok())
                 .filter(|weight| (1..=MAXIMUM_PALETTE_WEIGHT).contains(weight))
-                .ok_or_else(|| failure("palette weight must be an integer from 1 to 10000"))?;
-            if entries.insert(value, weight).is_some() {
-                return Err(failure("duplicate palette value"));
+                .ok_or_else(|| {
+                    valued(failure("palette weight must be an integer from 1 to 10000"))
+                })?;
+            if entries.contains_key(&value) {
+                return Err(valued(failure("duplicate palette value")));
             }
+            entries.insert(value, weight);
         }
-        if palettes.insert(name, Palette { grid, entries }).is_some() {
-            return Err(failure("duplicate palette name"));
+        if palettes.contains_key(&name) {
+            return Err(named(failure("duplicate palette name")));
         }
+        palettes.insert(name, Palette { grid, entries });
     }
     Ok(palettes)
 }

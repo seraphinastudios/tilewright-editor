@@ -18,8 +18,9 @@ pub fn report(observed: &Observed, filter: Option<&str>) -> Map {
     report_paged(observed, filter, &Bounded)
 }
 
-/// The pageable lists of the report, by their path in it.
-pub const SECTIONS: [&str; 3] = ["prototypes", "terrain_palette", "zone_palette"];
+/// The pageable lists of the report, by their path in it. `palettes` is
+/// in the report only when the catalog has `editing.palettes`.
+pub const SECTIONS: [&str; 4] = ["prototypes", "terrain_palette", "zone_palette", "palettes"];
 
 /// [`report`] with its [`SECTIONS`] listed as `pager` decides.
 pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager) -> Map {
@@ -111,21 +112,24 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
                     .into()
             },
         );
-    palettes(report, editing, &keep)
+    palettes(report, editing, &keep, pager)
 }
 
 /// `palettes`, the catalog's `editing.palettes` kept by name, after the
-/// other lists. Only a catalog with palettes has the member, so every
-/// report of another catalog is unchanged.
+/// other lists and paged like them. Only a catalog with palettes has the
+/// member, so every report of another catalog is unchanged.
 fn palettes(
     report: Map,
     editing: &tilewright_editor_preview::EditingCapabilities,
     keep: &dyn Fn(&str) -> bool,
+    pager: &dyn Pager,
 ) -> Map {
     if editing.palettes.is_empty() {
         return report;
     }
-    report.bounded(
+    report.paged(
+        pager,
+        "palettes",
         "palettes",
         editing.palettes.iter().filter(|(name, _)| keep(name)),
         MAXIMUM_PALETTES,

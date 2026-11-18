@@ -25,7 +25,14 @@
 //!   entries are taken in increasing byte order of their values; the first
 //!   whose running sum of weights exceeds `r` is the cell's value. Only
 //!   integers are used, so every platform gives the same answer.
-use tilewright_editor_preview::Palette;
+use tilewright_editor_preview::{Palette, PreviewCatalog};
+use tilewright_source::World;
+
+use crate::session::refusal::refuse;
+use crate::{RefusalCode, SessionError};
+
+/// One cell a scatter changes, the value it holds before and its new value.
+pub type ScatterChange<'a> = ([i64; 2], Option<&'a str>, &'a str);
 
 const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
 
@@ -67,6 +74,81 @@ pub fn choose(palette: &Palette, h: u64) -> Option<&str> {
 #[must_use]
 pub fn value(palette: &Palette, seed: u32, layer: i32, cell: [i64; 2]) -> Option<&str> {
     choose(palette, draw(seed, layer, cell))
+}
+
+/// The cells of scatter stroke `cells` that its `terrain.set` changes in
+/// `world` under `catalog`, each with its value before and the value
+/// [`value`] draws for it, in stroke order: what dispatching an
+/// [`Action::ScatterTerrain`](crate::Action::ScatterTerrain) prepares, and
+/// what a proposal step's words count.
+///
+/// # Errors
+/// Refused like a brush stroke: the stroke rule (input codes),
+/// [`RefusalCode::GrantMissing`] when the catalog has no palette of that
+/// name for `grid` (checked before the view),
+/// [`RefusalCode::ScopeOutsideView`], [`RefusalCode::TargetUnknown`] for a
+/// grid the profile does not have, and [`RefusalCode::ChangeNone`] when no
+/// cell would change.
+#[allow(clippy::too_many_arguments)]
+pub fn plan<'a>(
+    world: &'a World,
+    catalog: &'a PreviewCatalog,
+    plane: &str,
+    layer: i32,
+    grid: &str,
+    cells: &[[i64; 2]],
+    palette: &str,
+    seed: u32,
+) -> Result<Vec<ScatterChange<'a>>, SessionError> {
+    crate::session::stroke_cells(cells)?;
+    let editing = catalog.editing();
+    let palette = editing
+        .palettes
+        .get(palette)
+        .filter(|found| {
+            found.grid == grid
+                && editing
+                    .terrain
+                    .get(grid)
+                    .is_some_and(|values| found.entries.keys().all(|value| values.contains(value)))
+        })
+        .ok_or_else(|| {
+            refuse(
+                RefusalCode::GrantMissing,
+                "the catalog has no palette of this name for this grid",
+            )
+        })?;
+    if !cells
+        .iter()
+        .all(|&[x, y]| catalog.tile_in_active_view(plane, layer, x, y))
+    {
+        return Err(refuse(
+            RefusalCode::ScopeOutsideView,
+            "terrain capability or bounds refused",
+        ));
+    }
+    let index = world
+        .profile()
+        .ground_layers
+        .iter()
+        .position(|g| g == grid)
+        .ok_or_else(|| refuse(RefusalCode::TargetUnknown, "unknown ground grid"))?;
+    let mut changes = Vec::new();
+    for &cell in cells {
+        let value = value(palette, seed, layer, cell)
+            .ok_or_else(|| refuse(RefusalCode::Internal, "empty palette"))?;
+        let before = crate::fill::ground_value(world, plane, layer, index, cell)?;
+        if before != Some(value) {
+            changes.push((cell, before, value));
+        }
+    }
+    if changes.is_empty() {
+        return Err(refuse(
+            RefusalCode::ChangeNone,
+            "scatter changes no cell: every covered cell already has its drawn terrain",
+        ));
+    }
+    Ok(changes)
 }
 
 #[cfg(test)]

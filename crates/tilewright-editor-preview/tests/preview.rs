@@ -1291,6 +1291,47 @@ fn optional_palettes_parse_strictly_in_both_formats_and_their_absence_changes_no
         };
         assert!(error.contains(expected), "case {case}: {error}");
     }
+    // A refusal names the palette (by its place until its name is known
+    // to be valid) and the entry's value.
+    for (palettes, expected) in [
+        (
+            json!([
+                palette("a", good()),
+                palette("meadow", json!([entry("grass", json!(0))]))
+            ]),
+            "palette meadow value grass: palette weight must be an integer from 1 to 10000",
+        ),
+        (
+            json!([palette(
+                "meadow",
+                json!([entry("marker", json!(1)), entry("marker", json!(2))])
+            )]),
+            "palette meadow value marker: duplicate palette value",
+        ),
+        (
+            json!([palette("meadow", json!([entry("nothing", json!(1))]))]),
+            "palette meadow value nothing: palette value is not granted on its grid",
+        ),
+        (
+            json!([palette("a", good()), palette("Bad", good())]),
+            "palette 2: invalid identifier",
+        ),
+        (
+            json!([palette("a", good()), palette("a", good())]),
+            "palette a: duplicate palette name",
+        ),
+        (
+            json!([{"name": "meadow", "grid": "edge", "entries": good()}]),
+            "palette meadow: palette grid has no terrain capability",
+        ),
+    ] {
+        let mut c = original.clone();
+        c["editing"]["palettes"] = palettes;
+        let Err(error) = load_catalog(dir.path(), &root, &world, &c) else {
+            panic!("loaded: {expected}");
+        };
+        assert_eq!(error, expected);
+    }
     // Exactly the bounds load.
     let mut c = original.clone();
     let mut largest = entries(1);

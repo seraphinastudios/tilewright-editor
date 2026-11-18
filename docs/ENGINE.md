@@ -187,9 +187,13 @@ the text above (`crates/tilewright-editor-ui/src/scatter.rs` and
 
 The palette is named, not copied into the action. A recorded scatter
 prepared again under a catalog whose palette of that name has other values
-or weights draws other values, so it prepares another transaction; a
-proposal step is then reported as diverged and not applied (see
-[proposals](PROPOSALS.md)).
+or weights may draw other values for its cells; it then prepares another
+transaction, and a proposal step is reported as diverged and not applied
+(see [proposals](PROPOSALS.md)). It may also draw the same values: scaling
+every weight of a palette by the same factor (3 and 1 to 6 and 2) changes
+no draw at all, and a small stroke can draw the same values under other
+weights by chance. Either way the step is applied only when its whole
+transaction is the recorded one, which is what keeps a replay exact.
 
 The desktop draws a fresh seed for each scatter stroke from the session's
 uid source when the stroke begins (`Session::draw_seed`: the operating

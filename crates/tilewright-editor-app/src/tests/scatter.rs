@@ -246,7 +246,12 @@ fn a_scatter_step_is_said_and_highlighted_by_its_cells() {
     let words = |action: &Action| action_words(action, app.session.world(), app.session.catalog());
     assert_eq!(
         words(&scatter("speckle", vec![[0, 0], [0, 1], [3, 2]])),
-        "Scatter palette speckle over 3 cells, seed 1234 (floor on main/0)"
+        "Scatter palette speckle over 3 cells, none to change, seed 1234 (floor on main/0)"
+    );
+    // Seed 1234 draws sand at (1, 0) and (1, 3), which hold grass.
+    assert_eq!(
+        words(&scatter("speckle", vec![[0, 0], [1, 0], [1, 3]])),
+        "Scatter palette speckle over 3 cells, 2 to change, seed 1234 (floor on main/0)"
     );
     assert_eq!(
         words(&scatter("dunes", vec![[1, 1], [900, 1]])),
@@ -259,4 +264,40 @@ fn a_scatter_step_is_said_and_highlighted_by_its_cells() {
         .map(|tile| (tile.role.key(), tile.at))
         .collect();
     assert_eq!(tiles, [("cell", [0, 0]), ("cell", [3, 2])]);
+}
+
+#[test]
+fn choosing_a_palette_of_another_grid_samples_that_grid() {
+    // `edge` grants the sample's own values too, with a palette of its own.
+    let (_temporary, mut app) = terrain_application(1, |root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["terrain"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"grid": "edge", "values": ["grass", "sand"]}));
+            let mut palettes = speckle();
+            palettes
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"name": "rim", "grid": "edge",
+                "entries": [{"value": "sand", "weight": 1}]}));
+            catalog["editing"]["palettes"] = palettes;
+        });
+    });
+    app.control(Control::ScatterPalette("speckle".into()))
+        .unwrap();
+    assert_eq!(app.view.grid.as_deref(), Some("floor"));
+    app.control(Control::ScatterPalette("rim".into())).unwrap();
+    assert_eq!(app.view.grid.as_deref(), Some("edge"));
+    assert_eq!(app.tools.scatter_choice(), Some("rim"));
+    // The press samples the edge grid, so the stroke scatters there.
+    acknowledge_ui(&mut app);
+    let at = cell_pixel(&mut app, 1, 1);
+    crate::prototype::native_pointer(&mut app, at, BRUSH_WINDOW, BRUSH_WINDOW).unwrap();
+    assert_eq!(app.tools.stroke().unwrap().grid(), "edge");
+    app.tools.cancel_stroke();
+    app.stroke_mask = None;
+    app.control(Control::ScatterPalette("speckle".into()))
+        .unwrap();
+    assert_eq!(app.view.grid.as_deref(), Some("floor"));
 }

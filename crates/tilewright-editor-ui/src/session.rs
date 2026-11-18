@@ -363,8 +363,7 @@ enum Preparing {
 
 /// One cell a `terrain.set` changes and the value it holds before.
 type TerrainChange<'w> = ([i64; 2], Option<&'w str>);
-/// One cell a scatter changes, the value it holds before and its new value.
-type ScatterChange<'w> = ([i64; 2], Option<&'w str>, &'w str);
+use crate::scatter::ScatterChange;
 
 pub struct Session {
     history: History,
@@ -823,53 +822,16 @@ impl Session {
         palette: &str,
         seed: u32,
     ) -> Result<Vec<ScatterChange<'w>>, SessionError> {
-        stroke_cells(cells)?;
-        let editing = self.catalog.editing();
-        let palette = editing
-            .palettes
-            .get(palette)
-            .filter(|found| {
-                found.grid == grid
-                    && editing.terrain.get(grid).is_some_and(|values| {
-                        found.entries.keys().all(|value| values.contains(value))
-                    })
-            })
-            .ok_or_else(|| {
-                refuse(
-                    RefusalCode::GrantMissing,
-                    "the catalog has no palette of this name for this grid",
-                )
-            })?;
-        let (p, l, _) = self.catalog.view();
-        if plane != p || layer != l || !cells.iter().all(|&[x, y]| self.in_bounds(x, y)) {
-            return Err(refuse(
-                RefusalCode::ScopeOutsideView,
-                "terrain capability or bounds refused",
-            ));
-        }
-        let world = self.history.document().world();
-        let index = world
-            .profile()
-            .ground_layers
-            .iter()
-            .position(|g| g == grid)
-            .ok_or_else(|| refuse(RefusalCode::TargetUnknown, "unknown ground grid"))?;
-        let mut changes = Vec::new();
-        for &cell in cells {
-            let value = crate::scatter::value(palette, seed, layer, cell)
-                .ok_or_else(|| refuse(RefusalCode::Internal, "empty palette"))?;
-            let before = crate::fill::ground_value(world, plane, layer, index, cell)?;
-            if before != Some(value) {
-                changes.push((cell, before, value));
-            }
-        }
-        if changes.is_empty() {
-            return Err(refuse(
-                RefusalCode::ChangeNone,
-                "scatter changes no cell: every covered cell already has its drawn terrain",
-            ));
-        }
-        Ok(changes)
+        crate::scatter::plan(
+            self.history.document().world(),
+            &self.catalog,
+            plane,
+            layer,
+            grid,
+            cells,
+            palette,
+            seed,
+        )
     }
     /// A fresh scatter seed from the session's uid source: the operating
     /// system's random source, or the deterministic source tests and the
@@ -1775,7 +1737,7 @@ fn is_edit(action: &Action) -> bool {
 
 /// A stroke's cells: at least one, at most the stroke cap, distinct and in
 /// order.
-fn stroke_cells(cells: &[[i64; 2]]) -> Result<(), SessionError> {
+pub(crate) fn stroke_cells(cells: &[[i64; 2]]) -> Result<(), SessionError> {
     if cells.is_empty() || cells.len() > crate::brush::MAXIMUM_STROKE_CELLS {
         return Err(refuse(
             RefusalCode::InputBudget,

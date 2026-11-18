@@ -214,7 +214,7 @@ one list instead.
 | --- | --- |
 | `overview` | `profile.render_layers`, `profile.terrains`, `planes`, `catalog.view_zones`, `catalog.grants.movable_uids`, `catalog.grants.fields`, `catalog.grants.terrain`, `catalog.grants.objects` |
 | `tile` | `objects`, `anchors`, `arrivals` |
-| `catalog` | `prototypes`, `terrain_palette`, `zone_palette` |
+| `catalog` | `prototypes`, `terrain_palette`, `zone_palette`, `palettes` (only when the catalog has palettes) |
 | `lint` | `findings` |
 
 A section is the list's path in the report: `catalog.grants.fields` is the
