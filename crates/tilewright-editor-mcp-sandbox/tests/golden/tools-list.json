@@ -3018,6 +3018,22 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "movement": {
+                      "type": "object",
+                      "properties": {
+                        "max_step": {
+                          "type": "integer"
+                        },
+                        "fall_unit": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "max_step",
+                        "fall_unit"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
