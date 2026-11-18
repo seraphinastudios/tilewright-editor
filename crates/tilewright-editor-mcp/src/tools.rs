@@ -445,6 +445,14 @@ fn overview_schema() -> Schema {
         .optional_world("terrain_layer")
         .paged("terrains", terrain)
         .with("layer_height", Schema::Integer.nullable())
+        // Only when the profile has movement limits, as stored.
+        .maybe(
+            "movement",
+            Shape::new()
+                .integer("max_step")
+                .integer("fall_unit")
+                .build(),
+        )
         .build();
     let grants = Shape::new()
         .paged("movable_uids", movable)

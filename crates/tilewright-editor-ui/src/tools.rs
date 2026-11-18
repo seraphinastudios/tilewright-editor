@@ -255,6 +255,8 @@ pub struct ToolState {
     zone: Option<ZoneChoice>,
     /// Whether the zone overlay shows outside Zone mode.
     show_zones: bool,
+    /// Whether the height tint shows, in every mode.
+    show_heights: bool,
     /// The chosen zone's parent choices while they are listed, computed
     /// when the list opens and again when the definitions change.
     parent_choices: Option<ParentChoices>,
@@ -599,6 +601,16 @@ impl ToolState {
         }
         self.show_zones = !self.show_zones;
         Ok(self.show_zones)
+    }
+    /// Whether the height tint is drawn: in every mode, after
+    /// [`Self::toggle_heights`] turned it on. Off by default.
+    pub fn heights_visible(&self) -> bool {
+        self.show_heights
+    }
+    /// Show or hide the height tint; returns whether it now shows.
+    pub fn toggle_heights(&mut self) -> bool {
+        self.show_heights = !self.show_heights;
+        self.show_heights
     }
     /// Whether anchor and portal badges are drawn: always in Anchor mode,
     /// and in the other modes whenever the zone overlay shows (Zone mode,

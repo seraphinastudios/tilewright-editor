@@ -516,7 +516,7 @@ fn integer(value: i64) -> Result<i64, ProposalError> {
 fn height_amount(amount: i64) -> Result<i32, ProposalError> {
     i32::try_from(amount)
         .ok()
-        .filter(|amount| tilewright_editor_ui::heights::check_amount(*amount).is_ok())
+        .filter(|amount| tilewright_editor_ui::sculpt::check_amount(*amount).is_ok())
         .ok_or_else(|| invalid("a height amount is an integer from -1024 to 1024, not 0"))
 }
 

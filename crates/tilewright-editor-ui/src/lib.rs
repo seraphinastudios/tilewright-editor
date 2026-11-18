@@ -156,6 +156,7 @@ pub mod inspector;
 pub mod portals;
 mod removal;
 pub mod scatter;
+pub mod sculpt;
 pub mod text_input;
 pub mod tools;
 pub mod uid;

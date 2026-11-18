@@ -27,6 +27,8 @@ pub enum Control {
     Zone,
     /// Show or hide the zone overlay outside Zone mode.
     ZoneOverlay,
+    /// Show or hide the height tint, in every mode.
+    HeightOverlay,
     /// A row of the zone palette: paint this zone, or the default zone.
     ZonePalette(tilewright_editor_ui::tools::ZoneChoice),
     /// Edit the chosen zone's display name in the text draft.

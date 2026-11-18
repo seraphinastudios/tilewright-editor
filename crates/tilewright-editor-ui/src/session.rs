@@ -121,11 +121,11 @@ pub enum Action {
     /// Raise (`amount > 0`) or lower (`amount < 0`) the tile heights of the
     /// covered cells of the active view by `amount`, once each, in one
     /// reviewed `terrain.set` on the grid `height`
-    /// ([`crate::heights::plan`]). Needs `editing.heights`: each cell
+    /// ([`crate::sculpt::plan`]). Needs `editing.heights`: each cell
     /// becomes `clamp(height + amount, min, max)`, and cells already at the
     /// end it moves toward, or in chunks that do not exist, are left out;
     /// every other cell expects its committed height. `amount` is not 0 and
-    /// at most [`crate::heights::MAXIMUM_AMOUNT`] either way.
+    /// at most [`crate::sculpt::MAXIMUM_AMOUNT`] either way.
     AdjustHeights {
         plane: String,
         layer: i32,
@@ -1467,7 +1467,7 @@ impl Session {
                 amount,
                 expected,
             } => {
-                let cells: Vec<Value> = crate::heights::plan(
+                let cells: Vec<Value> = crate::sculpt::plan(
                     self.history.document().world(),
                     &self.catalog,
                     &plane,

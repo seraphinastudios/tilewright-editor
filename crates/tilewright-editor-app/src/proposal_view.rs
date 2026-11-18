@@ -267,6 +267,7 @@ pub(super) type Named<'a> = (Role, &'a str, i32, [i64; 2]);
 /// most [`HIGHLIGHT_TILES`] of a stroke's cells. A step whose object or
 /// anchor is not placed in `world` names none of its tiles: without the
 /// object there is no plane and layer for a move's destination either.
+#[allow(clippy::too_many_lines)]
 pub(super) fn step_tiles<'a>(
     action: &'a Action,
     world: &'a World,
@@ -1640,7 +1641,7 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             // person's world, as scatter's words say; nothing when it would
             // refuse for another reason.
             let plan =
-                tilewright_editor_ui::heights::plan(world, catalog, plane, *layer, cells, *amount);
+                tilewright_editor_ui::sculpt::plan(world, catalog, plane, *layer, cells, *amount);
             let effect = match plan {
                 Ok(changes) => format!(", {} to change", changes.len()),
                 Err(error) if error.code() == tilewright_editor_ui::RefusalCode::ChangeNone => {

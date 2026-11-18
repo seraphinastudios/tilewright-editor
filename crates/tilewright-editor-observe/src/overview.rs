@@ -77,6 +77,18 @@ pub fn report_paged(observed: &Observed, pager: &dyn Pager) -> Map {
             "layer_height",
             profile.layer_height.map_or(Node::Null, Node::from),
         );
+    // Only when the profile has movement limits, reported as stored: the
+    // format does not define what they mean, so nothing here interprets
+    // them.
+    let profile = match world.profile().movement {
+        Some(movement) => profile.with(
+            "movement",
+            Map::new()
+                .with("max_step", movement.max_step)
+                .with("fall_unit", movement.fall_unit),
+        ),
+        None => profile,
+    };
     // Built in the order the report lists them, so a pager that spends a
     // byte budget spends it in report order: the planes, then the catalog.
     let report = observed

@@ -22,7 +22,7 @@ use tilewright_editor_ui::brush::StrokeTarget;
 use tilewright_editor_ui::inspector::{self, SelectionSummary};
 use tilewright_editor_ui::tools::{self, PortalStep, TerrainRule, ToolMode, ToolState, ZoneChoice};
 use tilewright_editor_ui::{Action, Session, SessionPhase};
-use tilewright_editor_ui::{anchors, portals, zones};
+use tilewright_editor_ui::{anchors, heights, portals, zones};
 use tilewright_render_api::{
     BackendPreference, FrameOutput, RenderRequest, Renderer, TargetDescriptor, TargetKind,
 };
@@ -31,10 +31,13 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
+const HEIGHTS_UNAVAILABLE: &str = "Height tint unavailable for this view.";
+const HEIGHTS_AND_OVERLAY_UNAVAILABLE: &str =
+    "Height tint, zone overlay and stroke preview unavailable for this view.";
 /// The desktop's indication while the catalog contains project art.
 const PROJECT_ART_LABEL: &str = "Project art loaded";
 const STROKE_INTERRUPTED: &str = "Brush stroke ended before release; nothing was prepared.";
@@ -44,6 +47,8 @@ type Result<T> = std::result::Result<T, String>;
 #[path = "proposal_view.rs"]
 mod proposal_view;
 type UiRows = Vec<(String, Option<Control>, bool, bool)>;
+/// A sidebar row's swatch colour and the outline around it.
+type RowSwatch = (Option<[f32; 4]>, Option<[f32; 4]>);
 // The review text and its completeness limits are the engine's; the app
 // lays the lines out.
 #[cfg(test)]
@@ -1249,22 +1254,12 @@ impl Application {
                     },
                 );
             }
-            Some(SelectionSummary::Cell {
-                plane,
-                layer,
-                grid,
-                x,
-                y,
-                prototype,
-            }) => {
-                rows.push((format!("Cell {x},{y} / {grid}"), None, true, false));
-                rows.push((format!("{plane} / layer {layer}"), None, true, false));
-                rows.push((
-                    format!("Value: {}", prototype.unwrap_or("<empty>")),
-                    None,
-                    true,
-                    false,
-                ));
+            Some(
+                cell @ SelectionSummary::Cell {
+                    plane, layer, x, y, ..
+                },
+            ) => {
+                Self::cell_rows(&mut rows, &cell, self.session.world());
                 self.cell_zone_rows(&mut rows, &mut fits, plane, layer, [x, y]);
                 self.cell_anchor_rows(&mut rows, &mut fits, plane, layer, [x, y]);
             }
@@ -1279,6 +1274,7 @@ impl Application {
             )),
         }
         self.zone_toggle_row(&mut rows);
+        self.height_rows(&mut rows);
         if mode == ToolMode::Terrain {
             self.brush_rows(&mut rows);
             rows.push(("Terrain palette".into(), None, true, false));
@@ -1330,6 +1326,89 @@ impl Application {
             true,
             shown,
         ));
+    }
+
+    /// The selected cell's own rows: where it is, its value and its height.
+    fn cell_rows(rows: &mut UiRows, cell: &SelectionSummary<'_>, world: &tilewright_source::World) {
+        let SelectionSummary::Cell {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+            prototype,
+        } = *cell
+        else {
+            return;
+        };
+        rows.push((format!("Cell {x},{y} / {grid}"), None, true, false));
+        rows.push((format!("{plane} / layer {layer}"), None, true, false));
+        rows.push((
+            format!("Value: {}", prototype.unwrap_or("<empty>")),
+            None,
+            true,
+            false,
+        ));
+        rows.push((
+            heights::inspector_line(world, plane, layer, x, y),
+            None,
+            true,
+            false,
+        ));
+    }
+
+    /// The height tint toggle, in every mode after the zone toggle, and
+    /// while the tint shows its legend: the range of the view's heights and
+    /// the darkest and lightest band, each with its swatch.
+    fn height_rows(&self, rows: &mut UiRows) {
+        let shown = self.tools.heights_visible();
+        rows.push((
+            if shown {
+                "Hide heights  H"
+            } else {
+                "Show heights  H"
+            }
+            .into(),
+            Some(Control::HeightOverlay),
+            true,
+            shown,
+        ));
+        if shown {
+            for (text, _) in self.height_legend() {
+                rows.push((text, None, true, false));
+            }
+        }
+    }
+
+    /// The height tint's legend rows ([`heights::legend`]), with the line
+    /// about zone tints while they are drawn too (the zone overlay shows and
+    /// a tile of the view has a zone), worded for Zone mode, where O does
+    /// nothing.
+    fn height_legend(&self) -> Vec<(String, Option<usize>)> {
+        let zone_line =
+            (self.tools.zones_visible() && !self.view_zone_tiles().is_empty()).then(|| {
+                if self.tools.mode() == ToolMode::Zone {
+                    heights::UNDER_ZONES_IN_ZONE_MODE
+                } else {
+                    heights::UNDER_ZONES
+                }
+            });
+        heights::legend(self.height_view().0, zone_line)
+    }
+
+    /// The height range of the active view's tiles in the shown World (the
+    /// pending one while a change is reviewed) and each tile's tint: none
+    /// for a flat view, and none for tiles of chunks that do not exist.
+    fn height_view(
+        &self,
+    ) -> (
+        Option<heights::HeightRange>,
+        std::collections::BTreeMap<[i64; 2], [f32; 4]>,
+    ) {
+        heights::tints(&heights::view_heights(
+            self.session.world(),
+            self.session.catalog(),
+        ))
     }
 
     /// The selected tile's zone: its id (and whether it is the plane's
@@ -1646,6 +1725,7 @@ impl Application {
     /// slots, so Anchor mode alone never reports this.
     fn overlay_unavailable(&self) -> bool {
         (self.tools.zones_visible()
+            || self.tools.heights_visible()
             || self.tools.stroke().is_some()
             || self.fill_changes().is_some())
             && self.prepared.cell_slots().is_none()
@@ -2667,10 +2747,10 @@ impl Application {
     /// thumbnail, are 40 px, each with a 2 px gap; only rows that fit whole,
     /// gap included, are laid out. The scroll offset counts rows and stops where the last
     /// row is visible.
-    fn sidebar_rows(&mut self, ui: &mut WorkspaceUi, rows: UiRows, mut y: u32) {
-        let x = ui.sidebar_x();
-        let width = ui.sidebar_width();
-        let bottom = ui.logical_height();
+    /// Each sidebar row's swatch and swatch outline: a zone row's tint in
+    /// Zone mode, the badge legend's badges and the height legend's end
+    /// bands.
+    fn row_swatches(&self, rows: &UiRows) -> Vec<RowSwatch> {
         let tints = if self.tools.mode() == ToolMode::Zone {
             self.zone_tints()
         } else {
@@ -2690,9 +2770,27 @@ impl Application {
             }?;
             tints.get(zone).map(|tint| zones::swatch_color(*tint))
         };
-        let swatches: Vec<_> = rows
-            .iter()
-            .map(|row| match row.0.as_str() {
+        // The height legend's rows follow the height toggle row in the order
+        // `height_legend` gives them; they are found by that place, never by
+        // their text.
+        let mut legend = std::collections::BTreeMap::new();
+        if self.tools.heights_visible()
+            && let Some(toggle) = rows
+                .iter()
+                .position(|row| row.1 == Some(Control::HeightOverlay))
+        {
+            for (offset, (_, band)) in self.height_legend().into_iter().enumerate() {
+                if let Some(band) = band {
+                    legend.insert(toggle + 1 + offset, band);
+                }
+            }
+        }
+        rows.iter()
+            .enumerate()
+            .map(|(index, row)| match row.0.as_str() {
+                _ if legend.contains_key(&index) => {
+                    (Some(heights::swatch_color(legend[&index])), None)
+                }
                 ANCHOR_LEGEND => (
                     Some(crate::workspace_render::ANCHOR_BADGE),
                     Some(crate::workspace_render::PORTAL_BADGE),
@@ -2703,7 +2801,14 @@ impl Application {
                 ),
                 _ => (swatch(&row.1), None),
             })
-            .collect();
+            .collect()
+    }
+
+    fn sidebar_rows(&mut self, ui: &mut WorkspaceUi, rows: UiRows, mut y: u32) {
+        let x = ui.sidebar_x();
+        let width = ui.sidebar_width();
+        let bottom = ui.logical_height();
+        let swatches = self.row_swatches(&rows);
         let rows: Vec<_> = rows
             .into_iter()
             .map(|(text, control, enabled, active)| {
@@ -3031,15 +3136,29 @@ impl Application {
         }
         if self.preview_omitted {
             // Badges show with the zones, and alone in Anchor mode.
-            return if self.tools.zones_visible() {
-                "Zone overlay and badges left out: too many cells for one frame."
-            } else {
-                "Anchor and portal badges left out: too many for one frame."
+            return match (self.tools.heights_visible(), self.tools.zones_visible()) {
+                (true, true) => {
+                    "Height tint, zone overlay and badges left out: too many cells for one frame."
+                }
+                (true, false) if self.tools.badges_visible() => {
+                    "Height tint and badges left out: too many cells for one frame."
+                }
+                (true, false) => "Height tint left out: too many cells for one frame.",
+                (false, true) => "Zone overlay and badges left out: too many cells for one frame.",
+                (false, false) => "Anchor and portal badges left out: too many for one frame.",
             }
             .into();
         }
         if self.overlay_unavailable() {
-            return OVERLAY_UNAVAILABLE.into();
+            let others = self.tools.zones_visible()
+                || self.tools.stroke().is_some()
+                || self.fill_changes().is_some();
+            return match (self.tools.heights_visible(), others) {
+                (true, true) => HEIGHTS_AND_OVERLAY_UNAVAILABLE,
+                (true, false) => HEIGHTS_UNAVAILABLE,
+                _ => OVERLAY_UNAVAILABLE,
+            }
+            .into();
         }
         if self.session.status().phase == SessionPhase::Pending && !self.source_review().complete {
             return REVIEW_LIMIT_MESSAGE.into();
@@ -3185,6 +3304,10 @@ impl Application {
             Control::Place => {
                 self.forget_hover();
                 self.enter_place_mode()
+            }
+            Control::HeightOverlay => {
+                self.tools.toggle_heights();
+                Ok(())
             }
             Control::ZoneOverlay
             | Control::ZonePalette(_)
@@ -5256,6 +5379,7 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         Keycode::N => app.control(Control::Zone),
         Keycode::K => app.control(Control::Anchor),
         Keycode::O => app.control(Control::ZoneOverlay),
+        Keycode::H => app.control(Control::HeightOverlay),
         Keycode::Slash | Keycode::KpDivide if app.tools.mode() == ToolMode::Place => {
             app.control(Control::PaletteFilter)
         }
@@ -5501,6 +5625,18 @@ fn zone_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     crate::workspace_render::zone_overlay(&app.prepared, &cells)
 }
 
+/// The height tint: every in-view tile of an existing chunk tinted by its
+/// height's ramp band ([`heights::HeightRange::band`]), over the cached
+/// prepared cell scene in the World's draw order, under the zone tints.
+/// Empty unless the tint is shown (after H), and for a flat view.
+fn height_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    if !app.tools.heights_visible() || app.prepared.frame_revision != app.view.frame_revision {
+        return Vec::new();
+    }
+    let (_, tints) = app.height_view();
+    crate::workspace_render::zone_overlay(&app.prepared, &tints)
+}
+
 /// The open proposal's highlight of the tiles its current step concerns
 /// (`proposal_view::Highlight`): copies of their prepared cell quads in the
 /// highlight's tints, in the World's draw order like the zone tints, after
@@ -5618,14 +5754,15 @@ fn compose_highlight_first(
 }
 
 fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {
-    // Zone tints, the proposal highlight and the stroke preview take the
-    // World's cell slots: each copy draws right after its tile's terrain,
-    // and copies sharing a slot draw in the order passed here, so the
-    // highlight draws over a zone tint and the preview, passed last, over
-    // both. Badges take no cell slot: they sit in their own slot after the
+    // Height tints, zone tints, the proposal highlight and the stroke
+    // preview take the World's cell slots: each copy draws right after its
+    // tile's terrain, and copies sharing a slot draw in the order passed
+    // here, so a zone tint draws over a height tint, the highlight over
+    // both and the preview, passed last, over all of them. Badges take no cell slot: they sit in their own slot after the
     // last World quad, above every tile and object, whatever order they are
     // passed in.
-    let mut person = zone_overlay(app);
+    let mut person = height_overlay(app);
+    person.extend(zone_overlay(app));
     person.extend(badge_overlay(app));
     let stroke = stroke_overlay(app);
     let mut overlay = person.clone();

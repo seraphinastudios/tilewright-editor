@@ -12,7 +12,7 @@ use tilewright_editor_commands::{History, RecoveryStore};
 use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewLimits, loader};
 use tilewright_editor_testkit::fixture_world;
-use tilewright_editor_ui::{Action, Actor, RefusalCode, Session, heights};
+use tilewright_editor_ui::{Action, Actor, RefusalCode, Session, sculpt};
 
 const CHUNK: &str = "planes/main/layers/0/0_0.jsonc";
 const MIN: i32 = -6;
@@ -170,7 +170,7 @@ fn raising_and_lowering_add_the_amount_once_and_stop_at_the_range_ends() {
             .unwrap();
         assert_eq!(pending_cells(&session), expected, "{amount}");
         // The words' count is the engine's own plan.
-        let plan = heights::plan(
+        let plan = sculpt::plan(
             session.history().document().world(),
             session.catalog(),
             "main",
