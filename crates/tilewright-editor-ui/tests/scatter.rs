@@ -515,3 +515,35 @@ fn a_seed_drawn_from_the_session_follows_its_uid_source() {
     assert!(first.history().pending().is_none());
     let _ = fs::read(dir.path().join(CHUNK)).unwrap();
 }
+
+#[test]
+fn a_palette_scatters_only_on_its_own_grid() {
+    // `edge` grants the same values as `floor`, but speckle is floor's.
+    let (_dir, mut session) = fixture_with(|root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["terrain"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"grid": "edge", "values": ["grass", "sand"]}));
+        });
+    });
+    let mut records = Records::default();
+    let mut on = |grid: &str| {
+        let action = Action::ScatterTerrain {
+            plane: "main".into(),
+            layer: 0,
+            grid: grid.into(),
+            cells: vec![[0, 0], [1, 0]],
+            palette: "speckle".into(),
+            seed: 77,
+            expected: revision(&session),
+        };
+        let result = session.dispatch(action, &mut records);
+        if result.is_ok() {
+            session.dispatch(Action::Cancel, &mut records).unwrap();
+        }
+        result.map_err(|error| error.code())
+    };
+    assert_eq!(on("edge"), Err(RefusalCode::GrantMissing));
+    assert_eq!(on("floor"), Ok(()));
+}
