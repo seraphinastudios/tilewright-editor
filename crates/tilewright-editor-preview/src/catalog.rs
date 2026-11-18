@@ -22,6 +22,38 @@ pub struct EditingCapabilities {
     pub zones: ZoneGrant,
     /// Optional `editing.anchors`. Absent, nothing about anchors is granted.
     pub anchors: AnchorGrant,
+    /// Optional `editing.palettes`: named weighted sets of terrain values
+    /// for the scatter brush, keyed by name. Absent, there are none.
+    pub palettes: BTreeMap<String, Palette>,
+}
+
+/// Most palettes one catalog may name.
+pub const MAXIMUM_PALETTES: usize = 32;
+/// Most entries (values) one palette may hold.
+pub const MAXIMUM_PALETTE_ENTRIES: usize = 32;
+/// Most bytes of a palette name.
+pub const MAXIMUM_PALETTE_NAME_BYTES: usize = 64;
+/// The largest weight of one palette entry; the smallest is 1.
+pub const MAXIMUM_PALETTE_WEIGHT: u32 = 10_000;
+
+/// One `editing.palettes` entry: a weighted set of terrain values the
+/// catalog grants on one ground grid. The scatter brush draws one of them
+/// for each cell it covers, each value as often as its weight says.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Palette {
+    /// The ground grid every value is granted on (`editing.terrain`).
+    pub grid: String,
+    /// Each value and its weight, from 1 to [`MAXIMUM_PALETTE_WEIGHT`],
+    /// in increasing byte order of the value: the order the catalog lists
+    /// them in does not matter.
+    pub entries: BTreeMap<String, u32>,
+}
+impl Palette {
+    /// The sum of the weights: at most [`MAXIMUM_PALETTE_ENTRIES`] times
+    /// [`MAXIMUM_PALETTE_WEIGHT`], so it cannot overflow.
+    pub fn total_weight(&self) -> u32 {
+        self.entries.values().sum()
+    }
 }
 
 /// `editing.anchors`: a capability flag, never a list of anchor ids, so the
@@ -537,7 +569,7 @@ fn editing_specs(
     closed_optional(
         e,
         &["movable_uids", "terrain", "fields"],
-        &["objects", "zones", "anchors"],
+        &["objects", "zones", "anchors", "palettes"],
     )?;
     let mut editing = EditingCapabilities::default();
     for uid in array(member(e, "movable_uids")?)? {
@@ -601,7 +633,58 @@ fn editing_specs(
                 .ok_or_else(|| failure("anchor capability flags must be true or false"))?,
         };
     }
+    if let Some(palettes) = e.get("palettes") {
+        editing.palettes = palette_specs(palettes, &editing.terrain)?;
+    }
     Ok(editing)
+}
+
+/// `editing.palettes`: `[{name, grid, entries: [{value, weight}]}]`. Every
+/// value must be granted on the palette's grid by `editing.terrain`.
+fn palette_specs(
+    value: &Value,
+    terrain: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<BTreeMap<String, Palette>, PreviewError> {
+    let list = array(value)?;
+    if list.len() > MAXIMUM_PALETTES {
+        return Err(failure("too many palettes"));
+    }
+    let mut palettes = BTreeMap::new();
+    for p in list {
+        closed(p, &["name", "grid", "entries"])?;
+        let name = identifier(member(p, "name")?)?;
+        if name.len() > MAXIMUM_PALETTE_NAME_BYTES {
+            return Err(failure("palette name too long"));
+        }
+        let grid = identifier(member(p, "grid")?)?;
+        let granted = terrain
+            .get(&grid)
+            .ok_or_else(|| failure("palette grid has no terrain capability"))?;
+        let items = array(member(p, "entries")?)?;
+        if items.is_empty() || items.len() > MAXIMUM_PALETTE_ENTRIES {
+            return Err(failure("a palette holds 1 to 32 entries"));
+        }
+        let mut entries = BTreeMap::new();
+        for entry in items {
+            closed(entry, &["value", "weight"])?;
+            let value = identifier(member(entry, "value")?)?;
+            if !granted.contains(&value) {
+                return Err(failure("palette value is not granted on its grid"));
+            }
+            let weight = integer(member(entry, "weight")?)
+                .ok()
+                .and_then(|weight| u32::try_from(weight).ok())
+                .filter(|weight| (1..=MAXIMUM_PALETTE_WEIGHT).contains(weight))
+                .ok_or_else(|| failure("palette weight must be an integer from 1 to 10000"))?;
+            if entries.insert(value, weight).is_some() {
+                return Err(failure("duplicate palette value"));
+            }
+        }
+        if palettes.insert(name, Palette { grid, entries }).is_some() {
+            return Err(failure("duplicate palette name"));
+        }
+    }
+    Ok(palettes)
 }
 
 /// `editing.objects`: `[{proto, layer, fields?, defaults?, portal?}]`, one

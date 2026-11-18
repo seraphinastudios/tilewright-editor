@@ -81,6 +81,9 @@ pub enum Control {
         grid: String,
         prototype: String,
     },
+    /// A row of Terrain mode's scatter palettes: the brush scatters this
+    /// catalog palette (`editing.palettes`) instead of one terrain.
+    ScatterPalette(String),
     /// A row of the Place palette: choose this prototype.
     PlacePalette(String),
     /// The Place palette filter field, unfocused: focus it.

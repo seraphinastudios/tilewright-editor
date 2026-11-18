@@ -90,6 +90,26 @@ fn every_edit_kind_round_trips_exactly_with_edge_values() {
             contiguous: true,
             expected: [0; 32],
         },
+        Action::ScatterTerrain {
+            plane: odd.clone(),
+            layer: i32::MIN,
+            grid: long.clone(),
+            cells: vec![[-MAX, MAX]],
+            palette: long.clone(),
+            seed: u32::MAX,
+            expected: [0xff; 32],
+        },
+        Action::ScatterTerrain {
+            plane: "p".into(),
+            layer: i32::MAX,
+            grid: "g".into(),
+            cells: (0..i64::try_from(limits::CELLS).unwrap())
+                .map(|x| [x, x])
+                .collect(),
+            palette: String::new(),
+            seed: 0,
+            expected: [0; 32],
+        },
         Action::PaintZones {
             plane: "p".into(),
             layer: 0,
@@ -190,6 +210,15 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         contiguous: true,
         expected: revision,
     };
+    let scattered = |cells: Vec<[i64; 2]>, palette: &str| Action::ScatterTerrain {
+        plane: "p".into(),
+        layer: 0,
+        grid: "g".into(),
+        cells,
+        palette: palette.into(),
+        seed: 7,
+        expected: revision,
+    };
     let mut deep = json!(1);
     for _ in 0..=limits::FIELD_VALUE_DEPTH {
         deep = json!([deep]);
@@ -202,6 +231,32 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         (filled(0, 0, "nul \u{0}"), RefusalCode::ProposalInvalid),
         (
             filled(0, 0, &"t".repeat(limits::TEXT_BYTES + 1)),
+            RefusalCode::ProposalBudget,
+        ),
+        (
+            scattered(vec![[MAX + 1, 0]], "s"),
+            RefusalCode::ProposalInvalid,
+        ),
+        (scattered(vec![], "s"), RefusalCode::ProposalInvalid),
+        (
+            scattered(vec![[1, 0], [0, 0]], "s"),
+            RefusalCode::ProposalInvalid,
+        ),
+        (
+            scattered(vec![[0, 0]], "nul \u{0}"),
+            RefusalCode::ProposalInvalid,
+        ),
+        (
+            scattered(vec![[0, 0]], &"s".repeat(limits::TEXT_BYTES + 1)),
+            RefusalCode::ProposalBudget,
+        ),
+        (
+            scattered(
+                (0..=i64::try_from(limits::CELLS).unwrap())
+                    .map(|x| [x, 0])
+                    .collect(),
+                "s",
+            ),
             RefusalCode::ProposalBudget,
         ),
         (field(json!(u64::MAX)), RefusalCode::ProposalInvalid),
@@ -326,6 +381,7 @@ fn the_writer_emits_these_exact_bytes() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn reading_refuses_every_other_form() {
     let good = encode_action(&edit(14, [3; 32])).unwrap();
     assert!(read(&good.to_string()).is_ok());
@@ -333,6 +389,8 @@ fn reading_refuses_every_other_form() {
     let place = encode_action(&edit(6, [3; 32])).unwrap();
     let field = encode_action(&edit(1, [3; 32])).unwrap();
     let fill = encode_action(&edit(15, [3; 32])).unwrap();
+    let scatter = encode_action(&edit(17, [3; 32])).unwrap();
+    assert_eq!(scatter["kind"], "scatter_terrain");
     let with = |base: &Value, key: &str, value: Value| {
         let mut changed = base.clone();
         changed[key] = value;
@@ -399,6 +457,20 @@ fn reading_refuses_every_other_form() {
         with(&fill, "x", json!(1.5)),
         with(&fill, "y", json!("0")),
         with(&fill, "kind", json!("fill")),
+        with(&scatter, "seed", json!(-1)),
+        with(&scatter, "seed", json!(4_294_967_296_i64)),
+        with(&scatter, "seed", json!(1.5)),
+        with(&scatter, "seed", json!("1234")),
+        with(&scatter, "seed", json!(null)),
+        without(&scatter, "seed"),
+        without(&scatter, "palette"),
+        with(&scatter, "palette", json!(null)),
+        with(&scatter, "palette", json!(["speckle"])),
+        with(&scatter, "palette", json!({"grass": 3})),
+        with(&scatter, "cells", json!([])),
+        with(&scatter, "cells", json!([[1, 0], [0, 0]])),
+        with(&scatter, "proto", json!("grass")),
+        with(&scatter, "kind", json!("scatter")),
         "[]".into(),
         "\"move\"".into(),
     ];
@@ -414,6 +486,12 @@ fn reading_refuses_every_other_form() {
         with(&good, "uid", json!("x".repeat(limits::TEXT_BYTES + 1))),
         with(&paint, "cells", json!(vec![[0, 0]; limits::CELLS + 1])),
         with(&fill, "proto", json!("x".repeat(limits::TEXT_BYTES + 1))),
+        with(
+            &scatter,
+            "palette",
+            json!("x".repeat(limits::TEXT_BYTES + 1)),
+        ),
+        with(&scatter, "cells", json!(vec![[0, 0]; limits::CELLS + 1])),
     ];
     for text in &over {
         assert_eq!(

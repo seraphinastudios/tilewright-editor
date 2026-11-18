@@ -372,6 +372,7 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
     let (_agent, proposal, person_world) = short(3, |root| {
         common::edit_json(root, "preview.jsonc", |catalog| {
             catalog["editing"]["terrain"][0]["values"] = json!(["grass"]);
+            catalog["editing"]["palettes"] = json!([]);
         });
     });
     let mut person = open(person_world.path(), PERSON);
@@ -951,4 +952,84 @@ fn resume_reports_a_differing_catalog_too() {
             session: person.catalog().revision()
         }]
     );
+}
+
+/// A proposal of one scatter step (the last kind) at the fixture's base.
+fn scatter_proposal() -> (tempfile::TempDir, Proposal) {
+    let agent_world = world(|_| {});
+    let mut session = sandbox(agent_world.path());
+    let mut records = Records::default();
+    let expected = revision(&session);
+    accept(&mut session, edit(KINDS - 1, expected), &mut records);
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
+    (agent_world, proposal)
+}
+
+#[test]
+fn a_scatter_step_replays_only_under_the_palette_it_was_recorded_with() {
+    let (_agent, proposal) = scatter_proposal();
+    // The same palette: the same transaction, applied.
+    let same = world(|_| {});
+    let mut person = open(same.path(), PERSON);
+    let mut records = Records::default();
+    let (mut progress, notices) = Progress::begin(&proposal, &person).unwrap();
+    assert!(notices.is_empty());
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    assert_eq!(person.applied_steps().len(), 1);
+
+    // Other weights under the same name: the catalog differs, the engine
+    // draws other values, and the step diverges with nothing pending.
+    let reweighted = world(|root| {
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["palettes"][0]["entries"][1]["weight"] = json!(30);
+        });
+    });
+    let mut person = open(reweighted.path(), PERSON);
+    let (mut progress, notices) = Progress::begin(&proposal, &person).unwrap();
+    assert!(matches!(
+        notices.as_slice(),
+        [Notice::CatalogDiffers { .. }]
+    ));
+    let untouched = Untouched::of(&person, reweighted.path());
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepDiverged, "{error}");
+    untouched.check(&person, reweighted.path(), "reweighted");
+    assert!(person.history().pending().is_none());
+
+    // No such palette: refused with the engine's code.
+    let missing = world(|root| {
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["palettes"] = json!([]);
+        });
+    });
+    let mut person = open(missing.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepRefused);
+    assert_eq!(error.engine_code(), Some(RefusalCode::GrantMissing));
+}
+
+#[test]
+fn a_scatter_step_with_another_seed_diverges() {
+    let (_agent, proposal) = scatter_proposal();
+    let forged = forged(&proposal, |body| {
+        assert_eq!(body["steps"][0]["action"]["seed"], 1234);
+        body["steps"][0]["action"]["seed"] = json!(1235);
+    });
+    let root = world(|_| {});
+    let mut person = open(root.path(), PERSON);
+    let mut records = Records::default();
+    let (mut progress, _) = Progress::begin(&forged, &person).unwrap();
+    let error = progress
+        .prepare_step(&forged, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepDiverged, "{error}");
+    assert!(person.history().pending().is_none());
 }

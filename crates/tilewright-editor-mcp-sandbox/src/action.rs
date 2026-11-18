@@ -12,7 +12,7 @@ use tilewright_jsonc::Value;
 
 /// Every action kind and its members besides `kind` and `expected`, in
 /// the decoder's order. Each member's schema is [`member`]'s.
-pub const KINDS: [(&str, &[&str]); 16] = [
+pub const KINDS: [(&str, &[&str]); 17] = [
     ("move", &["uid", "x", "y"]),
     ("set_field", &["uid", "field", "value"]),
     ("paint", &["plane", "layer", "grid", "x", "y", "proto"]),
@@ -23,6 +23,10 @@ pub const KINDS: [(&str, &[&str]); 16] = [
     (
         "fill_terrain",
         &["plane", "layer", "grid", "x", "y", "proto", "contiguous"],
+    ),
+    (
+        "scatter_terrain",
+        &["plane", "layer", "grid", "cells", "palette", "seed"],
     ),
     ("paint_zones", &["plane", "layer", "cells", "zone"]),
     ("remove", &["uid"]),
@@ -96,6 +100,14 @@ fn member(kind: &str, name: &str) -> String {
             cell()
         ),
         "contiguous" => r#"{"type":"boolean","description":"The fill rule. true: set proto on the cells joined to the start cell (x, y) through edge neighbours (not diagonals) that hold the same terrain as the start cell (an empty start cell matches empty cells), within the catalog's active view. false: set proto on every cell of the active view that holds the same terrain as the start cell (an empty start cell matches empty cells). The start cell must be in the active view; cells already holding proto are left out."}"#.to_owned(),
+        "palette" => format!(
+            r#"{{"type":"string","maxLength":{},"pattern":"^[^\\u0000]*$","description":"The name of a palette in the catalog's editing.palettes (the catalog tool lists them) for this grid. The palette is read from the catalog when the step is prepared: each cell gets one of its values, drawn by weight from the seed and the cell alone. Cells already holding their drawn value are left out."}}"#,
+            limits::TEXT_BYTES
+        ),
+        "seed" => format!(
+            r#"{{"type":"integer","minimum":0,"maximum":{},"description":"The scatter seed. The same seed, palette and cell always draw the same value; choose a new one for a different pattern."}}"#,
+            u32::MAX
+        ),
         "name" | "parent" => optional_text(),
         "zone" if kind == "paint_zones" => optional_text(),
         _ => text(),
@@ -140,15 +152,15 @@ pub fn action_schema() -> String {
 /// integers when they have no fraction (`3.0`, `3e0`), as JSON Schema's
 /// `integer` admits them, so that the decoder, which reads integers as
 /// written, takes what the schema takes. Only the members that are
-/// integers in every action are rewritten: `x`, `y`, `layer`, the cells
-/// of `cells`, and a portal target's `layer` and `at`; a field `value`
+/// integers in every action are rewritten: `x`, `y`, `layer`, `seed`, the
+/// cells of `cells`, and a portal target's `layer` and `at`; a field `value`
 /// is never touched, so it is recorded as written.
 pub fn normalized(action: &Value) -> Value {
     let mut action = action.clone();
     if let Value::Object { members, .. } = &mut action {
         for member in members {
             match member.key.as_str() {
-                "x" | "y" | "layer" => whole(&mut member.value),
+                "x" | "y" | "layer" | "seed" => whole(&mut member.value),
                 "cells" => {
                     if let Value::Array { items, .. } = &mut member.value {
                         items.iter_mut().for_each(pair);

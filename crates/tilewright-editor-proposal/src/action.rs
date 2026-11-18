@@ -75,6 +75,18 @@ pub fn encode_action(action: &Action) -> Result<Value, ProposalError> {
             "x": integer(*x)?, "y": integer(*y)?, "proto": text(proto)?, "contiguous": contiguous,
             "expected": hex(expected)})
         }
+        Action::ScatterTerrain {
+            plane,
+            layer,
+            grid,
+            cells,
+            palette,
+            seed,
+            expected,
+        } => {
+            json!({"kind": "scatter_terrain", "plane": text(plane)?, "layer": layer, "grid": text(grid)?,
+            "cells": encode_cells(cells)?, "palette": text(palette)?, "seed": seed, "expected": hex(expected)})
+        }
         Action::PaintZones {
             plane,
             layer,
@@ -196,6 +208,7 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
         "paint" => &["plane", "layer", "grid", "x", "y", "proto"],
         "paint_stroke" => &["plane", "layer", "grid", "cells", "proto"],
         "fill_terrain" => &["plane", "layer", "grid", "x", "y", "proto", "contiguous"],
+        "scatter_terrain" => &["plane", "layer", "grid", "cells", "palette", "seed"],
         "paint_zones" => &["plane", "layer", "cells", "zone"],
         "remove" => &["uid"],
         "place" => &["plane", "layer", "x", "y", "proto"],
@@ -252,6 +265,15 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
             y: fields.integer("y")?,
             proto: fields.text("proto")?,
             contiguous: fields.boolean("contiguous")?,
+            expected,
+        },
+        "scatter_terrain" => Action::ScatterTerrain {
+            plane: fields.text("plane")?,
+            layer: fields.layer("layer")?,
+            grid: fields.text("grid")?,
+            cells: fields.cells("cells")?,
+            palette: fields.text("palette")?,
+            seed: fields.seed("seed")?,
             expected,
         },
         "paint_zones" => Action::PaintZones {
@@ -410,6 +432,11 @@ impl<'v> Fields<'v> {
             jsonc::Value::Bool { value, .. } => Ok(*value),
             _ => Err(invalid(format!("action member {key} is a boolean"))),
         }
+    }
+    /// A scatter seed: an integer from 0 to 2^32 - 1.
+    fn seed(&self, key: &str) -> Result<u32, ProposalError> {
+        u32::try_from(self.integer(key)?)
+            .map_err(|_| invalid(format!("action member {key} is outside the seed range")))
     }
     fn layer(&self, key: &str) -> Result<i32, ProposalError> {
         i32::try_from(self.integer(key)?)

@@ -313,6 +313,12 @@ pub(super) fn step_tiles<'a>(
             cells,
             ..
         }
+        | Action::ScatterTerrain {
+            plane,
+            layer,
+            cells,
+            ..
+        }
         | Action::PaintZones {
             plane,
             layer,
@@ -1581,6 +1587,27 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             shown(plane)
         ),
         Action::FillTerrain { .. } => fill_words(action, world, catalog),
+        Action::ScatterTerrain {
+            plane,
+            layer,
+            grid,
+            cells,
+            palette,
+            seed,
+            ..
+        } => format!(
+            "Scatter palette {}{} over {}{}, seed {seed} ({} on {}/{layer})",
+            shown(palette),
+            if catalog.editing().palettes.contains_key(palette) {
+                ""
+            } else {
+                " (not in this catalog)"
+            },
+            cells_words(cells.len()),
+            outside(catalog, plane, *layer, cells),
+            shown(grid),
+            shown(plane)
+        ),
         Action::PaintZones {
             plane,
             layer,

@@ -42,7 +42,9 @@ pub mod loader;
 pub mod mark;
 mod prepare;
 pub use catalog::{
-    AnchorGrant, EditingCapabilities, FORMAT_1, FORMAT_2, ObjectGrant, PreviewCatalog, ZoneGrant,
+    AnchorGrant, EditingCapabilities, FORMAT_1, FORMAT_2, MAXIMUM_PALETTE_ENTRIES,
+    MAXIMUM_PALETTE_NAME_BYTES, MAXIMUM_PALETTE_WEIGHT, MAXIMUM_PALETTES, ObjectGrant, Palette,
+    PreviewCatalog, ZoneGrant,
 };
 pub use loader::ReadyResources;
 pub use prepare::prepare;

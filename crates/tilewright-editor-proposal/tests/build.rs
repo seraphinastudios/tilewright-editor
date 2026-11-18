@@ -222,7 +222,8 @@ fn the_editor_version_is_the_callers_and_is_checked() {
 /// and escapes, so that a change of the JSON library's output is noticed.
 #[test]
 fn the_writer_emits_this_exact_document() {
-    let root = world(|_| {});
+    // The committed catalog: the golden names its digest.
+    let root = common::plain_world(|_| {});
     let mut session = sandbox(root.path());
     let expected = revision(&session);
     accept(&mut session, edit(0, expected), &mut Records::default());

@@ -801,6 +801,21 @@ impl Application {
             return self.click(x, y);
         }
         self.click(x, y)?;
+        let pending = self.blocked.is_some() || !self.session.can_prepare();
+        // A scatter stroke gets a fresh seed at its press, from the
+        // session's random source; the stroke and its action record it, so
+        // the preview, the release and a replay all draw the same values.
+        let seed = if self.tools.mode() == ToolMode::Terrain
+            && self.tools.scatter_choice().is_some()
+            && !self.tools.filling()
+            && !pending
+        {
+            self.session
+                .draw_seed()
+                .map_err(|error| error.to_string())?
+        } else {
+            0
+        };
         let key = self
             .session
             .selection()
@@ -813,11 +828,7 @@ impl Application {
             self.session.history().document().revision(),
         );
         self.tools
-            .begin_stroke(
-                &inspected,
-                key,
-                self.blocked.is_some() || !self.session.can_prepare(),
-            )
+            .begin_seeded_stroke(&inspected, key, pending, seed)
             .map_err(|error| error.to_string())?;
         match self.prepared.mask(self.view.frame_revision, true) {
             Ok(mask) => {
@@ -1280,6 +1291,7 @@ impl Application {
                     active,
                 ));
             }
+            self.scatter_rows(&mut rows, ready);
             self.rule_rows(&mut rows);
         }
         if mode == ToolMode::Place {
@@ -2099,6 +2111,31 @@ impl Application {
                 Some(Control::PlacePalette(proto.to_owned())),
                 ready,
                 self.tools.placement_choice() == Some(proto),
+            ));
+        }
+    }
+
+    /// Terrain mode's scatter palettes, after the terrain palette and only
+    /// when the catalog has `editing.palettes`: each row names its grid,
+    /// its name and its weighted values; choosing one makes the brush
+    /// scatter it.
+    fn scatter_rows(&self, rows: &mut UiRows, ready: bool) {
+        let palettes = &self.session.catalog().editing().palettes;
+        if palettes.is_empty() {
+            return;
+        }
+        rows.push(("Scatter palettes".into(), None, true, false));
+        for (name, palette) in palettes {
+            let entries: Vec<String> = palette
+                .entries
+                .iter()
+                .map(|(value, weight)| format!("{value} {weight}"))
+                .collect();
+            rows.push((
+                format!("{} / {name}: {}", palette.grid, entries.join(", ")),
+                Some(Control::ScatterPalette(name.clone())),
+                ready,
+                self.tools.scatter_choice() == Some(name.as_str()),
             ));
         }
     }
@@ -2962,6 +2999,9 @@ impl Application {
                 StrokeTarget::Terrain(proto) => format!("with {proto}"),
                 StrokeTarget::Zone(Some(zone)) => format!("into zone {zone}"),
                 StrokeTarget::Zone(None) => "back to the default zone".into(),
+                StrokeTarget::Scatter { palette, seed } => {
+                    format!("from palette {palette} (seed {seed})")
+                }
             };
             return format!(
                 "Painting {} cells {target}, {changes} to change; release to review.{}{}",
@@ -3180,6 +3220,19 @@ impl Application {
             Control::TerrainRule(rule) => {
                 self.tools.set_terrain_rule(rule);
                 self.forget_hover();
+                Ok(())
+            }
+            Control::ScatterPalette(name) => {
+                self.tools
+                    .choose_scatter(self.session.catalog(), &name)
+                    .map_err(|error| error.to_string())?;
+                let grid = self.session.catalog().editing().palettes[&name]
+                    .grid
+                    .clone();
+                if self.view.grid.as_deref() != Some(grid.as_str()) {
+                    self.view.grid = Some(grid);
+                    self.action(Action::ClearSelection)?;
+                }
                 Ok(())
             }
             Control::Palette { grid, prototype } => {

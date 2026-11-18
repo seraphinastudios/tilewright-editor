@@ -41,8 +41,25 @@ pub fn edit_json(root: &Path, path: &str, change: impl FnOnce(&mut Value)) {
     fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
 }
 
-/// The neutral fixture with one unused zone, `spare`, to delete.
+/// The catalog's one scatter palette in the fixtures here: grass 3, sand 1.
+pub fn speckle() -> Value {
+    json!([{"name": "speckle", "grid": "floor",
+        "entries": [{"value": "grass", "weight": 3}, {"value": "sand", "weight": 1}]}])
+}
+
+/// [`plain_world`] with the scatter palette [`speckle`] in its catalog.
 pub fn world(configure: impl FnOnce(&Path)) -> tempfile::TempDir {
+    plain_world(|root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["palettes"] = speckle();
+        });
+        configure(root);
+    })
+}
+
+/// The neutral fixture with one unused zone, `spare`, to delete, and its
+/// catalog as committed.
+pub fn plain_world(configure: impl FnOnce(&Path)) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     copy_tree(&fixture_world("prototype-neutral"), dir.path());
     edit_json(dir.path(), "planes/main/zones.jsonc", |zones| {
@@ -94,7 +111,7 @@ pub fn revision(session: &Session) -> [u8; 32] {
 /// The edit actions of every kind, in an order in which each applies
 /// after the ones before it on the neutral fixture; the fill twice, once
 /// as a fill and once as a replace.
-pub const KINDS: usize = 17;
+pub const KINDS: usize = 18;
 #[allow(clippy::too_many_lines)]
 pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
     let main = || String::from("main");
@@ -210,7 +227,7 @@ pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
             expected,
         },
         // Every sand cell left in the view.
-        _ => Action::FillTerrain {
+        16 => Action::FillTerrain {
             plane: main(),
             layer: 0,
             grid: "floor".into(),
@@ -218,6 +235,16 @@ pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
             y: 1,
             proto: "grass".into(),
             contiguous: false,
+            expected,
+        },
+        // Speckle over the now all-grass west half of the view.
+        _ => Action::ScatterTerrain {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            cells: (0..4).flat_map(|x| (0..6).map(move |y| [x, y])).collect(),
+            palette: "speckle".into(),
+            seed: 1234,
             expected,
         },
     }

@@ -53,6 +53,11 @@ fn open(root: &Path, actor: &str) -> Session {
 fn fixture_with(configure: impl FnOnce(&Path)) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     copy_tree(&fixture_world("prototype-neutral"), dir.path());
+    // One scatter palette, so every edit kind can be prepared.
+    edit_json(dir.path(), "preview.jsonc", |catalog| {
+        catalog["editing"]["palettes"] = json!([{"name": "speckle", "grid": "floor",
+            "entries": [{"value": "grass", "weight": 3}, {"value": "sand", "weight": 1}]}]);
+    });
     configure(dir.path());
     dir
 }
@@ -108,6 +113,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         Action::Paint { .. } => Some("Paint"),
         Action::PaintStroke { .. } => Some("PaintStroke"),
         Action::FillTerrain { .. } => Some("FillTerrain"),
+        Action::ScatterTerrain { .. } => Some("ScatterTerrain"),
         Action::PaintZones { .. } => Some("PaintZones"),
         Action::Remove { .. } => Some("Remove"),
         Action::Place { .. } => Some("Place"),
@@ -128,12 +134,13 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         | Action::Reopen => None,
     }
 }
-const EDIT_KINDS: [&str; 16] = [
+const EDIT_KINDS: [&str; 17] = [
     "Move",
     "SetField",
     "Paint",
     "PaintStroke",
     "FillTerrain",
+    "ScatterTerrain",
     "PaintZones",
     "Remove",
     "Place",
@@ -190,6 +197,15 @@ fn edits(expected: [u8; 32]) -> Vec<Action> {
             y: 1,
             proto: "sand".into(),
             contiguous: true,
+            expected,
+        },
+        Action::ScatterTerrain {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            cells: vec![[0, 0], [0, 1], [5, 0], [5, 1]],
+            palette: "speckle".into(),
+            seed: 1234,
             expected,
         },
         Action::PaintZones {
@@ -795,6 +811,30 @@ fn granted_refusals(expected: [u8; 32]) -> Vec<(Action, RefusalCode)> {
                 y: 1,
                 proto: "sand".into(),
                 contiguous: true,
+                expected,
+            },
+            RefusalCode::GrantMissing,
+        ),
+        (
+            Action::ScatterTerrain {
+                plane: main_plane(),
+                layer: 0,
+                grid: "floor".into(),
+                cells: vec![[100, 0]],
+                palette: "speckle".into(),
+                seed: 1,
+                expected,
+            },
+            RefusalCode::ScopeOutsideView,
+        ),
+        (
+            Action::ScatterTerrain {
+                plane: main_plane(),
+                layer: 0,
+                grid: "floor".into(),
+                cells: vec![[1, 1]],
+                palette: "unknown".into(),
+                seed: 1,
                 expected,
             },
             RefusalCode::GrantMissing,
