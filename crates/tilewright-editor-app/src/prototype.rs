@@ -45,6 +45,8 @@ type Result<T> = std::result::Result<T, String>;
 #[path = "proposal_view.rs"]
 mod proposal_view;
 type UiRows = Vec<(String, Option<Control>, bool, bool)>;
+/// A sidebar row's swatch colour and the outline around it.
+type RowSwatch = (Option<[f32; 4]>, Option<[f32; 4]>);
 // The review text and its completeness limits are the engine's; the app
 // lays the lines out.
 #[cfg(test)]
@@ -1247,28 +1249,12 @@ impl Application {
                     },
                 );
             }
-            Some(SelectionSummary::Cell {
-                plane,
-                layer,
-                grid,
-                x,
-                y,
-                prototype,
-            }) => {
-                rows.push((format!("Cell {x},{y} / {grid}"), None, true, false));
-                rows.push((format!("{plane} / layer {layer}"), None, true, false));
-                rows.push((
-                    format!("Value: {}", prototype.unwrap_or("<empty>")),
-                    None,
-                    true,
-                    false,
-                ));
-                rows.push((
-                    heights::inspector_line(self.session.world(), plane, layer, x, y),
-                    None,
-                    true,
-                    false,
-                ));
+            Some(
+                cell @ SelectionSummary::Cell {
+                    plane, layer, x, y, ..
+                },
+            ) => {
+                Self::cell_rows(&mut rows, &cell, self.session.world());
                 self.cell_zone_rows(&mut rows, &mut fits, plane, layer, [x, y]);
                 self.cell_anchor_rows(&mut rows, &mut fits, plane, layer, [x, y]);
             }
@@ -1334,6 +1320,35 @@ impl Application {
             Some(Control::ZoneOverlay),
             true,
             shown,
+        ));
+    }
+
+    /// The selected cell's own rows: where it is, its value and its height.
+    fn cell_rows(rows: &mut UiRows, cell: &SelectionSummary<'_>, world: &tilewright_source::World) {
+        let SelectionSummary::Cell {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+            prototype,
+        } = *cell
+        else {
+            return;
+        };
+        rows.push((format!("Cell {x},{y} / {grid}"), None, true, false));
+        rows.push((format!("{plane} / layer {layer}"), None, true, false));
+        rows.push((
+            format!("Value: {}", prototype.unwrap_or("<empty>")),
+            None,
+            true,
+            false,
+        ));
+        rows.push((
+            heights::inspector_line(world, plane, layer, x, y),
+            None,
+            true,
+            false,
         ));
     }
 
@@ -2711,10 +2726,10 @@ impl Application {
     /// thumbnail, are 40 px, each with a 2 px gap; only rows that fit whole,
     /// gap included, are laid out. The scroll offset counts rows and stops where the last
     /// row is visible.
-    fn sidebar_rows(&mut self, ui: &mut WorkspaceUi, rows: UiRows, mut y: u32) {
-        let x = ui.sidebar_x();
-        let width = ui.sidebar_width();
-        let bottom = ui.logical_height();
+    /// Each sidebar row's swatch and swatch outline: a zone row's tint in
+    /// Zone mode, the badge legend's badges and the height legend's end
+    /// bands.
+    fn row_swatches(&self, rows: &UiRows) -> Vec<RowSwatch> {
         let tints = if self.tools.mode() == ToolMode::Zone {
             self.zone_tints()
         } else {
@@ -2742,8 +2757,7 @@ impl Application {
         } else {
             std::collections::BTreeMap::new()
         };
-        let swatches: Vec<_> = rows
-            .iter()
+        rows.iter()
             .map(|row| match row.0.as_str() {
                 text if legend.contains_key(text) => {
                     (Some(heights::swatch_color(legend[text])), None)
@@ -2758,7 +2772,14 @@ impl Application {
                 ),
                 _ => (swatch(&row.1), None),
             })
-            .collect();
+            .collect()
+    }
+
+    fn sidebar_rows(&mut self, ui: &mut WorkspaceUi, rows: UiRows, mut y: u32) {
+        let x = ui.sidebar_x();
+        let width = ui.sidebar_width();
+        let bottom = ui.logical_height();
+        let swatches = self.row_swatches(&rows);
         let rows: Vec<_> = rows
             .into_iter()
             .map(|(text, control, enabled, active)| {
