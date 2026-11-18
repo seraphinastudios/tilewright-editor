@@ -1135,8 +1135,11 @@ fn the_key_waits_for_the_displayed_panel() {
 fn a_blocked_session_offers_nothing() {
     let mut twin = twin(2, |_| {}, |_| {}, None);
     open(&mut twin);
-    twin.app.blocked = Some("test".into());
-    assert_eq!(state(&twin.app), State::Blocked);
+    twin.app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::View,
+        "test",
+    ));
+    assert_eq!(state(&twin.app), State::Paused);
     assert_eq!(control(&mut twin.app), None);
     assert!(twin.app.prepare_proposal_step().is_err());
     assert!(twin.app.continue_proposal().is_err());
@@ -1145,7 +1148,7 @@ fn a_blocked_session_offers_nothing() {
     assert!(
         texts
             .iter()
-            .any(|text| text == "This session cannot continue (blocked)."),
+            .any(|text| text == "Waiting: editing is paused. The details below say why."),
         "{texts:?}"
     );
 }
@@ -2375,8 +2378,11 @@ fn fresh_state(app: &Application) -> State {
     use tilewright_editor_ui::SessionPhase;
     let open = app.proposal.as_ref().unwrap();
     let session = &app.session;
-    if app.blocked.is_some() || session.status().phase == SessionPhase::Blocked {
+    if session.status().phase == SessionPhase::Blocked {
         return State::Blocked;
+    }
+    if app.blocked.is_some() {
+        return State::Paused;
     }
     let Some(progress) = &open.progress else {
         return State::DoesNotApply;

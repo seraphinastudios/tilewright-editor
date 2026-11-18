@@ -470,8 +470,10 @@ impl Row {
 /// session changes), the stored refusal and the session itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum State {
-    /// The session or the rendering is blocked.
+    /// The session is blocked (its own phase, which only Reopen ends).
     Blocked,
+    /// Rendering blocks editing for now; it ends when a rebuild succeeds.
+    Paused,
     DoesNotApply,
     /// Stopped by a Cancel; `resume` is the next step a resume would take.
     Stopped {
@@ -515,6 +517,7 @@ impl State {
     pub(super) fn key(self) -> &'static str {
         match self {
             Self::Blocked => "blocked",
+            Self::Paused => "paused",
             Self::DoesNotApply => "does_not_apply",
             Self::Stopped { .. } => "stopped",
             Self::Finished => "finished",
@@ -590,8 +593,11 @@ impl OpenProposal {
 
     /// What the panel shows now.
     pub(super) fn state(&self, session: &Session, blocked: bool) -> State {
-        if blocked || session.status().phase == SessionPhase::Blocked {
+        if session.status().phase == SessionPhase::Blocked {
             return State::Blocked;
+        }
+        if blocked {
+            return State::Paused;
         }
         let Some(progress) = &self.progress else {
             return State::DoesNotApply;
@@ -695,6 +701,7 @@ impl OpenProposal {
         let steps = self.steps();
         match state {
             State::Blocked => "This session cannot continue (blocked).".into(),
+            State::Paused => "Waiting: editing is paused. The details below say why.".into(),
             State::DoesNotApply => "Does not apply to this world; nothing can be prepared.".into(),
             State::Stopped { resume: Some(_) } => "Stopped by Cancel. Resume continues it.".into(),
             State::Stopped { resume: None } => {
@@ -852,7 +859,7 @@ impl OpenProposal {
             | State::Moved {
                 resume: Some(resume),
             } => Some(resume),
-            State::Finished | State::Blocked | State::DoesNotApply => None,
+            State::Finished | State::Blocked | State::Paused | State::DoesNotApply => None,
             _ => Some(next),
         };
         if let Some(step) = current.filter(|step| *step < steps) {

@@ -733,7 +733,10 @@ fn the_highlight_follows_the_state() {
     enter(&mut twin.app);
     assert_eq!(step(&mut twin.app), Some(1));
     // A blocked session shows nothing, though the stored one is kept.
-    twin.app.blocked = Some("test".into());
+    twin.app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::View,
+        "test",
+    ));
     assert!(twin.app.proposal_highlight().is_none());
     assert!(drawn(&twin.app).is_empty());
     twin.app.blocked = None;
@@ -1123,4 +1126,28 @@ fn no_highlight_where_the_world_moved_ahead_or_is_at_several_places() {
     assert!(matches!(state(app), State::Several { .. }));
     assert_eq!(shown(app), None);
     assert!(drawn(app).is_empty());
+}
+
+#[test]
+fn a_block_that_ends_by_zooming_brings_the_highlight_back() {
+    // While rendering blocks editing the panel highlights nothing; a zoom
+    // that ends the block (no action, no funnel) refreshes it.
+    let mut twin = twin(3, |_| {}, |_| {}, None);
+    open(&mut twin);
+    let step = |app: &mut Application| shown(app).map(|(step, _, _)| step);
+    assert_eq!(step(&mut twin.app), Some(0));
+    let catalog = twin.person.path().join("world/preview.jsonc");
+    let original = std::fs::read(&catalog).unwrap();
+    std::fs::write(&catalog, [original.as_slice(), b"\n"].concat()).unwrap();
+    acknowledge_ui(&mut twin.app);
+    assert!(route(&mut twin.app, &key(Keycode::G)).is_err());
+    assert!(twin.app.blocked.is_some());
+    assert_eq!(state(&twin.app), State::Paused);
+    assert_eq!(step(&mut twin.app), None);
+    std::fs::write(&catalog, &original).unwrap();
+    route(&mut twin.app, &key(Keycode::Minus)).unwrap();
+    assert!(twin.app.blocked.is_none());
+    assert!(matches!(state(&twin.app), State::Refused { step: 0, .. }));
+    // `shown` checks the stored highlight against a fresh one.
+    assert_eq!(step(&mut twin.app), Some(0));
 }

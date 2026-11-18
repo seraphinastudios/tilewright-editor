@@ -262,13 +262,71 @@ enum ViewNote {
 /// The status line after a rebuild ended a rendering block.
 const VIEW_RESUMED: &str = "The view can be drawn again. Editing is possible again.";
 /// The status lines of a refused zoom or pan. The renderer does not say
-/// why a view cannot be drawn, so neither do they.
-const ZOOM_IN_REFUSED: &str =
-    "Cannot zoom in: this view cannot be drawn. Staying at the previous zoom.";
-const ZOOM_OUT_REFUSED: &str =
-    "Cannot zoom out: this view cannot be drawn. Staying at the previous zoom.";
-const PAN_REFUSED: &str =
-    "Cannot pan there: this view cannot be drawn. Staying where the view was.";
+/// why a view cannot be drawn, so neither do they; the details line says
+/// the view stayed where it was.
+const ZOOM_IN_REFUSED: &str = "Cannot zoom in: this view cannot be drawn.";
+const ZOOM_OUT_REFUSED: &str = "Cannot zoom out: this view cannot be drawn.";
+const PAN_REFUSED: &str = "Cannot pan there: this view cannot be drawn.";
+
+/// What made rendering block editing; each ends differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BlockCause {
+    /// The frame of the session's World at the current view cannot be
+    /// prepared: zooming out, panning or Cancel may lead to one that can.
+    View,
+    /// The catalog or its art on disk no longer match what the session
+    /// loaded: only putting the bytes back helps (or a new session).
+    Sources,
+    /// The prepared frame could not be composed or presented: the next
+    /// rebuild (a zoom, a pan or Cancel) tries again.
+    Present,
+}
+
+/// Why rendering blocks editing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Blocked {
+    cause: BlockCause,
+    reason: String,
+}
+
+impl Blocked {
+    fn new(cause: BlockCause, reason: impl std::fmt::Display) -> Self {
+        Self {
+            cause,
+            reason: reason.to_string(),
+        }
+    }
+
+    /// The status line while blocked.
+    fn status(&self) -> &'static str {
+        match self.cause {
+            BlockCause::View => "Editing paused: this view cannot be drawn.",
+            BlockCause::Sources => "Editing paused: catalog or art files changed.",
+            BlockCause::Present => "Editing paused: the frame could not be shown.",
+        }
+    }
+
+    /// The details line that says how the block ends.
+    fn remedy(&self) -> &'static str {
+        match self.cause {
+            BlockCause::View => {
+                "Editing resumes once the view can be drawn: zoom out, pan or Cancel."
+            }
+            BlockCause::Sources => {
+                "The session's catalog or art files changed on disk. Editing resumes when they match what the session loaded again; otherwise quit and start a new session."
+            }
+            BlockCause::Present => {
+                "Editing resumes once the frame is shown again: zoom, pan or Cancel to try again."
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Blocked {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
 
 struct Application {
     session: Session,
@@ -286,8 +344,8 @@ struct Application {
     /// Why editing is blocked by rendering: the frame of the session's World
     /// at the current view could not be prepared (or presented), so what is
     /// shown is not what would be edited. Cleared by the next rebuild that
-    /// succeeds.
-    blocked: Option<String>,
+    /// succeeds. The session's own `SessionPhase::Blocked` is separate.
+    blocked: Option<Blocked>,
     /// What the last zoom or pan, or a rebuild that ended a block, has to
     /// say on the status line; cleared by the next rebuild or control.
     view_note: Option<ViewNote>,
@@ -497,14 +555,22 @@ impl Application {
     /// Prepares the frame of the session's World at the current view. A
     /// failure blocks editing, since the shown frame is then not the World
     /// an edit or Accept would act on; the next rebuild that succeeds (after
-    /// a zoom, a pan or a Cancel) ends the block and says so.
+    /// a zoom, a pan or a Cancel) ends the block and says so. This is the
+    /// one place a rendering block ends.
     fn rebuild(&mut self) -> Result<()> {
-        let result = self.rebuild_inner();
-        match &result {
-            Err(reason) => self.blocked = Some(reason.clone()),
-            Ok(()) => self.view_note = self.blocked.take().map(|_| ViewNote::Resumed),
+        if let Err(blocked) = self.rebuild_inner() {
+            let reason = blocked.reason.clone();
+            self.blocked = Some(blocked);
+            return Err(reason);
         }
-        result
+        let ended = self.blocked.take().is_some();
+        self.view_note = ended.then_some(ViewNote::Resumed);
+        if ended {
+            // While blocked the proposal's highlight was dropped; the panel
+            // reads the session again now.
+            self.refresh_highlight();
+        }
+        Ok(())
     }
 
     /// A zoom or pan: `change` moves the camera and the frame is rebuilt. A
@@ -518,17 +584,19 @@ impl Application {
         change: impl FnOnce(&mut tilewright_render_world::Camera),
         refused: &'static str,
     ) -> Result<()> {
+        // The newest input: an earlier refusal's notice no longer applies.
+        self.notice = None;
         let previous = self.view.camera;
         change(&mut self.view.camera);
         if self.blocked.is_some() {
             return self.rebuild();
         }
-        if let Err(reason) = self.rebuild_inner() {
+        if let Err(blocked) = self.rebuild_inner() {
             self.view.camera = previous;
             self.rebuild()?;
             self.view_note = Some(ViewNote::Refused {
                 status: refused,
-                reason,
+                reason: blocked.reason,
             });
             return Ok(());
         }
@@ -536,7 +604,8 @@ impl Application {
         Ok(())
     }
 
-    fn rebuild_inner(&mut self) -> Result<()> {
+    fn rebuild_inner(&mut self) -> std::result::Result<(), Blocked> {
+        let view = |error: String| Blocked::new(BlockCause::View, error);
         self.presented_generation = None;
         self.interrupt_stroke();
         self.hover.cell = None;
@@ -544,7 +613,7 @@ impl Application {
         self.tools.cancel();
         self.session
             .invalidate_frame()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| view(error.to_string()))?;
         self.view.frame_revision = self.session.generation();
         loader::revalidate(
             self.session.history().document().source(),
@@ -552,7 +621,13 @@ impl Application {
             self.session.resources(),
             PreviewLimits::default(),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            // Reopen is refused while rendering blocks editing, and would not
+            // help: the remedy line says what does.
+            let reason = error.to_string();
+            let reason = reason.strip_suffix("; reopen required").unwrap_or(&reason);
+            Blocked::new(BlockCause::Sources, reason)
+        })?;
         // A chosen zone the shown World no longer defines (deleted, or its
         // creation undone) is no longer chosen.
         self.tools
@@ -560,7 +635,7 @@ impl Application {
         self.tools
             .revalidate_anchors(self.session.world(), self.session.catalog());
         self.anchor_view = Some(AnchorView::of(self.session.world(), self.session.catalog()));
-        self.prepare_scene()
+        self.prepare_scene().map_err(view)
     }
 
     /// The one place the interactive World scene is prepared.
@@ -3094,7 +3169,8 @@ impl Application {
             },
             "Cancel",
             Some(Control::Cancel),
-            pending && self.blocked.is_none(),
+            // Cancel stays open while rendering blocks editing (see `action`).
+            pending,
             false,
         );
         // A persistent, quiet indication while project art is loaded, so a
@@ -3167,8 +3243,11 @@ impl Application {
 
     #[allow(clippy::too_many_lines)]
     fn status_label(&self) -> String {
-        if self.blocked.is_some() || self.session.status().phase == SessionPhase::Blocked {
+        if self.session.status().phase == SessionPhase::Blocked {
             return "Editing blocked. Recovery details below.".into();
+        }
+        if let Some(blocked) = &self.blocked {
+            return blocked.status().into();
         }
         if let Some(stroke) = self.tools.stroke() {
             let changes = self
@@ -3200,13 +3279,15 @@ impl Application {
                 }
             );
         }
+        // A refused input's notice is newer than any view word: a zoom or
+        // pan clears the notice when it sets one.
+        if self.notice.is_some() {
+            return "Input not applied. Details below.".into();
+        }
         match &self.view_note {
             Some(ViewNote::Refused { status, .. }) => return (*status).into(),
             Some(ViewNote::Resumed) => return VIEW_RESUMED.into(),
             None => {}
-        }
-        if self.notice.is_some() {
-            return "Input not applied. Details below.".into();
         }
         if let Some(status) = self.fill_status() {
             return status;
@@ -3308,12 +3389,10 @@ impl Application {
         let mut details = Vec::new();
         if let Some(reason) = &self.blocked {
             details.push(format!("Rendering blocked: {reason}"));
-            details.push(
-                "Editing resumes once the view can be drawn: zoom out, pan or Cancel.".into(),
-            );
+            details.push(reason.remedy().into());
         }
         if let Some(ViewNote::Refused { reason, .. }) = &self.view_note {
-            details.push(format!("View not changed: {reason}"));
+            details.push(format!("The view stays where it was: {reason}"));
         }
         if let Some(reason) = &self.notice {
             details.push(reason.clone());
@@ -5529,7 +5608,7 @@ fn native_present(
 ) -> Result<bool> {
     app.refresh_ui();
     let title = if let Some(reason) = &app.blocked {
-        format!("Tilewright BLOCKED: {reason} | Q quit")
+        format!("Tilewright editing paused: {reason} | Q quit")
     } else {
         format!(
             "Tilewright {} | {} | {}",
@@ -5544,11 +5623,11 @@ fn native_present(
     let presentation = match workspace_presentation(app) {
         Ok(presentation) => presentation,
         Err(reason) => {
-            app.blocked = Some(reason.clone());
+            app.blocked = Some(Blocked::new(BlockCause::Present, &reason));
             app.presented_generation = None;
             window
                 .set_title(&format!(
-                    "Tilewright BLOCKED: {} | Q quit",
+                    "Tilewright editing paused: {} | Q quit",
                     terminal_field(&reason)
                 ))
                 .map_err(|error| error.to_string())?;
@@ -5579,10 +5658,10 @@ fn native_present(
         }
         Err(error) => {
             let reason = error.to_string();
-            app.blocked = Some(reason.clone());
+            app.blocked = Some(Blocked::new(BlockCause::Present, &reason));
             window
                 .set_title(&format!(
-                    "Tilewright BLOCKED: {} | Q quit",
+                    "Tilewright editing paused: {} | Q quit",
                     terminal_field(&reason)
                 ))
                 .map_err(|error| error.to_string())?;

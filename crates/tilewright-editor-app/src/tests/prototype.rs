@@ -671,10 +671,13 @@ fn long_display_labels_elide_using_shared_measurements_and_keep_full_draft() {
 fn blocked_render_reason_precedes_source_excerpt_and_ready_status_is_plain() {
     let (_temporary, mut app) = application();
     assert!(!app.status_label().contains("applied"));
-    app.blocked = Some("Font resources could not be verified".into());
+    app.blocked = Some(super::Blocked::new(
+        super::BlockCause::Present,
+        "Font resources could not be verified",
+    ));
     assert_eq!(
         app.status_label(),
-        "Editing blocked. Recovery details below."
+        "Editing paused: the frame could not be shown."
     );
     let lines = app.review_lines(620);
     assert!(lines[0].starts_with("Rendering blocked:"));
