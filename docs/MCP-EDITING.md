@@ -153,7 +153,11 @@ The observe tools are the read-only server's: the same reports, paging,
 cursors, `revision` argument, `render` image and caps, and errors, which
 are the read-only server's one line `<tool> failed: <code>: <message>`
 without structured content ([docs/MCP.md](MCP.md#errors)). `refresh` is
-not offered: the snapshot follows the sandbox on its own (below).
+not offered: the snapshot follows the sandbox on its own (below). A sandbox
+world whose catalog contains project art is served the same way, with the
+same `catalog.project_art` member and marked `render` images
+([docs/MCP.md](MCP.md#project-art)); the sandbox copy, like the world it was
+made from, holds that art, and `render` sends its pixels to the client.
 
 ### The `action` argument
 

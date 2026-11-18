@@ -39,8 +39,11 @@ pub fn render_scene<R: Renderer>(
 
 mod catalog;
 pub mod loader;
+pub mod mark;
 mod prepare;
-pub use catalog::{AnchorGrant, EditingCapabilities, ObjectGrant, PreviewCatalog, ZoneGrant};
+pub use catalog::{
+    AnchorGrant, EditingCapabilities, FORMAT_1, FORMAT_2, ObjectGrant, PreviewCatalog, ZoneGrant,
+};
 pub use loader::ReadyResources;
 pub use prepare::prepare;
 use sha2::{Digest, Sha256};
@@ -134,6 +137,10 @@ pub struct PreparedPreview {
     pub catalog_revision: [u8; 32],
     pub frame_revision: u64,
     pub diagnostics: Vec<PreviewDiagnostic>,
+    /// [`PreviewCatalog::project_art_resources`] of the catalog this was
+    /// prepared with: when nonzero, project art is loaded and every image
+    /// made of this preview carries [`mark`]'s mark.
+    pub project_art_resources: usize,
 }
 /// For each cell-scene identity, where that cell falls in the World scene's
 /// draw order: the `(depth, painter order)` of the last World quad drawn

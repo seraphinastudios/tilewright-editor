@@ -25,6 +25,22 @@ Authored project content retains its individual license. Opening, previewing,
 editing, validating, or packaging it does not apply this repository's MIT
 license. Attribution and unknown licensing fields remain lossless data.
 
+Project art (editor#56, [ADR 0004](decisions/0004-project-art-in-the-preview.md)):
+a world's editor catalog of format `tilewright.editor-preview/2` may label
+resources `project`, art its project supplies under its own license, and the
+editor then draws it and marks every image it makes. Project art never enters
+this repository, its fixtures, goldens, docs, issues or release packages, and
+no screenshot or video showing it is published here; each project decides for
+its own channels. Tests use generated pixels, or the MIT neutral sample
+labelled `project` in a temporary copy of its catalog, never a committed one.
+`tools/check-prototype-assets.py` finds every committed `preview.jsonc`, in
+any directory (what Git tracks or would add; the whole tree outside a Git
+checkout), and refuses one that is not plain JSON, has a duplicate key or has
+a `license` member other than `MIT` at any depth. It also refuses any committed
+`.atx1` file that `provenance/assets.json` does not list.
+`tools/package-assets.py` refuses a packaged sample catalog that is not plain
+JSON with only `MIT` resources.
+
 Dependency notice text in `THIRD_PARTY_NOTICES.md` is retained verbatim from
 `libloading` 0.8.9 `LICENSE` (ISC; crates.io archive SHA-256
 `d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55`)

@@ -85,6 +85,20 @@ fn over_budget(codes: &[&'static str]) -> Finding {
     }
 }
 
+/// The finding for a catalog with `resources` project-art resources, if
+/// any. Its text is all this editor's: a count, never world text.
+fn project_art(resources: usize) -> Option<Finding> {
+    (resources > 0).then(|| Finding {
+        code: "catalog.project_art",
+        severity: Severity::Info,
+        location: Map::new().text("path", "preview.jsonc"),
+        message: format!(
+            "The editor catalog has {resources} resource(s) with the license project: the project's own art, under its own license. Every image the editor makes of this world (evidence frames, render files and MCP render images) carries a visible mark, and its record a project_art member; check the art's license before sharing them."
+        ),
+        detail: None,
+    })
+}
+
 /// Every finding about `observed`, in a fixed order: the catalog, the
 /// prepared view, portals in World order, then anchors and zones by plane
 /// and id.
@@ -113,6 +127,7 @@ pub fn findings(observed: &Observed) -> Vec<Finding> {
         }),
         Catalog::Loaded(loaded) => {
             let (catalog, resources) = &**loaded;
+            found.extend(project_art(catalog.project_art_resources()));
             let (plane, layer, _) = catalog.view();
             let view = || Map::new().text("plane", plane).with("layer", layer);
             // The view the desktop editor opens, prepared as it prepares it.

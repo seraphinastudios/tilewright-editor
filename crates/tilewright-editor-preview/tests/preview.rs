@@ -938,3 +938,221 @@ fn the_optional_portal_member_is_a_strict_flag_and_its_absence_changes_nothing()
         assert!(load(objects.clone()).is_err(), "{objects}");
     }
 }
+
+/// Loads `catalog` as the fixture's `preview.jsonc`: the loaded catalog, or
+/// the loader's message.
+fn load_catalog(
+    dir: &Path,
+    root: &SourceRoot,
+    world: &World,
+    catalog: &Value,
+) -> Result<
+    (
+        tilewright_editor_preview::PreviewCatalog,
+        tilewright_editor_preview::ReadyResources,
+    ),
+    String,
+> {
+    put(dir, "preview.jsonc", &catalog.to_string());
+    loader::load(root, world, PreviewLimits::default()).map_err(|error| error.0)
+}
+
+#[test]
+fn format_2_with_mit_resources_loads_and_draws_exactly_as_format_1() {
+    let (dir, root, world, original) = fixture(false, false);
+    let limits = PreviewLimits::default();
+    let (one, one_cache) = load_catalog(dir.path(), &root, &world, &original).unwrap();
+    let mut two = original.clone();
+    two["format"] = json!("tilewright.editor-preview/2");
+    let (two, two_cache) = load_catalog(dir.path(), &root, &world, &two).unwrap();
+    assert_eq!(one.format(), tilewright_editor_preview::FORMAT_1);
+    assert_eq!(two.format(), tilewright_editor_preview::FORMAT_2);
+    assert_eq!(
+        tilewright_editor_preview::FORMAT_1,
+        "tilewright.editor-preview/1"
+    );
+    assert_eq!(
+        tilewright_editor_preview::FORMAT_2,
+        "tilewright.editor-preview/2"
+    );
+    for catalog in [&one, &two] {
+        assert_eq!(catalog.project_art_resources(), 0);
+        assert!(!catalog.contains_project_art());
+    }
+    // The catalog text differs, so its revision does; nothing else does.
+    assert_ne!(one.revision(), two.revision());
+    let draw = |catalog: &tilewright_editor_preview::PreviewCatalog, cache| {
+        let view = catalog.default_view(&world, 128, 96, 3);
+        let prepared = prepare(&world, catalog, cache, &view, limits).unwrap();
+        assert_eq!(prepared.project_art_resources, 0);
+        (prepared.reference_frame().unwrap(), prepared.picks.clone())
+    };
+    assert_eq!(draw(&one, &one_cache), draw(&two, &two_cache));
+}
+
+#[test]
+fn format_2_counts_project_resources_in_mixed_catalogs() {
+    let (dir, root, world, original) = fixture(false, false);
+    let limits = PreviewLimits::default();
+    let mut catalog = original.clone();
+    catalog["format"] = json!("tilewright.editor-preview/2");
+    catalog["resources"][1]["license"] = json!("project");
+    let (mixed, cache) = load_catalog(dir.path(), &root, &world, &catalog).unwrap();
+    assert_eq!(mixed.project_art_resources(), 1);
+    assert!(mixed.contains_project_art());
+    let view = mixed.default_view(&world, 128, 96, 1);
+    let prepared = prepare(&world, &mixed, &cache, &view, limits).unwrap();
+    assert_eq!(prepared.project_art_resources, 1);
+    catalog["resources"][0]["license"] = json!("project");
+    let (all, _) = load_catalog(dir.path(), &root, &world, &catalog).unwrap();
+    assert_eq!(all.project_art_resources(), 2);
+    // A project resource that no prototype draws still counts: the flag is
+    // about what the catalog loads, not what a frame shows.
+    catalog["resources"][0]["license"] = json!("MIT");
+    let mut unused = catalog["resources"][1].clone();
+    unused["id"] = json!("spare");
+    unused["license"] = json!("project");
+    let bytes = atx(4, 4, [1, 2, 3, 255]);
+    fs::write(dir.path().join("preview-assets/spare.atx1"), &bytes).unwrap();
+    unused["path"] = json!("preview-assets/spare.atx1");
+    unused["sha256"] = json!(digest(&bytes));
+    unused["width"] = json!(4);
+    unused["height"] = json!(4);
+    catalog["resources"][1]["license"] = json!("MIT");
+    catalog["resources"].as_array_mut().unwrap().push(unused);
+    let (spare, cache) = load_catalog(dir.path(), &root, &world, &catalog).unwrap();
+    assert_eq!(spare.resource_count(), 3);
+    assert_eq!(spare.project_art_resources(), 1);
+    let prepared = prepare(&world, &spare, &cache, &view, limits).unwrap();
+    assert_eq!(prepared.project_art_resources, 1);
+}
+
+#[test]
+fn the_project_license_is_refused_in_format_1_and_every_other_value_in_both() {
+    let (dir, root, world, original) = fixture(false, false);
+    for (format, license, expected) in [
+        (
+            "tilewright.editor-preview/1",
+            json!("project"),
+            "resource license must be MIT",
+        ),
+        (
+            "tilewright.editor-preview/1",
+            json!("GPL-2.0"),
+            "resource license must be MIT",
+        ),
+        (
+            "tilewright.editor-preview/1",
+            json!("mit"),
+            "resource license must be MIT",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!("Project"),
+            "resource license must be MIT or project",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!("PROJECT"),
+            "resource license must be MIT or project",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!("project "),
+            "resource license must be MIT or project",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!("mit"),
+            "resource license must be MIT or project",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!("GPL-2.0"),
+            "resource license must be MIT or project",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!(""),
+            "resource license must be MIT or project",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!(true),
+            "resource license must be MIT or project",
+        ),
+        (
+            "tilewright.editor-preview/2",
+            json!(["project"]),
+            "resource license must be MIT or project",
+        ),
+    ] {
+        let mut catalog = original.clone();
+        catalog["format"] = json!(format);
+        catalog["resources"][1]["license"] = license.clone();
+        assert_eq!(
+            load_catalog(dir.path(), &root, &world, &catalog)
+                .err()
+                .as_deref(),
+            Some(expected),
+            "{format} {license}"
+        );
+    }
+    for format in [
+        "tilewright.editor-preview/3",
+        "tilewright.editor-preview/0",
+        "tilewright.editor-preview/2 ",
+        "tilewright.editor-preview",
+    ] {
+        let mut catalog = original.clone();
+        catalog["format"] = json!(format);
+        assert_eq!(
+            load_catalog(dir.path(), &root, &world, &catalog)
+                .err()
+                .as_deref(),
+            Some("unsupported preview format"),
+            "{format}"
+        );
+    }
+    // Format 2 changes nothing else: its keys are format 1's, still closed.
+    let mut catalog = original.clone();
+    catalog["format"] = json!("tilewright.editor-preview/2");
+    catalog["resources"][0]["license"] = json!("project");
+    catalog["resources"][0]["origin"] = json!("project");
+    assert!(load_catalog(dir.path(), &root, &world, &catalog).is_err());
+    let mut catalog = original;
+    catalog["format"] = json!("tilewright.editor-preview/2");
+    catalog["resources"][0]["license"] = json!("project");
+    catalog["resources"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("notice");
+    assert!(load_catalog(dir.path(), &root, &world, &catalog).is_err());
+}
+
+#[test]
+fn the_file_limit_counts_the_header_so_2048_by_2048_is_refused() {
+    // docs/OFFLINE-PROTOTYPE.md (Project art) states these numbers.
+    let (dir, root, world, original) = fixture(false, false);
+    let limit = PreviewLimits::default().maximum_resource_bytes;
+    assert_eq!(limit, 16 * 1024 * 1024);
+    assert_eq!((limit - 12) / 4, 4_194_301);
+    for (height, fits) in [(2047, true), (2048, false)] {
+        let bytes = atx(2048, height, [1, 2, 3, 255]);
+        assert_eq!(bytes.len() <= limit, fits);
+        fs::write(dir.path().join("preview-assets/grass.atx1"), &bytes).unwrap();
+        let mut catalog = original.clone();
+        catalog["resources"][0]["sha256"] = json!(digest(&bytes));
+        catalog["resources"][0]["width"] = json!(2048);
+        catalog["resources"][0]["height"] = json!(height);
+        assert_eq!(
+            load_catalog(dir.path(), &root, &world, &catalog).is_ok(),
+            fits,
+            "{height}"
+        );
+    }
+    // Width and height are at least 1.
+    let mut catalog = original;
+    catalog["resources"][0]["width"] = json!(0);
+    assert!(load_catalog(dir.path(), &root, &world, &catalog).is_err());
+}

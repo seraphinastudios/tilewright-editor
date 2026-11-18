@@ -6,6 +6,11 @@ MIT-compatible license and an exact record in [PROVENANCE.md](PROVENANCE.md);
 GPL/AGPL source must not be copied, adapted, or depended on, and observing
 another program's behavior does not authorize reusing its source.
 
+A project's own art never enters this repository, its fixtures, goldens, docs
+or issues. Do not attach evidence frames, `render` files or screenshots that
+carry the project-art mark or show a project's art; describe the problem, or
+reproduce it with the neutral sample ([Project art](docs/OFFLINE-PROTOTYPE.md#project-art)).
+
 Direct human-written code contributions are welcome. They follow the same
 provenance, maintainer review, tests, and repository validation as code
 developed through the project's primary agent-driven workflows; using an agent

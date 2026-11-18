@@ -69,11 +69,22 @@ pub(crate) struct ResourceSpec {
     pub digest: [u8; 32],
     pub width: u32,
     pub height: u32,
+    /// Whether the resource's `license` is `project` (catalog format 2
+    /// only): art the world's project supplies under its own license.
+    pub project: bool,
 }
+
+/// The first catalog format: every resource's `license` is `MIT`.
+pub const FORMAT_1: &str = "tilewright.editor-preview/1";
+/// The second catalog format: format 1 with one change, a resource's
+/// `license` may also be `project`. An editor that knows only format 1
+/// refuses it.
+pub const FORMAT_2: &str = "tilewright.editor-preview/2";
 
 #[derive(Clone, Debug)]
 pub struct PreviewCatalog {
     pub(crate) revision: [u8; 32],
+    pub(crate) format: &'static str,
     pub(crate) profile: (String, String),
     pub(crate) plane: String,
     pub(crate) layer: i32,
@@ -117,6 +128,22 @@ impl PreviewCatalog {
     /// How many resources the catalog declares.
     pub fn resource_count(&self) -> usize {
         self.resources.len()
+    }
+    /// The catalog's format: [`FORMAT_1`] or [`FORMAT_2`].
+    pub const fn format(&self) -> &'static str {
+        self.format
+    }
+    /// How many of the catalog's resources have the license `project`:
+    /// art the project supplies under its own license. Every resource
+    /// counts, drawn in the current view or not.
+    pub fn project_art_resources(&self) -> usize {
+        self.resources.values().filter(|spec| spec.project).count()
+    }
+    /// Whether project art is loaded: at least one resource has the
+    /// license `project`. Every image the editor makes of a world while
+    /// its catalog contains project art is marked (see [`crate::mark`]).
+    pub fn contains_project_art(&self) -> bool {
+        self.project_art_resources() > 0
     }
     /// Whether `uid` names a top-level object in this view's plane and
     /// spatial layer whose tile lies inside the view bounds. Per-prototype
@@ -376,9 +403,11 @@ pub(crate) fn decode(
             "editing",
         ],
     )?;
-    if member(root, "format")?.as_str() != Some("tilewright.editor-preview/1") {
-        return Err(failure("unsupported preview format"));
-    }
+    let format = match member(root, "format")?.as_str() {
+        Some(FORMAT_1) => FORMAT_1,
+        Some(FORMAT_2) => FORMAT_2,
+        _ => return Err(failure("unsupported preview format")),
+    };
     let p = member(root, "profile")?;
     closed(p, &["id", "version"])?;
     let profile = (
@@ -408,11 +437,12 @@ pub(crate) fn decode(
     if !["schematic", "authored"].contains(&presentation.as_str()) {
         return Err(failure("unknown presentation"));
     }
-    let resources = resource_specs(member(root, "resources")?, limits)?;
+    let resources = resource_specs(member(root, "resources")?, limits, format == FORMAT_2)?;
     let prototypes = prototype_specs(member(root, "prototypes")?, world, &resources)?;
     let editing = editing_specs(&document, member(root, "editing")?, world, &prototypes)?;
     Ok(PreviewCatalog {
         revision: crate::hash(document.source().as_bytes()),
+        format,
         profile,
         plane,
         layer,
@@ -424,9 +454,12 @@ pub(crate) fn decode(
     })
 }
 
+/// The resources. A `license` is `MIT`, or with `project_license` (format
+/// 2) also `project`; nothing else, in any case or spelling.
 fn resource_specs(
     value: &Value,
     limits: PreviewLimits,
+    project_license: bool,
 ) -> Result<BTreeMap<String, ResourceSpec>, PreviewError> {
     let mut resources = BTreeMap::new();
     let mut paths = BTreeSet::new();
@@ -442,9 +475,14 @@ fn resource_specs(
         if !portable_path(&path) || !paths.insert(path.to_ascii_lowercase()) {
             return Err(failure("unsafe or duplicate resource path"));
         }
-        if member(r, "license")?.as_str() != Some("MIT") {
-            return Err(failure("resource license must be MIT"));
-        }
+        let project = match member(r, "license")?.as_str() {
+            Some("MIT") => false,
+            Some("project") if project_license => true,
+            _ if project_license => {
+                return Err(failure("resource license must be MIT or project"));
+            }
+            _ => return Err(failure("resource license must be MIT")),
+        };
         string(member(r, "author")?)?;
         string(member(r, "notice")?)?;
         let spec = ResourceSpec {
@@ -452,6 +490,7 @@ fn resource_specs(
             digest: digest(member(r, "sha256")?)?,
             width: dimension(member(r, "width")?, limits)?,
             height: dimension(member(r, "height")?, limits)?,
+            project,
         };
         if resources.insert(id, spec).is_some() {
             return Err(failure("duplicate resource ID"));

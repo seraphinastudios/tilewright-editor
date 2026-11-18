@@ -114,7 +114,13 @@ it describes. Shapes are stable within a format version; a later version adds
 members or changes the tag.
 
 The `catalog` member reports the editor catalog: `status` is `absent` (no
-`preview.jsonc`), `invalid` (with the loader's `problem`) or `loaded`.
+`preview.jsonc`), `invalid` (with the loader's `problem`) or `loaded`. A
+loaded catalog that contains project art (catalog format 2 resources with
+the license `project`; see [Project art](OFFLINE-PROTOTYPE.md#project-art))
+also has `project_art`: `{"resources": N}`, the number of such resources,
+drawn in the view or not. The member is absent otherwise, so reports of
+other worlds are unchanged. Every report with a `catalog` member has it:
+`overview`, `tile`, `catalog`, `lint` and `render`.
 
 - `tilewright.editor-overview/1`: `profile` (id, version, projection, render
   and ground layers, terrain layer, terrains, layer height), `definitions`,
@@ -153,7 +159,10 @@ The `catalog` member reports the editor catalog: `status` is `absent` (no
   line, column, byte span, code and message), when the world does not load.
 - `tilewright.editor-render/1`: `catalog` (status, view, presentation),
   `image` (plane, layer, `region` `[x, y, width, height]`, `tiles`, `scale`,
-  `width` and `height` in pixels), `diagnostics` (the notes the preview adds
+  `width` and `height` in pixels of the image written, and `mark_rows` when
+  the image carries the project-art mark: its last `mark_rows` rows are the
+  mark, and `height` counts them; on an image widened for the mark also
+  `mark_columns`, its last columns, which `width` counts), `diagnostics` (the notes the preview adds
   when it prepares the region, each a `code` and a `message`) and `png`
   (`bytes`, and `sha256` of the file written). The report never names the
   output path.
@@ -195,6 +204,7 @@ wrong.
 | `catalog.absent` | error | The world has no `preview.jsonc`. The editing entry point cannot open it; `open ROOT` and these commands can. |
 | `catalog.invalid` | error | `preview.jsonc` is there but does not load. |
 | `preview.unprepared` | error | The catalog's view cannot be prepared for display, for example an object in it whose prototype the catalog cannot draw. |
+| `catalog.project_art` | info | The catalog contains project art: resources with the license `project`, under the project's own license. The message gives their number; every image the editor makes of the world is marked (see [render](#render)). |
 | `preview.*` (others) | info | A note the preview adds when it prepares the view, such as `preview.effects-neutral`. |
 | `portal.target_own_tile` | warning | A portal leads to the tile its object stands on. |
 | `portal.target_no_chunk` | warning | A location target is in a map chunk that does not exist. |
@@ -217,6 +227,25 @@ from, and writes it as an RGBA PNG.
   view's plane and layer, as the desktop editor draws them, on its dark clear
   colour. No cell overlay, zone tint, marker, selection or interface. The
   world's art is drawn as it is; the renderer draws no text.
+- **Project art.** When the catalog contains project art (catalog format 2
+  resources with the license `project`), the image carries the project-art
+  mark: rows added below the drawn view, never drawn over it, a dark
+  separator and an amber band reading `PROJECT ART: CHECK ITS LICENSE
+  BEFORE SHARING` (`PROJECT ART` on an image narrower than 276 pixels), in
+  a fixed bitmap font scaled with the image width (12, 24, 36 or 48 rows).
+  A narrow render, such as one tile, is narrower than the 72 pixels
+  `PROJECT ART` needs: the marked image is then widened to 72 pixels with
+  band-coloured columns right of the drawn view, its full height, so the
+  text is always whole. The drawn view's pixels and coordinates are those of
+  the unmarked image, at the top left. The report's `catalog.project_art`
+  gives the number of project resources; `image.width` and `image.height`
+  are the marked image's, and `image.mark_rows` and `image.mark_columns`
+  (only when columns were added) name the mark's rows and columns.
+  The marked image must keep within the bounds below. The mark depends on
+  the catalog, not on what the region draws: a region with no project art
+  in it is marked too. The art is under the project's own license; checking
+  it before sharing the file is the user's responsibility (this is not
+  legal advice).
 - **Which region.** The catalog's whole view by default, or `--region X Y W
   H`, a tile rectangle (`W` and `H` at least 1) that must lie inside the view
   bounds (`target.unknown` otherwise). A region of more than 4,096 tiles is
@@ -242,8 +271,8 @@ from, and writes it as an RGBA PNG.
   tested). Art of a tile outside the region (a tall object, raised ground,
   an isometric neighbour) is never drawn into it.
 - **Bounds.** The image is at most 8,192 pixels a side and 16,777,216 pixels
-  in all, the reference renderer's own target limits; past them `render` is
-  refused (`output.budget`). The region is first compiled in an 8,194 ×
+  in all, the reference renderer's own target limits, the project-art
+  mark's rows and columns included; past them `render` is refused (`output.budget`). The region is first compiled in an 8,194 ×
   8,194 viewport, the largest image and a pixel more on every side, to find
   what it draws; if any object or tile of the region has no art in that
   viewport, it is refused the same way. A region the desktop's default view
