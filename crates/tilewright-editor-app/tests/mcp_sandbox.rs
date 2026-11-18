@@ -199,6 +199,8 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         serde_json::from_slice(&std::fs::read(&catalog_path).unwrap()).unwrap();
     catalog["editing"]["palettes"] = json!([{"name": "speckle", "grid": "floor",
         "entries": [{"value": "grass", "weight": 3}, {"value": "sand", "weight": 1}]}]);
+    // And a height range, so a height step can be recorded and replayed.
+    catalog["editing"]["heights"] = json!({"min": -16, "max": 16});
     std::fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
     let original = tree(&source);
     let parent = root.join("sandboxes");
@@ -269,11 +271,18 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         json!({"kind": "scatter_terrain", "plane": "main", "layer": 0, "grid": "floor",
         "cells": [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]], "palette": "speckle", "seed": 1234}),
     );
+    // Raise two cells, then `tile` reports the new height.
+    assert_eq!(client.ok("catalog", json!({}))["heights"]["max"], 16);
+    client.step(
+        json!({"kind": "adjust_heights", "plane": "main", "layer": 0,
+        "cells": [[2, 2], [3, 2]], "amount": 8}),
+    );
     // The observe tools see the sandbox at its revision, and render
     // returns the real encoder's PNG.
     let now = client.revision();
     let tile = client.ok("tile", json!({"plane": "main", "layer": 0, "x": 2, "y": 2}));
     assert_eq!(tile["revision"], now.as_str());
+    assert_eq!(tile["height"], 8);
     let reply = client.send(
         "tools/call",
         json!({"name": "render", "arguments": {"revision": now}}),
@@ -283,7 +292,7 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     assert!(image["data"].as_str().unwrap().starts_with("iVBORw0KGgo"));
     let submitted = client.ok("submit", json!({}));
     let proposal = &submitted["proposal"];
-    assert_eq!(proposal["steps"], 6);
+    assert_eq!(proposal["steps"], 7);
     assert_eq!(proposal["base"], base.as_str());
     let name = proposal["file"].as_str().unwrap().to_owned();
     // The client ends the session by closing the server's input.
