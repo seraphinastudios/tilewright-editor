@@ -11,7 +11,9 @@ capabilities and the default `main` plane, spatial layer 0, bounds `[0,0,8,6]`.
 The marker `marker_1` starts at `(3,2)` on render layer `item`; its typed `label`
 is `Trail marker`, and its nested typed `settings` holds `active` and `visits`.
 Move it to `(4,2)`, change its label, or paint `floor` at the empty cell `(6,4)`
-with `grass` or `sand`. A second marker, `marker_2` at `(1,4)` labelled
+with `grass` or `sand`. The catalog's one scatter palette, `speckle` on
+`floor`, weighs `grass` 3 and `sand` 1; the scripted demonstration ends by
+scattering it over the grass columns with a seeded stroke. A second marker, `marker_2` at `(1,4)` labelled
 `Spare marker`, is the one the scripted demonstration deletes. The floor's grass/sand seam derives directional edge
 prototypes through the released World's transition resolver.
 

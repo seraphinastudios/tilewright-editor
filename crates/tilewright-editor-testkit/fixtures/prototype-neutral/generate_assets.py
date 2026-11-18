@@ -124,6 +124,10 @@ def outputs():
                    resources=resources,
                    prototypes=[dict(proto=n, resource=n, anchor='standing' if n in standing else 'ground') for n in names],
                    editing=dict(movable_uids=['marker_1'], terrain=[dict(grid='floor', values=['grass', 'sand'])],
+                                # One scatter palette of the granted floor values, mostly
+                                # grass; the scripted demonstration scatters it.
+                                palettes=[dict(name='speckle', grid='floor',
+                                               entries=[dict(value='grass', weight=3), dict(value='sand', weight=1)])],
                                 fields=[dict(uid='marker_1', field='label')],
                                 objects=[dict(proto='marker', layer='item', fields=['label']),
                                          dict(proto='stone', layer='item', fields=['label'],

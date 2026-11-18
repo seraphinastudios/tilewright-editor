@@ -277,3 +277,13 @@ zone_palette:
   - id: path
     name: Stone path
 zone_palette_more: 0
+palettes:
+  - name: speckle
+    grid: floor
+    entries:
+      - value: grass
+        weight: 3
+      - value: sand
+        weight: 1
+    entries_more: 0
+palettes_more: 0

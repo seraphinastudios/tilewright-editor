@@ -861,6 +861,11 @@ fn a_grant_the_persons_catalog_lacks_is_refused_with_the_engines_code() {
         |root| {
             edit_json(root, "preview.jsonc", |catalog| {
                 catalog["editing"]["terrain"][0]["values"] = json!(["grass"]);
+                // The sample's palette scatters sand too, so it goes with the grant.
+                catalog["editing"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("palettes");
             });
         },
         None,
@@ -2512,6 +2517,11 @@ fn oracle_variant(variant: u64) -> Twin {
             |root| {
                 edit_json(root, "preview.jsonc", |catalog| {
                     catalog["editing"]["terrain"][0]["values"] = json!(["grass"]);
+                    // The sample's palette scatters sand too, so it goes with the grant.
+                    catalog["editing"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("palettes");
                 });
             },
             None,

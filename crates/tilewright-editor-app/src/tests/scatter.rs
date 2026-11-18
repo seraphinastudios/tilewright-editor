@@ -29,6 +29,15 @@ fn with_speckle(root: &Path) {
         catalog["editing"]["palettes"] = speckle();
     });
 }
+/// Remove the neutral sample's own `editing.palettes`.
+fn without_palettes(root: &Path) {
+    edit_json(root, "preview.jsonc", |catalog| {
+        catalog["editing"]
+            .as_object_mut()
+            .unwrap()
+            .remove("palettes");
+    });
+}
 /// The 1280x800 brush application on a catalog with `speckle`, in Terrain
 /// mode, its session's random source seeded with `seed`.
 fn scatter_application(seed: u64) -> (tempfile::TempDir, Application) {
@@ -74,7 +83,7 @@ fn marked(app: &mut Application) -> Vec<[i64; 2]> {
 
 #[test]
 fn the_palette_rows_appear_only_with_editing_palettes() {
-    let (_plain, mut plain) = terrain_application(1, |_| {});
+    let (_plain, mut plain) = terrain_application(1, without_palettes);
     let texts = sidebar_texts(&mut plain);
     // The rules are laid out, so palette rows would be too.
     assert!(
@@ -300,4 +309,106 @@ fn choosing_a_palette_of_another_grid_samples_that_grid() {
     app.control(Control::ScatterPalette("speckle".into()))
         .unwrap();
     assert_eq!(app.view.grid.as_deref(), Some("floor"));
+}
+
+#[test]
+fn the_samples_own_palette_loads_and_its_scripted_scatter_is_fixed() {
+    let (temporary, mut app) = terrain_application(crate::prototype::DEMO_UID_SEED, |_| {});
+    // The neutral sample names one palette, so a scatter needs no catalog
+    // editing.
+    let palettes = &app.session.catalog().editing().palettes;
+    assert_eq!(palettes.len(), 1);
+    assert_eq!(palettes["speckle"].grid, "floor");
+    assert_eq!(
+        palettes["speckle"].entries,
+        [("grass".to_owned(), 3), ("sand".to_owned(), 1)].into()
+    );
+    let texts = sidebar_texts(&mut app);
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "floor / speckle: grass 3, sand 1"),
+        "{texts:?}"
+    );
+    app.control(Control::Palette {
+        grid: "floor".into(),
+        prototype: "sand".into(),
+    })
+    .unwrap();
+    let (choice, brush) = (app.tools.terrain_choice().cloned(), app.tools.brush());
+    let cells: Vec<(i64, i64)> = (0..6).flat_map(|y| (0..8).map(move |x| (x, y))).collect();
+    let before: Vec<Option<String>> = cells
+        .iter()
+        .map(|&(x, y)| terrain_value(&app, x, y))
+        .collect();
+    app.scatter_demo().unwrap();
+    // One reviewed change, accepted; the brush and terrain choice are back.
+    assert_eq!(app.session.history().depths(), (1, 0));
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.tools.terrain_choice().cloned(), choice);
+    assert_eq!(app.tools.brush(), brush);
+    assert_eq!(app.tools.scatter_choice(), None);
+    // The stroke drew the seeded source's first seed, and every cell it
+    // changed holds the value the frozen draw gives it for that seed.
+    let seed = first_seed(crate::prototype::DEMO_UID_SEED);
+    assert_eq!(seed, 2_457_608_480);
+    let palette = &app.session.catalog().editing().palettes["speckle"];
+    let mut changed = 0;
+    for (&(x, y), was) in cells.iter().zip(&before) {
+        let now = terrain_value(&app, x, y);
+        if now != *was {
+            changed += 1;
+            let drawn = tilewright_editor_ui::scatter::value(palette, seed, 0, [x, y]).unwrap();
+            assert_eq!(now.as_deref(), Some(drawn), "({x}, {y})");
+        }
+    }
+    assert!(changed > 0);
+    let rows: Vec<String> = (0..6)
+        .map(|y| {
+            (0..8)
+                .map(|x| match terrain_value(&app, x, y).as_deref() {
+                    Some("grass") => 'g',
+                    Some("sand") => 's',
+                    _ => '.',
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            "gssgssss", "ssggssss", "ssgsssss", "ggsgssss", "gsggss.s", "gssgssss"
+        ]
+    );
+    for (phase, pending) in [
+        ("scatter-preview", false),
+        ("scatter", true),
+        ("scattered", false),
+    ] {
+        let record: Value = serde_json::from_slice(
+            &fs::read(temporary.path().join(format!("evidence/{phase}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["pending"], pending, "{phase}");
+    }
+}
+
+#[test]
+fn without_palettes_the_scripted_scatter_step_is_skipped() {
+    let (temporary, mut app) =
+        terrain_application(crate::prototype::DEMO_UID_SEED, without_palettes);
+    assert!(app.session.catalog().editing().palettes.is_empty());
+    let world = app.session.world().source_digest();
+    // Step 15 is skipped, not an error, and the script goes on to its end.
+    assert!(!app.demo_step(15).unwrap());
+    assert_eq!(app.session.history().depths(), (0, 0));
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.session.world().source_digest(), world);
+    let evidence: Vec<String> = fs::read_dir(temporary.path().join("evidence"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("scatter"))
+        .collect();
+    assert!(evidence.is_empty(), "{evidence:?}");
+    assert!(app.demo_step(16).unwrap());
 }

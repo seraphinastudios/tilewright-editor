@@ -103,6 +103,9 @@ const DEMO_STROKE: [[i64; 2]; 2] = [[1, 2], [5, 2]];
 /// The cells the scripted fill and replace previews hover: grass, filled
 /// with sand, then sand, replaced with grass.
 const DEMO_FILL: [[i64; 2]; 2] = [[1, 1], [5, 1]];
+/// Press and drag cells of the scripted scatter stroke: with a 3x3 brush it
+/// covers most of the neutral sample's grass columns, `x` 0 to 3.
+const DEMO_SCATTER: [[i64; 2]; 2] = [[1, 1], [2, 4]];
 
 /// Press and drag cells of the scripted zone stroke: down open meadow onto
 /// the neutral sample's path row.
@@ -3964,6 +3967,61 @@ impl Application {
         result
     }
 
+    /// Terrain mode's scatter palettes: choose the catalog's first palette
+    /// and drag a 3x3 brush over the grass columns through the ordinary
+    /// press, drag and release. The seed comes from the session's random
+    /// source, which the demonstration seeds, so the drawn values are the
+    /// same on every run. Capture the live preview mid-gesture, the pending
+    /// review, accept it and capture the result; the brush and the terrain
+    /// choice are restored.
+    fn scatter_demo(&mut self) -> Result<()> {
+        self.control(Control::Terrain)?;
+        let chosen = self.tools.terrain_choice().cloned();
+        let palette = self
+            .session
+            .catalog()
+            .editing()
+            .palettes
+            .keys()
+            .next()
+            .cloned()
+            .ok_or("the catalog names no scatter palette")?;
+        self.control(Control::ScatterPalette(palette))?;
+        let frame = self.frame(true)?;
+        let pixel = |cell: [i64; 2]| {
+            self.prepared
+                .cell_picks
+                .iter()
+                .find_map(|(id, key)| match key {
+                    SelectionKey::Cell { x, y, .. } if [*x, *y] == cell => pixel_for(&frame, *id),
+                    _ => None,
+                })
+                .ok_or("demonstration scatter cell is not in the cell mask")
+        };
+        let (start, end) = (pixel(DEMO_SCATTER[0])?, pixel(DEMO_SCATTER[1])?);
+        let brush = self.tools.brush();
+        self.tools.set_brush(tilewright_editor_ui::brush::Brush {
+            shape: tilewright_editor_ui::brush::BrushShape::Square,
+            radius: 1,
+        });
+        let result = self
+            .begin_stroke(start.0, start.1)
+            .and_then(|()| self.stroke_sample(end.0, end.1))
+            .and_then(|()| self.capture("scatter-preview"))
+            .and_then(|()| self.finish_stroke());
+        self.tools.set_brush(brush);
+        result?;
+        self.capture("scatter")?;
+        self.action(Action::Accept)?;
+        self.capture("scattered")?;
+        if let Some(choice) = chosen {
+            self.tools
+                .choose_terrain(self.session.catalog(), &choice.grid, &choice.prototype)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Zone mode: capture the overlay and legend, then paint the last zone
     /// of the palette down a column with a one-cell brush through the
     /// ordinary press, drag and release, capturing the live preview
@@ -4290,14 +4348,15 @@ impl Application {
             12 if self.session.catalog().editing().anchors.edit => self.anchor_demo()?,
             13 if grants_portals(self.session.catalog().editing()) => self.portal_demo()?,
             14 if !self.session.catalog().editing().terrain.is_empty() => self.fill_demo()?,
-            15 => return Ok(true),
+            15 if !self.session.catalog().editing().palettes.is_empty() => self.scatter_demo()?,
+            16 => return Ok(true),
             _ => {}
         }
         Ok(false)
     }
 
     fn demo_all(&mut self) -> Result<()> {
-        for step in 0..16 {
+        for step in 0..17 {
             if self.demo_step(step)? {
                 break;
             }
@@ -4628,6 +4687,7 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
         || (step == 12 && !editing.anchors.edit)
         || (step == 13 && !grants_portals(editing))
         || (step == 14 && editing.terrain.is_empty())
+        || (step == 15 && editing.palettes.is_empty())
     {
         None
     } else {
@@ -4647,6 +4707,7 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
             "anchors",
             "portals",
             "fill",
+            "scatter",
         ]
         .get(step)
         .copied()
