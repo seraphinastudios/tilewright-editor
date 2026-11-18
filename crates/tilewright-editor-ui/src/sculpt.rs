@@ -33,8 +33,8 @@ pub type HeightChange = ([i64; 2], i32, i32);
 pub enum Adjusted {
     /// The cell is at or beyond the end the amount moves toward: left out.
     AtEnd,
-    /// The cell's new height, `clamp(height + amount, min, max)`; it may
-    /// equal `height` only when the range is a single value.
+    /// The cell's new height, `clamp(height + amount, min, max)`: another
+    /// height than before, since the range holds more than one value.
     To(i32),
     /// The cell is beyond the other end, and moving it by the amount does
     /// not bring it into the range: it needs an amount of at least this
@@ -166,7 +166,6 @@ pub fn plan(
                     ),
                 ));
             }
-            Adjusted::To(after) if after == before => at_end += 1,
             Adjusted::To(after) => {
                 if i32::try_from(base + i64::from(after)).is_err() {
                     return Err(refuse(

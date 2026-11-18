@@ -445,14 +445,18 @@ fn nothing_to_change_says_why() {
     let mut records = Records::default();
     let error = session
         .dispatch(
-            adjust(&session, vec![[0, 30], [0, 32], [0, 33], [1, 30]], 1),
+            adjust(
+                &session,
+                vec![[0, 30], [0, 32], [0, 33], [1, 30], [2, 30]],
+                1,
+            ),
             &mut records,
         )
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::ChangeNone);
     assert_eq!(
         error.message(),
-        "height adjustment changes no cell: 2 covered cells already at the top of the range, 2 in map chunks that do not exist (painting terrain there creates them)"
+        "height adjustment changes no cell: 3 covered cells already at the top of the range, 2 in map chunks that do not exist (painting terrain there creates them)"
     );
 }
 
