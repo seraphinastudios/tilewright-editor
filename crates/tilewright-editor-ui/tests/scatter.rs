@@ -180,6 +180,20 @@ fn a_scatter_writes_the_golden_draw_and_leaves_out_cells_that_hold_it() {
     }
     // 48 cells; the draw and the committed world agree on 26 of them.
     assert_eq!(cells.len(), 22);
+}
+
+// Publication is checked, which only Linux provides (see `session.rs`).
+#[cfg(target_os = "linux")]
+#[test]
+fn an_accepted_scatter_holds_the_golden_draw_and_undoes_in_one_step() {
+    let (_dir, mut session) = fixture_with(|_| {});
+    let mut records = Records::default();
+    session
+        .dispatch(
+            scatter_action(&session, view_cells(), "speckle", 1234),
+            &mut records,
+        )
+        .unwrap();
     // Accept, then undo and redo, each in one step.
     session.dispatch(Action::Accept, &mut records).unwrap();
     for (y, golden) in GOLDEN_1234.iter().enumerate() {
