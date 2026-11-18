@@ -1362,14 +1362,14 @@ fn an_optional_height_range_parses_strictly_in_both_formats_within_the_hard_boun
     let (dir, root, world, original) = fixture(false, false);
     let (absent, _) = load_catalog(dir.path(), &root, &world, &original).unwrap();
     assert_eq!(absent.editing().heights, None);
-    assert_eq!(MAXIMUM_HEIGHT, 512);
+    assert_eq!(MAXIMUM_HEIGHT, 1024);
     for format in ["tilewright.editor-preview/1", "tilewright.editor-preview/2"] {
         for (min, max) in [
             (-64, 64),
-            (-512, 512),
-            (0, 0),
-            (-512, -512),
-            (512, 512),
+            (-1024, 1024),
+            (0, 1),
+            (-1024, -1023),
+            (1023, 1024),
             (3, 9),
         ] {
             let mut granted = original.clone();
@@ -1392,33 +1392,31 @@ fn an_optional_height_range_parses_strictly_in_both_formats_within_the_hard_boun
         (json!({"min": 0}), "unknown or missing"),
         (json!({"min": 0, "max": 1, "step": 1}), "unknown or missing"),
         (
-            json!({"min": -513, "max": 0}),
-            "heights min must be an integer from -512 to 512",
+            json!({"min": -1025, "max": 0}),
+            "heights min must be an integer from -1024 to 1024",
         ),
         (
-            json!({"min": 0, "max": 513}),
-            "heights max must be an integer from -512 to 512",
+            json!({"min": 0, "max": 1025}),
+            "heights max must be an integer from -1024 to 1024",
         ),
         (
             json!({"min": 0, "max": i64::from(i32::MAX) + 1}),
-            "heights max must be an integer from -512 to 512",
+            "heights max must be an integer from -1024 to 1024",
         ),
         (
             json!({"min": 0.0, "max": 1}),
-            "heights min must be an integer from -512 to 512",
+            "heights min must be an integer from -1024 to 1024",
         ),
         (
             json!({"min": 0, "max": 1.5}),
-            "heights max must be an integer from -512 to 512",
+            "heights max must be an integer from -1024 to 1024",
         ),
         (
             json!({"min": "0", "max": 1}),
-            "heights min must be an integer from -512 to 512",
+            "heights min must be an integer from -1024 to 1024",
         ),
-        (
-            json!({"min": 2, "max": 1}),
-            "heights min must not be greater than max",
-        ),
+        (json!({"min": 2, "max": 1}), "heights min must be below max"),
+        (json!({"min": 0, "max": 0}), "heights min must be below max"),
     ]
     .into_iter()
     .enumerate()

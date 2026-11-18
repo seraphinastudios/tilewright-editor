@@ -300,45 +300,116 @@ fn cells_of_chunks_that_do_not_exist_are_left_out_and_never_created() {
 }
 
 #[test]
-fn a_covered_cell_outside_the_range_refuses_the_whole_adjustment() {
+fn cells_outside_the_range_are_left_out_moved_in_by_the_amount_or_refused() {
+    // Range -6 to 6; (2, 2) far above it, (3, 3) far below, (4, 4) just
+    // above, (5, 5) just below.
+    let outside = |at: [i64; 2]| match at {
+        [2, 2] => 100,
+        [3, 3] => -100,
+        [4, 4] => 8,
+        [5, 5] => -9,
+        _ => generated(at),
+    };
+    let (_dir, mut session) = fixture_with(|root| set_heights(root, outside));
+    let mut records = Records::default();
+    let mut prepared = |cells: Vec<[i64; 2]>, amount: i32| {
+        let result = session.dispatch(adjust(&session, cells, amount), &mut records);
+        let found = result.map(|()| pending_cells(&session));
+        if session.history().pending().is_some() {
+            session.dispatch(Action::Cancel, &mut records).unwrap();
+        }
+        found
+    };
+    // At or beyond the end the amount moves toward: left out, like a cell
+    // at that end.
+    let raised = prepared(vec![[0, 1], [2, 2], [4, 4]], 1).unwrap();
+    assert_eq!(raised.keys().collect::<Vec<_>>(), [&[0, 1]]);
+    let lowered = prepared(vec![[0, 1], [3, 3], [5, 5]], -1).unwrap();
+    assert_eq!(lowered.keys().collect::<Vec<_>>(), [&[0, 1]]);
+    // Beyond the other end: moved by the amount, then kept in the range,
+    // never further than the amount.
+    assert_eq!(prepared(vec![[4, 4]], -2).unwrap()[&[4, 4]], (6, 8));
+    assert_eq!(prepared(vec![[4, 4]], -9).unwrap()[&[4, 4]], (-1, 8));
+    assert_eq!(prepared(vec![[4, 4]], -1024).unwrap()[&[4, 4]], (-6, 8));
+    assert_eq!(prepared(vec![[5, 5]], 3).unwrap()[&[5, 5]], (-6, -9));
+    assert_eq!(prepared(vec![[5, 5]], 1024).unwrap()[&[5, 5]], (6, -9));
+    assert_eq!(prepared(vec![[2, 2]], -100).unwrap()[&[2, 2]], (0, 100));
+    // Still outside after moving by the amount: the whole action is
+    // refused, naming the cell, its height and the amount it needs.
+    for (cells, amount, message) in [
+        (
+            vec![[0, 1], [4, 4]],
+            -1,
+            "cell (4, 4) has height 8, above the granted range -6 to 6: lowering it into the range needs an amount of at least 2",
+        ),
+        (
+            vec![[2, 2]],
+            -93,
+            "cell (2, 2) has height 100, above the granted range -6 to 6: lowering it into the range needs an amount of at least 94",
+        ),
+        (
+            vec![[3, 3], [5, 5]],
+            2,
+            "cell (3, 3) has height -100, below the granted range -6 to 6: raising it into the range needs an amount of at least 94",
+        ),
+        (
+            vec![[5, 5]],
+            2,
+            "cell (5, 5) has height -9, below the granted range -6 to 6: raising it into the range needs an amount of at least 3",
+        ),
+    ] {
+        let error = prepared(cells.clone(), amount).unwrap_err();
+        assert_eq!(error.code(), RefusalCode::TargetUnsupported, "{cells:?}");
+        assert_eq!(error.message(), message);
+    }
+    // The words' count is the plan's.
+    let plan = sculpt::plan(
+        session.history().document().world(),
+        session.catalog(),
+        "main",
+        0,
+        &[[0, 1], [2, 2], [4, 4], [5, 5]],
+        3,
+    )
+    .unwrap();
+    assert_eq!(plan, [([0, 1], -3, 0), ([5, 5], -9, -6)]);
+}
+
+#[test]
+fn cells_far_outside_the_range_at_the_integer_extremes() {
     let (_dir, mut session) = fixture_with(|root| {
         set_heights(root, |at| match at {
-            [2, 2] => 100,
-            [3, 3] => -100,
-            _ => generated(at),
+            [0, 0] => i32::MAX,
+            [1, 0] => i32::MIN,
+            _ => 0,
         });
     });
     let mut records = Records::default();
-    for (cells, amount) in [
-        (vec![[0, 0], [2, 2]], -1),
-        (vec![[0, 0], [2, 2]], 1),
-        (vec![[3, 3]], 1),
-        (vec![[3, 3], [4, 4]], -1),
-    ] {
-        let error = session
-            .dispatch(adjust(&session, cells.clone(), amount), &mut records)
-            .unwrap_err();
-        assert_eq!(error.code(), RefusalCode::TargetUnsupported, "{cells:?}");
-        assert!(
-            error
-                .message()
-                .contains("outside the granted range -6 to 6")
-        );
-        assert!(session.history().pending().is_none());
-    }
-    // A stroke that leaves those cells out is prepared.
+    // Left out: beyond the end each amount moves toward.
     session
-        .dispatch(adjust(&session, vec![[0, 0], [2, 3]], 1), &mut records)
+        .dispatch(adjust(&session, vec![[0, 0], [0, 1]], 1024), &mut records)
         .unwrap();
+    assert_eq!(pending_cells(&session), BTreeMap::from([([0, 1], (6, 0))]));
+    session.dispatch(Action::Cancel, &mut records).unwrap();
+    // Too far to bring in: refused, with the exact amount needed.
+    let error = session
+        .dispatch(adjust(&session, vec![[1, 0]], 1024), &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::TargetUnsupported);
+    assert!(error.message().ends_with("at least 2147483642"), "{error}");
+    let error = session
+        .dispatch(adjust(&session, vec![[0, 0]], -1024), &mut records)
+        .unwrap_err();
+    assert!(error.message().ends_with("at least 2147483641"), "{error}");
 }
 
 #[test]
 fn the_hard_bound_ends_and_the_largest_amounts() {
     let (_dir, mut session) = fixture_with(|root| {
-        grant(root, &json!({"min": -512, "max": 512}));
+        grant(root, &json!({"min": -1024, "max": 1024}));
         set_heights(root, |at| match at {
-            [0, 0] => 512,
-            [1, 0] => -512,
+            [0, 0] => 1024,
+            [1, 0] => -1024,
             _ => 0,
         });
     });
@@ -349,7 +420,7 @@ fn the_hard_bound_ends_and_the_largest_amounts() {
         .unwrap();
     assert_eq!(
         pending_cells(&session),
-        BTreeMap::from([([1, 0], (512, -512)), ([2, 0], (512, 0))])
+        BTreeMap::from([([1, 0], (0, -1024)), ([2, 0], (1024, 0))])
     );
     session.dispatch(Action::Cancel, &mut records).unwrap();
     session
@@ -357,8 +428,84 @@ fn the_hard_bound_ends_and_the_largest_amounts() {
         .unwrap();
     assert_eq!(
         pending_cells(&session),
-        BTreeMap::from([([0, 0], (-512, 512)), ([2, 0], (-512, 0))])
+        BTreeMap::from([([0, 0], (0, 1024)), ([2, 0], (-1024, 0))])
     );
+}
+
+#[test]
+fn nothing_to_change_says_why() {
+    // A view over chunk 0_0 (heights at the top in row y = 30) and chunk
+    // 0_1, which does not exist.
+    let (_dir, mut session) = fixture_with(|root| {
+        set_heights(root, |at| if at[1] == 30 { MAX } else { 0 });
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["view"]["bounds"] = json!([0, 28, 8, 6]);
+        });
+    });
+    let mut records = Records::default();
+    let error = session
+        .dispatch(
+            adjust(&session, vec![[0, 30], [0, 32], [0, 33], [1, 30]], 1),
+            &mut records,
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ChangeNone);
+    assert_eq!(
+        error.message(),
+        "height adjustment changes no cell: 2 covered cells already at the top of the range, 2 in map chunks that do not exist (painting terrain there creates them)"
+    );
+}
+
+#[test]
+fn a_height_that_would_stack_past_32_bits_on_a_far_layer_is_refused() {
+    // layer_height 3 on layer 715,827,882: base 2,147,483,646, so height 1
+    // stacks to i32::MAX and height 2 past it.
+    const FAR: i32 = 715_827_882;
+    let (dir, mut session) = fixture_with(|root| {
+        edit_json(root, "profile/profile.jsonc", |profile| {
+            profile["layer_height"] = json!(3);
+        });
+        let far = root.join(format!("planes/main/layers/{FAR}"));
+        fs::create_dir_all(&far).unwrap();
+        let mut chunk: Value =
+            serde_json::from_slice(&fs::read(root.join(CHUNK)).unwrap()).unwrap();
+        chunk["layer"] = json!(FAR);
+        chunk["objects"] = json!([]);
+        chunk["terrain"]["height"] = json!({"fill": 0});
+        fs::write(
+            far.join("0_0.jsonc"),
+            serde_json::to_vec_pretty(&chunk).unwrap(),
+        )
+        .unwrap();
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["view"]["layer"] = json!(FAR);
+        });
+    });
+    let mut records = Records::default();
+    let expected = revision(&session);
+    let far = |cells: Vec<[i64; 2]>, amount: i32| Action::AdjustHeights {
+        plane: "main".into(),
+        layer: FAR,
+        cells,
+        amount,
+        expected,
+    };
+    session
+        .dispatch(far(vec![[0, 0]], 1), &mut records)
+        .unwrap();
+    session.dispatch(Action::Cancel, &mut records).unwrap();
+    let error = session
+        .dispatch(far(vec![[0, 0]], 2), &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::TargetUnsupported);
+    assert_eq!(
+        error.message(),
+        format!(
+            "cell (0, 0): height 2 on layer {FAR} would stack past the 32-bit range the preview draws"
+        )
+    );
+    assert!(session.history().pending().is_none());
+    drop(dir);
 }
 
 #[test]

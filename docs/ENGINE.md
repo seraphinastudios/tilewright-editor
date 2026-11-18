@@ -219,14 +219,24 @@ prepared, the engine (`tilewright_editor_ui::sculpt`), in this order:
    (scope.outside_view);
 3. leaves out cells of chunks that do not exist: a height is the ground's,
    and writing one there would create a chunk that holds only heights;
-4. refuses the whole action with target.unsupported when a covered cell's
-   height is already outside the range, naming the cell: moving it into
-   the range could jump it any distance, and leaving it out would make a
-   lower that does not lower;
-5. gives every other cell `clamp(height + amount, min, max)`, computed in
-   64-bit integers, so no stored height or amount can overflow, and leaves
-   out the cells this does not change (those already at the end the amount
-   moves toward). If none is left the action is refused with change.none.
+4. for each other cell of height `h` (in 64-bit integers, so no stored
+   height or amount can overflow):
+   - at or beyond the end the amount moves toward (`h >= max` for a
+     raise, `h <= min` for a lower): left out, like a cell exactly at that
+     end;
+   - beyond the other end, and still outside the range after moving by the
+     amount (`h + amount < min` for a raise, `> max` for a lower): the whole
+     action is refused with target.unsupported, and the message names the
+     cell, its height and the amount it needs;
+   - otherwise: `clamp(h + amount, min, max)`. A cell beyond the other end
+     thus moves into the range by at most the amount, never further and
+     never away from it;
+5. refuses with target.unsupported a new height that would stack past 32
+   bits on its layer (`layer × layer_height + height`, as the preview draws
+   it); only a very far layer can reach this;
+6. refuses with change.none when no cell is left, and the message counts
+   the covered cells at the end of the range and those in chunks that do
+   not exist (painting terrain creates them).
 
 The result is one `terrain.set` on the `height` grid in which each cell
 expects its committed height (0 in a chunk without a height grid, which

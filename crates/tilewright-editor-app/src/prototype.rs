@@ -459,6 +459,10 @@ fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(format!("/proc/self/fd/{value}")))
 }
 
+/// Why an edit was refused when the World it prepared cannot be drawn at
+/// the current view. The change is cancelled; nothing is pending.
+pub(crate) const UNDRAWABLE_CHANGE: &str = "Refused: this change cannot be drawn at the current view, so it was cancelled. Heights too steep for this ground art at this zoom cause this: zoom out, or raise or lower by less.";
+
 impl Application {
     fn rebuild(&mut self) -> Result<()> {
         let result = self.rebuild_inner();
@@ -544,7 +548,8 @@ impl Application {
         dispatch: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
         let records = self.recovery.records().len();
-        let result = dispatch(self);
+        let was_pending = self.session.history().pending().is_some();
+        let mut result = dispatch(self);
         if let Some(error) = self.recovery.last_error() {
             self.session.set_recovery_descriptor(error.to_string());
         } else if let Some(record) = self.recovery.records().last() {
@@ -556,7 +561,30 @@ impl Application {
         }
         // Failed commands may still invalidate pending state (for example an
         // empty Undo). Always rebuild from Session's actual current World.
-        let refreshed = self.rebuild();
+        let mut refreshed = self.rebuild();
+        // A change this action just prepared whose World cannot be drawn
+        // at the current view (heights too steep for the ground art at
+        // this zoom) is cancelled and refused, rather than left pending in
+        // a session that rendering then blocks.
+        if result.is_ok()
+            && !was_pending
+            && self.session.history().pending().is_some()
+            && let Err(reason) = &refreshed
+        {
+            let reason = reason.clone();
+            if self
+                .session
+                .dispatch(Action::Cancel, &mut self.recovery)
+                .is_ok()
+            {
+                self.blocked = None;
+                refreshed = self.rebuild();
+                if refreshed.is_ok() {
+                    result = Err(format!("{UNDRAWABLE_CHANGE} ({reason})"));
+                    self.notice = Some(UNDRAWABLE_CHANGE.into());
+                }
+            }
+        }
         self.report();
         let settled = self.settle_proposal(accept.then_some(records), prepare);
         self.refresh_highlight();

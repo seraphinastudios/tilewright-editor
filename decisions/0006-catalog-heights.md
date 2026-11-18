@@ -40,31 +40,48 @@ a grant.
 These were chosen by the implementing agent; the owner can revisit any of
 them.
 
-- **A hard bound of ±512.** A catalog's `min` and `max` must lie from −512
-  to 512 (`MAXIMUM_HEIGHT`). The reason is what the preview can draw. The
-  renderer bends isometric ground by the mean of the four tiles around
-  each corner, at 1 pixel per unit and up to zoom 8 (the desktop's largest
-  zoom and `render --scale 8`). Two opposite corners of a tile share only
-  that tile, so they differ by at most three quarters of the spread of the
-  heights around it. With every height within ±512, including the 0 that
-  a tile without a height grid has, the spread is at most 1,024. A tile's
-  corners then differ by at most 768 units, which is 6,144 pixels at zoom
-  8. That leaves 2,046 pixels of the renderer's 8,192-pixel quad limit for
-  the tile's own diamond, so a tile up to 255 pixels tall stays drawable.
-  A bound of ±1,024 would allow 12,288 pixels, which is undrawable at zoom
-  8. The preview adds a height to `layer × layer_height` in 32 bits; with
-  this bound the height part cannot be what overflows. Inside the bound,
-  the range is the project's choice. The bound guarantees nothing about
-  heights the editor did not write: a world may already hold larger ones.
+- **A hard bound of ±1,024, a sanity limit only.** A catalog's `min` and
+  `max` must lie from −1,024 to 1,024 (`MAXIMUM_HEIGHT`), and `min` must be
+  below `max` (a single value would allow no raise or lower). The bound
+  keeps the arithmetic and the wire form small and simple. It is **not** a
+  promise that a view can draw every range inside it: no single number
+  is. A bent isometric tile is a 4 × 4 mesh that maps its ground art, and
+  art taller than the diamond multiplies the differences between corner
+  heights. So the range a project's views can draw depends on its ground
+  art and the zoom (the desktop's largest zoom and `render --scale` are
+  8). Choosing a range its views can draw is the project's job, as the
+  owner put it: "the project chooses a range its views can draw".
+  Guidance, measured by the reviewer on renderer 0.7.1 (Mean corners,
+  1 pixel per unit, the worst 3 × 3 pattern of ±H around a tile, zoom 8):
+
+  | Projection, diamond | Ground art | Largest drawable ±H at zoom 8 |
+  |---|---|---|
+  | top-down | any | no limit (top-down ground shifts, never bends) |
+  | isometric 32 × 16 | 32 × 16 (diamond only) | ±1,433 |
+  | isometric 64 × 32 | 64 × 32 (diamond only) | ±1,525 |
+  | isometric 32 × 16 | 32 × 32 (the neutral sample's art) | ±460 |
+  | isometric 64 × 32 | 64 × 64 | ±487 |
+  | isometric 128 × 64 | 128 × 128 | ±495 |
+  | isometric 32 × 16 | 32 × 48 | ±215 |
+  | isometric 64 × 32 | 64 × 128 | ±129 |
+
+  At a lower zoom the drawable range is wider. The range a
+  stroke can produce is what counts: every height in the view and the
+  ring around it, and the 0 of tiles without a height grid. The desktop
+  refuses an edit whose result cannot be drawn at its current view: the
+  change is cancelled and the person is told to zoom out or adjust by less,
+  so the session is not blocked. Zooming in on an undrawable World still
+  blocks the session for good; that older behaviour is a separate fix.
 - **One range per catalog.** The grant applies to the active view's plane
   and spatial layer, as `editing.zones.paint` does. Heights are one grid
   per chunk, not a ground grid, so the per-grid shape of `editing.terrain`
   does not fit, and the owner chose one range over per-layer ranges.
 - **Versioning (ADR 0004).** `editing.heights` is an optional member in
-  both catalog formats, `tilewright.editor-preview/1` and `/2`. The released
-  editor (1.52.0) closes `editing` to `movable_uids`, `terrain`, `fields`,
+  both catalog formats, `tilewright.editor-preview/1` and `/2`. The latest
+  release (1.53.0) closes `editing` to `movable_uids`, `terrain`, `fields`,
   `objects`, `zones`, `anchors` and `palettes`, and refuses anything else
-  with "unknown or missing catalog key". So an older editor refuses a
+  with "unknown or missing catalog key", and its proposal reader refuses
+  the kind with "unknown action kind". So an older editor refuses a
   catalog with a height range instead of ignoring it. A catalog without
   the member loads, reports and draws exactly as before.
 - **The action** is `AdjustHeights { plane, layer, cells, amount }`,
@@ -72,21 +89,28 @@ them.
   raising (positive) and lowering (negative). `cells` follows the brush
   stroke's rule (1 to 4,096, distinct, in order), as scatter does, so the
   desktop's stroke can become this action unchanged. `amount` is an integer
-  from −1,024 to 1,024, not 0: 1,024 is the widest range there can be, so a
-  larger amount could change nothing more. It records no grid: the grid is
-  always `height`.
-- **The rule**, frozen for this kind: each covered cell becomes
-  `clamp(height + amount, min, max)`, computed in 64-bit integers, so no
-  input can overflow. The range is named by the grant, not copied into the
-  action. Under another range a step may give other heights and is then
-  reported as diverged, as for a scatter palette.
-- **A covered cell whose height is already outside the range refuses the
-  whole action** with `target.unsupported`, and the message names the cell
-  and the range. Clamping it would move it into the range by a jump of any
-  size, which is not a raise or lower by `amount`. Moving it partway would
-  write a height outside the range, which the owner's decision refuses.
-  Leaving it out silently would make a lower that does not lower. The
-  person widens the range or leaves that cell out.
+  from −1,024 to 1,024, not 0 (`MAXIMUM_AMOUNT`, its own constant, so the
+  wire form does not move with the catalog bound). It records no grid: the
+  grid is always `height`.
+- **The rule**, frozen for this kind, per covered cell of height `h`,
+  computed in 64-bit integers so no stored height or amount can overflow:
+  - at or beyond the end the amount moves toward (`h ≥ max` for a raise,
+    `h ≤ min` for a lower): left out, like a cell exactly at that end;
+  - otherwise the cell becomes `clamp(h + amount, min, max)`;
+  - except a cell beyond the other end that moving by the amount does not
+    bring into the range (`h + amount < min` for a raise, `> max` for a
+    lower): the whole action is refused with `target.unsupported`, and the
+    message names the cell, its height and the amount it needs.
+
+  So the tool never writes outside the range, never moves a cell by more
+  than the amount and never moves one away from the range, and it can bring
+  back any tile within 1,024 of the range. The range is named by the grant,
+  not copied into the action: under another range a step may give other
+  heights and is then reported as diverged, as for a scatter palette.
+- **Stacking.** The preview draws a tile at `layer × layer_height +
+  height` in 32 bits. A write that would stack past that range (only on a
+  very far layer) is refused with `target.unsupported`, computed in 64-bit
+  integers.
 - **Cells of chunks that do not exist are left out**, as the zone brush
   leaves them out. A height belongs to the ground, and such a cell has
   none. Writing one would make World create a chunk document that holds
@@ -95,15 +119,18 @@ them.
   changes nothing (`change.none`). A chunk that exists but has no height
   grid gets one. Each cell expects 0, World's value for a missing grid, and
   World removes the grid again when all its heights return to 0.
-- **Cells that would not change are left out**: those already at the end
-  the amount moves toward. A stroke left with no change is `change.none`.
+- **Cells that would not change are left out**: those at or beyond the end
+  the amount moves toward. A stroke left with no change is `change.none`,
+  and the message counts the covered cells at that end and those in chunks
+  that do not exist, so an agent knows to paint terrain first.
   Every other cell expects its committed height, so World refuses the
   transaction if the source changed.
 - **No new refusal code.** The checks run in this order: the stroke rule
   (`input.budget`, `input.invalid`), the amount (`input.invalid` for 0,
   `input.budget` past 1,024), the grant (`grant.missing`), the view
-  (`scope.outside_view`), out-of-range heights (`target.unsupported`) and
-  no change (`change.none`).
+  (`scope.outside_view`), then per cell a height the amount cannot bring
+  into the range or that would stack past 32 bits (`target.unsupported`),
+  and no change (`change.none`).
 
 ## Not decided here
 

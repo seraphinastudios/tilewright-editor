@@ -31,17 +31,17 @@ pub struct EditingCapabilities {
 }
 
 /// The editor's hard bound on a granted height: `editing.heights` must lie
-/// within `-MAXIMUM_HEIGHT..=MAXIMUM_HEIGHT`. Any two heights the editor
-/// writes, and the 0 a tile without a height grid has, then differ by at
-/// most 1,024 units, which keeps a tile's bent corners within the
-/// renderer's 8,192-pixel quad limit at the largest zoom (8): see
-/// `decisions/0006-catalog-heights.md`.
-pub const MAXIMUM_HEIGHT: i32 = 512;
+/// within `-MAXIMUM_HEIGHT..=MAXIMUM_HEIGHT`. A plain sanity limit for the
+/// arithmetic and the wire form, not a promise that a view can draw every
+/// range inside it: what bent isometric ground can draw depends on the
+/// ground art and the zoom, and choosing a range the project's views can
+/// draw is the project's job (`decisions/0006-catalog-heights.md`).
+pub const MAXIMUM_HEIGHT: i32 = 1024;
 
 /// `editing.heights`: the editor may write tile heights from `min` to
 /// `max`, both included, on the active view's plane and spatial layer.
 /// Raising and lowering stop at the ends; a write outside is refused.
-/// `-MAXIMUM_HEIGHT <= min <= max <= MAXIMUM_HEIGHT`.
+/// `-MAXIMUM_HEIGHT <= min < max <= MAXIMUM_HEIGHT`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HeightGrant {
     pub min: i32,
@@ -670,7 +670,8 @@ fn editing_specs(
 }
 
 /// `editing.heights`: `{min, max}`, integers with
-/// `-MAXIMUM_HEIGHT <= min <= max <= MAXIMUM_HEIGHT`.
+/// `-MAXIMUM_HEIGHT <= min < max <= MAXIMUM_HEIGHT`. A single value would
+/// allow no raise or lower, so it is refused.
 fn height_grant(value: &Value) -> Result<HeightGrant, PreviewError> {
     closed(value, &["min", "max"])?;
     let end = |key| {
@@ -678,11 +679,15 @@ fn height_grant(value: &Value) -> Result<HeightGrant, PreviewError> {
             .ok()
             .and_then(|end| i32::try_from(end).ok())
             .filter(|end| (-MAXIMUM_HEIGHT..=MAXIMUM_HEIGHT).contains(end))
-            .ok_or_else(|| failure(format!("heights {key} must be an integer from -512 to 512")))
+            .ok_or_else(|| {
+                failure(format!(
+                    "heights {key} must be an integer from -1024 to 1024"
+                ))
+            })
     };
     let (min, max) = (end("min")?, end("max")?);
-    if min > max {
-        return Err(failure("heights min must not be greater than max"));
+    if min >= max {
+        return Err(failure("heights min must be below max"));
     }
     Ok(HeightGrant { min, max })
 }

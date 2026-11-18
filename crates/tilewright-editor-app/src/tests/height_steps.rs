@@ -86,3 +86,67 @@ fn a_height_step_under_a_catalog_without_the_range_says_so() {
         "Raise 2 cells by 8, not granted by this catalog (on main/0)"
     );
 }
+
+/// The neutral sample made isometric (32 × 16 diamond, its 32 × 32 art
+/// unchanged), with the range -512 to 512 and, around tile (2, 2), the
+/// reviewer's worst pattern for tall art half built: the "low" tiles at
+/// -512, the "high" ones still at 0.
+fn steep(root: &Path) {
+    edit_json(root, "preview.jsonc", |catalog| {
+        catalog["editing"]["heights"] = json!({"min": -512, "max": 512});
+    });
+    edit_json(root, "profile/profile.jsonc", |profile| {
+        profile["projection"] = json!({"kind": "isometric", "tile_width": 32, "tile_height": 16});
+    });
+    let rows: Vec<Vec<i32>> = (0..32_usize)
+        .map(|y| {
+            (0..32_usize)
+                .map(|x| {
+                    let low =
+                        (1..4).contains(&x) && (1..4).contains(&y) && STEEP_HIGH[y - 1][x - 1] == 0;
+                    if low { -512 } else { 0 }
+                })
+                .collect()
+        })
+        .collect();
+    edit_json(root, "planes/main/layers/0/0_0.jsonc", |chunk| {
+        chunk["terrain"]["height"] = json!({ "rows": rows });
+    });
+}
+/// 1 where the pattern is high (rows are y = 1..3, columns x = 1..3).
+const STEEP_HIGH: [[u8; 3]; 3] = [[1, 1, 0], [1, 0, 0], [0, 0, 1]];
+
+#[test]
+fn a_change_that_cannot_be_drawn_at_this_zoom_is_cancelled_not_blocking() {
+    let (_person, mut app) = person_application(steep);
+    let high: Vec<[i64; 2]> = (1..4_i64)
+        .flat_map(|x| (1..4_i64).map(move |y| [x, y]))
+        .filter(|&[x, y]| {
+            STEEP_HIGH[usize::try_from(y - 1).unwrap()][usize::try_from(x - 1).unwrap()] == 1
+        })
+        .collect();
+    let raise = |app: &crate::prototype::Application| Action::AdjustHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells: high.clone(),
+        amount: 512,
+        expected: super::proposal::revision(&app.session),
+    };
+    // Drawable at zoom 8 before the change.
+    app.view.camera.zoom = 8.0;
+    app.rebuild().unwrap();
+    let error = app.action(raise(&app)).unwrap_err();
+    assert!(
+        error.starts_with(crate::prototype::UNDRAWABLE_CHANGE),
+        "{error}"
+    );
+    assert!(error.contains("invalid world view"), "{error}");
+    assert!(app.session.history().pending().is_none());
+    assert!(app.blocked.is_none());
+    // Zoomed out, the same change is drawn, pending for review.
+    app.view.camera.zoom = 1.0;
+    app.rebuild().unwrap();
+    app.action(raise(&app)).unwrap();
+    assert!(app.session.history().pending().is_some());
+    assert!(app.blocked.is_none());
+}

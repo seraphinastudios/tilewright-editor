@@ -110,7 +110,7 @@ fn member(kind: &str, name: &str) -> String {
             u32::MAX
         ),
         "amount" => format!(
-            r#"{{"anyOf":[{{"type":"integer","minimum":-{0},"maximum":-1}},{{"type":"integer","minimum":1,"maximum":{0}}}],"description":"How much to raise (positive) or lower (negative) the tile height of each cell, once each, never 0. Needs the catalog's editing.heights range (the catalog tool reports it as heights): each cell becomes its height plus amount, kept from min to max. Cells already at that end of the range, and cells of map chunks that do not exist, are left out; a covered cell whose height is outside the range refuses the whole action."}}"#,
+            r#"{{"anyOf":[{{"type":"integer","minimum":-{0},"maximum":-1}},{{"type":"integer","minimum":1,"maximum":{0}}}],"description":"How much to raise (positive) or lower (negative) the tile height of each cell, once each, never 0. Needs the catalog's editing.heights range (the catalog tool reports it as heights): each cell becomes its height plus amount, kept from min to max. Cells at or beyond the end of the range the amount moves toward, and cells of map chunks that do not exist, are left out. A cell beyond the other end moves by amount and is kept in the range; if amount does not bring it into the range, the whole action is refused, naming the amount it needs."}}"#,
             limits::HEIGHT_AMOUNT
         ),
         "name" | "parent" => optional_text(),

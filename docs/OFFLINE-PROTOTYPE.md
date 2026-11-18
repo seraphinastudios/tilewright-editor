@@ -488,12 +488,24 @@ heights from -64 to 64:
 }
 ```
 
-`min` and `max` are integers with `min <= max` (equal is allowed), both
-from -512 to 512, the editor's hard bound; anything else, or any other
-member, refuses the whole catalog. The bound keeps every height the editor
-writes, and the 0 of a tile without a height grid, within 1,024 of each
-other, so a bent isometric tile stays inside the renderer's quad limit at
-the largest zoom ([ADR 0006](../decisions/0006-catalog-heights.md)). The
+`min` and `max` are integers with `min < max`, both from -1,024 to 1,024,
+the editor's hard bound; anything else, or any other member, refuses the
+whole catalog. The bound is only a sanity limit for the arithmetic and the
+wire form, not a promise that every range inside it can be drawn. A bent
+isometric tile maps its ground art onto a mesh, and art taller than the
+diamond magnifies the differences between corner heights, so what a view
+can draw depends on the ground art and the zoom: choose a range your
+views can draw. Measured on renderer 0.7.1 at zoom 8 (the largest), with
+the worst pattern of ±H around a tile: top-down ground has no limit;
+isometric diamond-only art (32 × 16 or 64 × 32) draws up to about ±1,430;
+art twice the diamond's height (the neutral sample's 32 × 32 on a 32 × 16
+diamond) up to about ±460; art four times its height (64 × 128 on 64 × 32)
+up to about ±129. [ADR 0006](../decisions/0006-catalog-heights.md) has the
+table. If an edit's result cannot be drawn at the current view, the
+desktop cancels it and says so (zoom out, or raise or lower by less); the
+session stays usable. Zooming in on a World that cannot be drawn at the
+new zoom still blocks the session for good, a known limitation that a
+later change fixes. The
 member is the same in catalog formats 1 and 2; a catalog without it loads
 and behaves exactly as before, and an editor from before it refuses a
 catalog that has it. The `catalog` command and MCP tool report it as
