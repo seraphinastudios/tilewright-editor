@@ -268,6 +268,47 @@ fn zone_tints_draw_over_height_tints() {
 }
 
 #[test]
+fn the_zone_line_matches_the_mode_and_needs_zones_in_view() {
+    let zone_lines = |app: &mut Application| {
+        sidebar_texts(app)
+            .into_iter()
+            .filter(|text| text.starts_with("Zone tints cover it"))
+            .collect::<Vec<_>>()
+    };
+    // In Zone mode zones always show and O does nothing, so the line does
+    // not offer O.
+    let (_temporary, mut app) = zone_application(sloped);
+    app.control(Control::HeightOverlay).unwrap();
+    assert!(zone_lines(&mut app).is_empty());
+    app.control(Control::Zone).unwrap();
+    assert_eq!(zone_lines(&mut app), [heights::UNDER_ZONES_IN_ZONE_MODE]);
+    assert!(route(&mut app, &key(Keycode::O)).is_err(), "O refused here");
+    assert_eq!(zone_lines(&mut app), [heights::UNDER_ZONES_IN_ZONE_MODE]);
+    // Outside Zone mode with O on, the line says O hides them.
+    app.control(Control::Select).unwrap();
+    route(&mut app, &key(Keycode::O)).unwrap();
+    assert_eq!(zone_lines(&mut app), [heights::UNDER_ZONES]);
+    // A view whose tiles have no zone gets no line, in either mode: the
+    // plane loses its default zone and the main chunk its zone grid.
+    let (_temporary, mut app) = zone_application(|world| {
+        sloped(world);
+        edit_json(world, "planes/main/plane.jsonc", |plane| {
+            plane.as_object_mut().unwrap().remove("default_zone");
+        });
+        edit_json(world, MAIN, |chunk| {
+            chunk["terrain"].as_object_mut().unwrap().remove("zone");
+        });
+    });
+    app.control(Control::HeightOverlay).unwrap();
+    route(&mut app, &key(Keycode::O)).unwrap();
+    assert!(app.tools.zones_visible());
+    assert!(zone_lines(&mut app).is_empty());
+    app.control(Control::Zone).unwrap();
+    assert!(zone_lines(&mut app).is_empty());
+    assert!(sidebar_texts(&mut app).contains(&"Heights -5 to 21".to_owned()));
+}
+
+#[test]
 fn a_zone_named_like_a_legend_row_gets_no_height_swatch() {
     // A sidebar row whose text equals a legend line is not a legend row.
     let (_temporary, mut app) = zone_application(sloped);

@@ -1381,9 +1381,19 @@ impl Application {
     }
 
     /// The height tint's legend rows ([`heights::legend`]), with the line
-    /// about zone tints while the zone overlay shows too.
+    /// about zone tints while they are drawn too (the zone overlay shows and
+    /// a tile of the view has a zone), worded for Zone mode, where O does
+    /// nothing.
     fn height_legend(&self) -> Vec<(String, Option<usize>)> {
-        heights::legend(self.height_view().0, self.tools.zones_visible())
+        let zone_line =
+            (self.tools.zones_visible() && !self.view_zone_tiles().is_empty()).then(|| {
+                if self.tools.mode() == ToolMode::Zone {
+                    heights::UNDER_ZONES_IN_ZONE_MODE
+                } else {
+                    heights::UNDER_ZONES
+                }
+            });
+        heights::legend(self.height_view().0, zone_line)
     }
 
     /// The height range of the active view's tiles in the shown World (the

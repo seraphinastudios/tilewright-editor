@@ -13,11 +13,11 @@ use tilewright_editor_preview::PreviewCatalog;
 use tilewright_source::{Plane, World};
 
 /// The height ramp: eight bands from dark (low) to light (high). Lightness
-/// rises strictly from band to band, also once drawn at [`TINT_ALPHA`] over
-/// the sample's grass, sand or a tile without ground (tested), so the order
-/// reads without telling hues apart; the hue runs from violet through teal
-/// and green to pale yellow. The ends are darker and lighter than any zone
-/// tint.
+/// rises from band to band by at least 9 CIE L* (tested), so the order reads
+/// without telling hues apart; the hue runs from violet through teal and
+/// green to pale yellow. The tint is opaque ([`TINT_ALPHA`]), so a tile shows
+/// its band's own colour over any ground. The ends are darker and lighter
+/// than any zone tint.
 pub const RAMP: [[f32; 3]; 8] = [
     [0.17, 0.11, 0.35],
     [0.20, 0.24, 0.52],
@@ -28,12 +28,12 @@ pub const RAMP: [[f32; 3]; 8] = [
     [0.75, 0.83, 0.30],
     [0.98, 0.93, 0.55],
 ];
-/// Opacity of a height tint over its tile. Nearly opaque, so the terrain
-/// under a tile moves its lightness by less than one band step and the
-/// order of the bands survives any ground (at 0.85 a band over sand can
-/// read lighter than the next band over grass). It mostly hides the
-/// terrain art while the tint is shown; the tint is a toggle.
-pub const TINT_ALPHA: f32 = 0.9;
+/// Opacity of a height tint over its tile: opaque. Any translucency lets the
+/// ground decide part of a tile's lightness, and over light and dark ground
+/// (pale art beside a tile without ground) neighbouring bands then swap.
+/// Opaque, the band order over any ground is the ramp's own. It hides the
+/// ground art under the tint while the tint is shown; the tint is a toggle.
+pub const TINT_ALPHA: f32 = 1.0;
 
 /// The stored height of plane tile `x, y` on `layer`: `None` when its chunk
 /// does not exist (or the plane's chunk size is 0). A chunk without a
@@ -141,15 +141,19 @@ pub fn tints(heights: &[([i64; 2], i32)]) -> (Option<HeightRange>, BTreeMap<[i64
 }
 
 /// Says that zone tints draw over the height tint, so tiles inside zones do
-/// not match the legend's swatches.
+/// not match the legend's swatches, and that O hides them (outside Zone
+/// mode).
 pub const UNDER_ZONES: &str = "Zone tints cover it: O hides them";
+/// [`UNDER_ZONES`] in Zone mode, where zones always show and O does nothing.
+pub const UNDER_ZONES_IN_ZONE_MODE: &str = "Zone tints cover it in Zone mode";
 
 /// The legend of the height tint: a line with the range of the view's
 /// heights, then for a range that is not flat the darkest and the lightest
-/// band, each with the band its swatch shows, and [`UNDER_ZONES`] when
-/// `under_zones` (the zone overlay shows too). The two band lines name the
-/// ends again, so they stay readable when a narrow sidebar cuts the first.
-pub fn legend(range: Option<HeightRange>, under_zones: bool) -> Vec<(String, Option<usize>)> {
+/// band, each with the band its swatch shows, and `zone_line` last when
+/// given (zone tints are drawn over the tint: [`UNDER_ZONES`] or
+/// [`UNDER_ZONES_IN_ZONE_MODE`]). The two band lines name the ends again, so
+/// they stay readable when a narrow sidebar cuts the first.
+pub fn legend(range: Option<HeightRange>, zone_line: Option<&str>) -> Vec<(String, Option<usize>)> {
     match range {
         None => vec![("Heights: no tiles in view".into(), None)],
         Some(range) if range.is_flat() => {
@@ -161,8 +165,8 @@ pub fn legend(range: Option<HeightRange>, under_zones: bool) -> Vec<(String, Opt
                 (format!("Darkest: lowest, {min}"), Some(0)),
                 (format!("Lightest: highest, {max}"), Some(RAMP.len() - 1)),
             ];
-            if under_zones {
-                rows.push((UNDER_ZONES.into(), None));
+            if let Some(line) = zone_line {
+                rows.push((line.into(), None));
             }
             rows
         }
@@ -201,15 +205,61 @@ mod tests {
         HeightRange { min, max }
     }
 
+    /// CIE L* of a gamma-encoded sRGB colour.
+    fn lightness([r, g, b]: [f32; 3]) -> f64 {
+        let linear = |c: f32| {
+            let c = f64::from(c);
+            if c <= 0.040_45 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let y = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+        if y > 216.0 / 24_389.0 {
+            116.0 * y.cbrt() - 16.0
+        } else {
+            24_389.0 / 27.0 * y
+        }
+    }
+
     #[test]
     fn the_ramp_gets_lighter_band_by_band() {
         let luma = |[r, g, b]: [f32; 3]| 0.2126 * r + 0.7152 * g + 0.0722 * b;
         for pair in RAMP.windows(2) {
             assert!(luma(pair[1]) - luma(pair[0]) > 0.09, "{pair:?}");
+            // 9.6 to 12.9 L* per step.
+            assert!(lightness(pair[1]) - lightness(pair[0]) > 9.0, "{pair:?}");
         }
         // Darker and lighter than every zone tint at its ends.
         for zone in crate::zones::TINTS {
             assert!(luma(RAMP[0]) < luma(zone) && luma(zone) < luma(RAMP[7]));
+        }
+    }
+
+    #[test]
+    fn an_opaque_tint_shows_its_band_over_any_ground() {
+        // The renderer blends in gamma-encoded sRGB:
+        // `alpha × tint + (1 − alpha) × ground`. Opaque, the drawn colour is
+        // the band's own over black, white and the sample's grass and sand
+        // (their art's mean colours, about 92, 146, 78 and 205, 180, 118 of
+        // 255), so band order over any ground is the ramp's order.
+        let grounds = [
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [92.0 / 255.0, 146.0 / 255.0, 78.0 / 255.0],
+            [205.0 / 255.0, 180.0 / 255.0, 118.0 / 255.0],
+        ];
+        for band in 0..RAMP.len() {
+            let [r, g, b, alpha] = tint_color(band);
+            for ground in grounds {
+                let drawn = [r, g, b]
+                    .iter()
+                    .zip(ground)
+                    .map(|(tint, under)| alpha * tint + (1.0 - alpha) * under)
+                    .collect::<Vec<f32>>();
+                assert_eq!(drawn, RAMP[band], "band {band} over {ground:?}");
+            }
         }
     }
 
@@ -265,7 +315,7 @@ mod tests {
         assert_eq!(tints[&[1, 0]], tint_color(4));
         assert_eq!(tints[&[2, 0]], tint_color(7));
         assert_eq!(
-            legend(found, false),
+            legend(found, None),
             [
                 ("Heights 0 to 12".to_owned(), None),
                 ("Darkest: lowest, 0".to_owned(), Some(0)),
@@ -276,18 +326,20 @@ mod tests {
         let (flat, none) = super::tints(&[([0, 0], 5), ([1, 0], 5)]);
         assert!(none.is_empty());
         assert_eq!(
-            legend(flat, true),
+            legend(flat, Some(UNDER_ZONES)),
             [("Heights: all 5, no tint".to_owned(), None)]
         );
         let (empty, none) = super::tints(&[]);
         assert!(empty.is_none() && none.is_empty());
         assert_eq!(
-            legend(empty, true),
+            legend(empty, Some(UNDER_ZONES)),
             [("Heights: no tiles in view".to_owned(), None)]
         );
-        let mut under = legend(found, false);
-        under.push((UNDER_ZONES.to_owned(), None));
-        assert_eq!(legend(found, true), under);
+        for line in [UNDER_ZONES, UNDER_ZONES_IN_ZONE_MODE] {
+            let mut under = legend(found, None);
+            under.push((line.to_owned(), None));
+            assert_eq!(legend(found, Some(line)), under);
+        }
         assert_eq!(tint_color(7)[3], TINT_ALPHA);
         assert_eq!(swatch_color(0), [0.17, 0.11, 0.35, 1.0]);
     }

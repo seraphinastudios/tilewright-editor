@@ -401,14 +401,13 @@ kept across modes.
 
 The tint colours each tile of the view whose chunk exists by its stored
 height, on a fixed ramp of eight bands from dark violet (lowest) through teal
-and green to pale yellow (highest), at 90 % opacity, so while it shows it
-mostly hides the terrain art; it is a toggle, and H brings the art back. The
-opacity is chosen so the order of the bands survives the ground under them:
-blended over the sample's grass, its sand or a tile without ground (the dark
-clear colour shows there), each band is lighter than the band below it over
-any of them by at least 2 CIE L* (a tested property; at 60 % a band over sand
-read lighter than the next band over grass, and a tile without ground read
-three bands too low). So the order reads without telling hues apart, and
+and green to pale yellow (highest). The tint is opaque, so while it shows it
+hides the ground art under it; it is a toggle, and H brings the art back.
+Opaque, a tile shows its band's own colour whatever the ground (light art,
+dark art or a tile without ground), and each band is at least 9 CIE L*
+lighter than the band below it (tested). A translucent tint let the ground
+decide part of a tile's lightness, and neighbouring bands then swapped over
+light and dark ground. So the order reads without telling hues apart, and
 both ends are darker and lighter than any zone tint. The range is the lowest
 and highest stored height among the view's tiles: the catalog view's bounds,
 including tiles drawn outside the window (panned or zoomed away, or lifted
@@ -423,12 +422,16 @@ the stacked ones, so a profile's `layer_height` does not change it.
 
 While the tint shows, the sidebar gives its legend under the toggle:
 "Heights 0 to 12", then "Darkest: lowest, 0" and "Lightest: highest, 12" with
-the two end bands as swatches. While the zone overlay shows too, a last line
-says "Zone tints cover it: O hides them", since tiles inside zones then do
-not match the swatches. A flat view reads "Heights: all 0, no tint",
+the two end bands as swatches. While zone tints are drawn too (the zone
+overlay shows and some tile of the view has a zone), a last line says "Zone
+tints cover it: O hides them", or in Zone mode, where zones always show and
+O does nothing, "Zone tints cover it in Zone mode", since tiles inside zones
+then do not match the swatches. A flat view reads "Heights: all 0, no tint",
 and a view without chunks "Heights: no tiles in view". The tint is made like
 the zone tints: unpickable copies of the prepared cell-reference quads in the
-World's draw order, so objects and nearer tiles cover it, the semantic planes
+World's draw order, so objects, nearer tiles and the terrain transition art
+drawn over a tile (such as the sample's grass edges on sand) still draw over
+it, the semantic planes
 and every pick are unchanged, and a tile the prepared cell scene does not draw
 (for example ground lifted far out of the frame) has no tint either. A zone
 tint of the same tile draws over it, and the proposal highlight and the brush
