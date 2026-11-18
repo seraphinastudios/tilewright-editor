@@ -92,8 +92,9 @@ pub fn revision(session: &Session) -> [u8; 32] {
 }
 
 /// The edit actions of every kind, in an order in which each applies
-/// after the ones before it on the neutral fixture.
-pub const KINDS: usize = 15;
+/// after the ones before it on the neutral fixture; the fill twice, once
+/// as a fill and once as a replace.
+pub const KINDS: usize = 17;
 #[allow(clippy::too_many_lines)]
 pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
     let main = || String::from("main");
@@ -189,12 +190,34 @@ pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
             anchor: "lookout".into(),
             expected,
         },
-        _ => Action::SetPortal {
+        14 => Action::SetPortal {
             uid: "gate_west".into(),
             target: Some(PortalTarget::Anchor {
                 plane: main(),
                 anchor: "arrival".into(),
             }),
+            expected,
+        },
+        // The sand block east of x = 4, not the sand painted at x < 2.
+        15 => Action::FillTerrain {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 5,
+            y: 0,
+            proto: "grass".into(),
+            contiguous: true,
+            expected,
+        },
+        // Every sand cell left in the view.
+        _ => Action::FillTerrain {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 1,
+            y: 1,
+            proto: "grass".into(),
+            contiguous: false,
             expected,
         },
     }

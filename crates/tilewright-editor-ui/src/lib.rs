@@ -148,6 +148,7 @@ pub use tilewright_editor_preview::SelectionKey;
 
 pub mod anchors;
 pub mod brush;
+pub mod fill;
 pub mod grants;
 mod insertion;
 pub mod inspector;

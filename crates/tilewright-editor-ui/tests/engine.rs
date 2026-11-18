@@ -107,6 +107,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         Action::SetField { .. } => Some("SetField"),
         Action::Paint { .. } => Some("Paint"),
         Action::PaintStroke { .. } => Some("PaintStroke"),
+        Action::FillTerrain { .. } => Some("FillTerrain"),
         Action::PaintZones { .. } => Some("PaintZones"),
         Action::Remove { .. } => Some("Remove"),
         Action::Place { .. } => Some("Place"),
@@ -127,11 +128,12 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         | Action::Reopen => None,
     }
 }
-const EDIT_KINDS: [&str; 15] = [
+const EDIT_KINDS: [&str; 16] = [
     "Move",
     "SetField",
     "Paint",
     "PaintStroke",
+    "FillTerrain",
     "PaintZones",
     "Remove",
     "Place",
@@ -178,6 +180,16 @@ fn edits(expected: [u8; 32]) -> Vec<Action> {
             grid: "floor".into(),
             cells: vec![[0, 0], [1, 0]],
             proto: "sand".into(),
+            expected,
+        },
+        Action::FillTerrain {
+            plane: main(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 1,
+            y: 1,
+            proto: "sand".into(),
+            contiguous: true,
             expected,
         },
         Action::PaintZones {
@@ -734,6 +746,58 @@ fn granted_refusals(expected: [u8; 32]) -> Vec<(Action, RefusalCode)> {
                 expected,
             },
             RefusalCode::ScopeOutsideView,
+        ),
+        (
+            Action::FillTerrain {
+                plane: main_plane(),
+                layer: 0,
+                grid: "floor".into(),
+                x: 100,
+                y: 0,
+                proto: "sand".into(),
+                contiguous: true,
+                expected,
+            },
+            RefusalCode::ScopeOutsideView,
+        ),
+        (
+            Action::FillTerrain {
+                plane: main_plane(),
+                layer: 0,
+                grid: "floor".into(),
+                x: 1,
+                y: 1,
+                proto: "stone".into(),
+                contiguous: false,
+                expected,
+            },
+            RefusalCode::GrantMissing,
+        ),
+        (
+            Action::FillTerrain {
+                plane: main_plane(),
+                layer: 0,
+                grid: "floor".into(),
+                x: 5,
+                y: 0,
+                proto: "sand".into(),
+                contiguous: true,
+                expected,
+            },
+            RefusalCode::ChangeNone,
+        ),
+        (
+            Action::FillTerrain {
+                plane: main_plane(),
+                layer: 0,
+                grid: "edge".into(),
+                x: 1,
+                y: 1,
+                proto: "sand".into(),
+                contiguous: true,
+                expected,
+            },
+            RefusalCode::GrantMissing,
         ),
         (
             Action::Place {

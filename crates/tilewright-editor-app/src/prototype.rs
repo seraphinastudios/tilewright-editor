@@ -20,7 +20,7 @@ use tilewright_editor_preview::{
 use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
 use tilewright_editor_ui::brush::StrokeTarget;
 use tilewright_editor_ui::inspector::{self, SelectionSummary};
-use tilewright_editor_ui::tools::{self, PortalStep, ToolMode, ToolState, ZoneChoice};
+use tilewright_editor_ui::tools::{self, PortalStep, TerrainRule, ToolMode, ToolState, ZoneChoice};
 use tilewright_editor_ui::{Action, Session, SessionPhase};
 use tilewright_editor_ui::{anchors, portals, zones};
 use tilewright_render_api::{
@@ -31,7 +31,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | O shows zones and badges | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -95,6 +95,9 @@ const DEMO_SEARCH_TILE: (i64, i64) = (2, 1);
 /// Press and drag cells of the scripted stroke-preview capture, across
 /// grass and the sand the demonstration paints with.
 const DEMO_STROKE: [[i64; 2]; 2] = [[1, 2], [5, 2]];
+/// The cells the scripted fill and replace previews hover: grass, filled
+/// with sand, then sand, replaced with grass.
+const DEMO_FILL: [[i64; 2]; 2] = [[1, 1], [5, 1]];
 
 /// Press and drag cells of the scripted zone stroke: down open meadow onto
 /// the neutral sample's path row.
@@ -200,6 +203,39 @@ enum Capability {
     Delete,
 }
 
+/// The cells a fill or replace from the hovered cell would change: the
+/// engine's own answer ([`Session::fill_changes`]) for `action`, computed
+/// for frame `frame` and session generation `generation` (which moves with
+/// every prepared, cancelled or accepted change).
+struct FillPreview {
+    frame: u64,
+    generation: u64,
+    action: Action,
+    changes: std::result::Result<Vec<[i64; 2]>, String>,
+}
+
+/// The pointer over the map in Terrain mode: where it is, and with the Fill
+/// or Replace rule the hovered cell and its preview.
+#[derive(Default)]
+struct Hover {
+    /// The hovered cell and the frame whose exact cell mask it was picked
+    /// from.
+    cell: Option<(u64, SelectionKey)>,
+    /// The exact cell mask hovers are picked from: built once for the
+    /// frame it names, on its first hover, like a stroke's `stroke_mask`,
+    /// and dropped when the frame is rebuilt or reflowed.
+    mask: Option<PickMask>,
+    /// How many hover masks were built, for tests: one per frame hovered.
+    masks: u64,
+    /// The physical pixel the pointer last hovered over the map, so a
+    /// rebuilt frame (after Cancel, Accept or a pan) picks its hovered cell
+    /// again without waiting for the pointer to move.
+    pixel: Option<(u32, u32)>,
+    /// What the hovered fill would change, computed when the hover, the
+    /// rule, the terrain, the World or the frame changes, never per frame.
+    preview: Option<FillPreview>,
+}
+
 struct Application {
     session: Session,
     recovery: DurableRecovery,
@@ -219,6 +255,9 @@ struct Application {
     presented_text_revision: Option<tilewright_editor_ui::text_input::TextRevision>,
     /// The exact cell mask of the frame a running brush stroke samples.
     stroke_mask: Option<PickMask>,
+    /// The pointer over the map in Terrain mode, and with the Fill or
+    /// Replace rule what it previews.
+    hover: Hover,
     /// How many times the World scene has been prepared. Pointer samples
     /// during a stroke never prepare it; presses, dispatched actions (a
     /// release among them) and view changes do.
@@ -319,6 +358,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         displayed_text: None,
         presented_text_revision: None,
         stroke_mask: None,
+        hover: Hover::default(),
         prepared_scenes: 1,
         preview_omitted: false,
         highlight_omitted: false,
@@ -423,6 +463,8 @@ impl Application {
     fn rebuild_inner(&mut self) -> Result<()> {
         self.presented_generation = None;
         self.interrupt_stroke();
+        self.hover.cell = None;
+        self.hover.mask = None;
         self.tools.cancel();
         self.session
             .invalidate_frame()
@@ -462,6 +504,8 @@ impl Application {
     fn reflow(&mut self) -> Result<()> {
         self.presented_generation = None;
         self.interrupt_stroke();
+        self.hover.cell = None;
+        self.hover.mask = None;
         self.prepare_scene()
     }
 
@@ -839,12 +883,199 @@ impl Application {
         }
     }
 
+    /// The fill or replace a click on the hovered cell would prepare, or why
+    /// there is none; `None` without a hovered cell of the current frame or
+    /// outside Terrain mode's Fill and Replace rules.
+    fn hovered_fill(&self) -> Option<std::result::Result<Action, String>> {
+        let (frame, cell) = self.hover.cell.as_ref()?;
+        if *frame != self.view.frame_revision || !self.tools.filling() {
+            return None;
+        }
+        Some(
+            self.tools
+                .fill_action(
+                    self.session.catalog(),
+                    cell,
+                    self.session.history().document().revision(),
+                    self.blocked.is_some() || !self.session.can_prepare(),
+                )
+                .map_err(|error| error.to_string()),
+        )
+    }
+
+    /// Bring [`Application::fill_preview`] up to date: recomputed only when
+    /// what decides it changed.
+    fn refresh_fill_preview(&mut self) {
+        let Some(Ok(action)) = self.hovered_fill() else {
+            self.hover.preview = None;
+            return;
+        };
+        let (frame, generation) = (self.view.frame_revision, self.session.generation());
+        if self.hover.preview.as_ref().is_some_and(|preview| {
+            preview.frame == frame && preview.generation == generation && preview.action == action
+        }) {
+            return;
+        }
+        let changes = self
+            .session
+            .fill_changes(&action)
+            .map_err(|error| error.to_string());
+        self.hover.preview = Some(FillPreview {
+            frame,
+            generation,
+            action,
+            changes,
+        });
+    }
+
+    /// The cells the fill preview marks: only a preview of the current
+    /// frame and session, for a hovered fill that is still the one shown.
+    fn fill_changes(&self) -> Option<&[[i64; 2]]> {
+        let preview = self.hover.preview.as_ref()?;
+        let current = preview.frame == self.view.frame_revision
+            && self.prepared.frame_revision == self.view.frame_revision
+            && preview.generation == self.session.generation()
+            && matches!(self.hovered_fill(), Some(Ok(action)) if action == preview.action);
+        current.then_some(())?;
+        preview.changes.as_deref().ok()
+    }
+
+    /// Hover in Terrain mode's Fill and Replace rules: the cell under
+    /// physical pixel `(x, y)`, picked from the frame's one hover mask, or
+    /// none off the map. Nothing is computed while the session cannot
+    /// prepare a change (a change pending, or blocked), and nothing more
+    /// than the pick while the pointer stays in the same cell.
+    fn hover_at(&mut self, pixel: Option<(u32, u32)>) {
+        self.hover.pixel = pixel;
+        if self.blocked.is_some() || !self.session.can_prepare() || !self.tools.filling() {
+            self.hover.cell = None;
+            self.hover.preview = None;
+            if !self.tools.filling() {
+                self.hover.mask = None;
+            }
+            return;
+        }
+        let cell = pixel.and_then(|(x, y)| match self.hover_mask_pick(x, y) {
+            Some(key @ SelectionKey::Cell { .. }) => Some(key),
+            _ => None,
+        });
+        let hover = cell.map(|cell| (self.view.frame_revision, cell));
+        if hover == self.hover.cell {
+            return;
+        }
+        self.hover.cell = hover;
+        self.refresh_fill_preview();
+    }
+
+    /// Forget where the pointer is: after a mode or rule change, or when it
+    /// leaves the window, no preview shows until it moves over the map
+    /// again, so a preview never names a cell the pointer is not on.
+    fn forget_hover(&mut self) {
+        self.hover.cell = None;
+        self.hover.pixel = None;
+        self.hover.preview = None;
+        self.hover.mask = None;
+    }
+
+    /// Pick the hovered cell again when the frame changed under a pointer
+    /// that has not moved: at most one mask for the new frame.
+    fn rehover(&mut self) {
+        let stale = self
+            .hover
+            .cell
+            .as_ref()
+            .is_none_or(|(frame, _)| *frame != self.view.frame_revision);
+        if stale && let Some(pixel) = self.hover.pixel {
+            self.hover_at(Some(pixel));
+        }
+    }
+
+    /// The key under physical pixel `(x, y)` in the current frame's exact
+    /// cell mask, built at most once per frame.
+    fn hover_mask_pick(&mut self, x: u32, y: u32) -> Option<SelectionKey> {
+        let viewport = self.prepared.cell_scene.viewport();
+        let current = self.hover.mask.as_ref().is_some_and(|mask| {
+            mask.generation() == self.view.frame_revision
+                && mask.size() == [viewport.width, viewport.height]
+        });
+        if !current {
+            self.hover.mask = self.prepared.mask(self.view.frame_revision, true).ok();
+            self.hover.masks += 1;
+        }
+        self.hover.mask.as_ref()?.pick(x, y).ok().flatten()
+    }
+
+    /// A click with the Fill or Replace rule: select the cell through the
+    /// ordinary exact mask, as a brush press does, then prepare the fill or
+    /// replace from it as one pending change for the normal review.
+    fn fill_at(&mut self, x: u32, y: u32) -> Result<()> {
+        self.click(x, y)?;
+        let cell = self
+            .session
+            .selection()
+            .cloned()
+            .ok_or("select a cell in terrain mode first")?;
+        let action = self
+            .tools
+            .fill_action(
+                self.session.catalog(),
+                &cell,
+                self.session.history().document().revision(),
+                self.blocked.is_some() || !self.session.can_prepare(),
+            )
+            .map_err(|error| error.to_string())?;
+        self.action(action)
+    }
+
+    /// The status line while hovering with the Fill or Replace rule.
+    fn fill_status(&self) -> Option<String> {
+        // A pending change, a block or a proposal step under review keeps
+        // its own status line.
+        if self.blocked.is_some() || !self.session.can_prepare() {
+            return None;
+        }
+        let action = match self.hovered_fill()? {
+            Ok(action) => action,
+            Err(reason) => return Some(reason),
+        };
+        let Action::FillTerrain {
+            x,
+            y,
+            proto,
+            contiguous,
+            ..
+        } = &action
+        else {
+            return None;
+        };
+        let rule = if *contiguous { "Fill" } else { "Replace" };
+        Some(match self.fill_changes() {
+            Some(cells) => format!(
+                "{rule} from ({x}, {y}) with {proto}: {} cells to change; click to review.{}",
+                cells.len(),
+                if self.preview_omitted {
+                    " Too many cells to preview."
+                } else if self.prepared.cell_slots().is_none() {
+                    " Preview unavailable for this view."
+                } else {
+                    ""
+                }
+            ),
+            None => match self.hover.preview.as_ref().map(|preview| &preview.changes) {
+                Some(Err(reason)) => format!("{rule} from ({x}, {y}) refused: {reason}"),
+                _ => format!("{rule} from ({x}, {y}) with {proto}"),
+            },
+        })
+    }
+
     fn displayed_input_ready(&self) -> bool {
         self.presented_generation == Some(self.view.frame_revision)
             && self.presented_text_revision == self.tools.input_revision()
     }
 
     fn refresh_ui(&mut self) {
+        self.rehover();
+        self.refresh_fill_preview();
         let key = self.zone_view_key();
         if self.zone_view.as_ref().is_none_or(|view| view.key != key) {
             let tiles = zones::view_zones(self.session.world(), self.session.catalog())
@@ -1049,6 +1280,7 @@ impl Application {
                     active,
                 ));
             }
+            self.rule_rows(&mut rows);
         }
         if mode == ToolMode::Place {
             self.place_rows(&mut rows, ready);
@@ -1398,7 +1630,9 @@ impl Application {
     /// slots are unavailable. Badges are drawn above the World and need no
     /// slots, so Anchor mode alone never reports this.
     fn overlay_unavailable(&self) -> bool {
-        (self.tools.zones_visible() || self.tools.stroke().is_some())
+        (self.tools.zones_visible()
+            || self.tools.stroke().is_some()
+            || self.fill_changes().is_some())
             && self.prepared.cell_slots().is_none()
     }
 
@@ -1869,7 +2103,28 @@ impl Application {
         }
     }
 
+    /// Terrain mode's rules, after the palette: the brush drags, fill and
+    /// replace click. The current one is also named in the rule row above
+    /// the scrolled rows.
+    fn rule_rows(&self, rows: &mut UiRows) {
+        for rule in TerrainRule::ALL {
+            rows.push((
+                match rule {
+                    TerrainRule::Brush => "Brush: drag paints",
+                    TerrainRule::Fill => "Fill: click fills the joined area",
+                    TerrainRule::Replace => "Replace: click, every match in view",
+                }
+                .into(),
+                Some(Control::TerrainRule(rule)),
+                true,
+                self.tools.terrain_rule() == rule,
+            ));
+        }
+    }
+
     fn brush_rows(&self, rows: &mut UiRows) {
+        // Fill and replace use no brush: its rows stay, unavailable.
+        let brushing = !self.tools.filling();
         let brush = self.tools.brush();
         rows.push((
             format!(
@@ -1885,19 +2140,19 @@ impl Application {
         rows.push((
             "Brush smaller  [".into(),
             Some(Control::BrushSize(-1)),
-            brush.radius > 0,
+            brushing && brush.radius > 0,
             false,
         ));
         rows.push((
             "Brush larger  ]".into(),
             Some(Control::BrushSize(1)),
-            brush.radius < tilewright_editor_ui::brush::MAXIMUM_RADIUS,
+            brushing && brush.radius < tilewright_editor_ui::brush::MAXIMUM_RADIUS,
             false,
         ));
         rows.push((
             format!("Use {} brush  B", brush.toggled_shape().shape.as_str()),
             Some(Control::BrushShape),
-            true,
+            brushing,
             false,
         ));
     }
@@ -2263,6 +2518,9 @@ impl Application {
             y = self.filter_field(ui, y);
             y = self.placing_row(ui, y);
         }
+        if self.tools.mode() == ToolMode::Terrain {
+            y = self.rule_row(ui, y);
+        }
         if let Some(snapshot) = self
             .tools
             .draft_snapshot()
@@ -2534,6 +2792,30 @@ impl Application {
     /// when the filter hides its palette row. It never scrolls, and is
     /// dimmed while a pending change blocks placing. Returns the next free
     /// row.
+    /// Terrain mode's current rule, above the scrolled rows so it is always
+    /// on screen; pressing it moves to the next rule, as F does.
+    fn rule_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
+        let rule = self.tools.terrain_rule();
+        let name = match rule {
+            TerrainRule::Brush => "Brush",
+            TerrainRule::Fill => "Fill",
+            TerrainRule::Replace => "Replace",
+        };
+        ui.widget(
+            Rect {
+                x: ui.sidebar_x(),
+                y,
+                width: ui.sidebar_width(),
+                height: TEXT_ROW_HEIGHT,
+            },
+            format!("Rule: {name}  F"),
+            Some(Control::TerrainRule(rule.next())),
+            true,
+            false,
+        );
+        y + TEXT_ROW_HEIGHT + ROW_GAP
+    }
+
     fn placing_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
         let catalog = self.session.catalog();
         let (text, thumbnail) = match self.tools.placement_choice() {
@@ -2701,6 +2983,9 @@ impl Application {
         if self.notice.is_some() {
             return "Input not applied. Details below.".into();
         }
+        if let Some(status) = self.fill_status() {
+            return status;
+        }
         if self.preview_omitted {
             // Badges show with the zones, and alone in Anchor mode.
             return if self.tools.zones_visible() {
@@ -2837,10 +3122,14 @@ impl Application {
                     Control::Anchor => ToolMode::Anchor,
                     _ => ToolMode::Select,
                 });
+                self.forget_hover();
                 self.sidebar_scroll = 0;
                 Ok(())
             }
-            Control::Place => self.enter_place_mode(),
+            Control::Place => {
+                self.forget_hover();
+                self.enter_place_mode()
+            }
             Control::ZoneOverlay
             | Control::ZonePalette(_)
             | Control::ZoneName
@@ -2886,6 +3175,11 @@ impl Application {
             }
             Control::BrushShape => {
                 self.tools.set_brush(self.tools.brush().toggled_shape());
+                Ok(())
+            }
+            Control::TerrainRule(rule) => {
+                self.tools.set_terrain_rule(rule);
+                self.forget_hover();
                 Ok(())
             }
             Control::Palette { grid, prototype } => {
@@ -3252,6 +3546,11 @@ impl Application {
             "width":frame.width,"height":frame.height,"status":self.session.status().to_string(),
             "toolkit":tilewright_editor_document::TOOLKIT_VERSION,"renderer":"0.7.1","pending":self.session.history().pending().is_some()
         });
+        // Only while hovering with the Fill or Replace rule, so other frames
+        // are unchanged.
+        if let (Some(preview), Some(record)) = (self.fill_frame(), frame_record.as_object_mut()) {
+            record.insert("fill_preview".into(), preview);
+        }
         // Only while a proposal is open, so other frames are unchanged.
         if let (Some(proposal), Some(record)) =
             (self.proposal_frame(), frame_record.as_object_mut())
@@ -3271,6 +3570,38 @@ impl Application {
                 .map_err(|error| error.to_string())?
                 .as_bytes(),
         )
+    }
+
+    /// The frame evidence's `fill_preview` member: the hovered fill and what
+    /// it would change, or why it would be refused.
+    fn fill_frame(&self) -> Option<serde_json::Value> {
+        let Some(Ok(Action::FillTerrain {
+            x,
+            y,
+            proto,
+            contiguous,
+            ..
+        })) = self.hovered_fill()
+        else {
+            return None;
+        };
+        let mut record = serde_json::json!({
+            "rule": if contiguous { "fill" } else { "replace" },
+            "at": [x, y],
+            "proto": terminal_field(&proto),
+        });
+        match (
+            self.fill_changes(),
+            self.hover.preview.as_ref().map(|p| &p.changes),
+        ) {
+            (Some(cells), _) => {
+                record["cells"] = cells.len().into();
+                record["first"] = cells.iter().take(8).copied().collect::<Vec<_>>().into();
+            }
+            (None, Some(Err(reason))) => record["refused"] = terminal_field(reason).into(),
+            _ => {}
+        }
+        Some(record)
     }
 
     /// Select a visible object with `capability` through the ordinary mask.
@@ -3409,6 +3740,60 @@ impl Application {
         // The cancellation notice is for an interactive author; later
         // scripted captures keep their plain status.
         self.notice = None;
+        result
+    }
+
+    /// Terrain mode's Fill and Replace rules: hover a grass cell with Fill
+    /// and the chosen sand, capture the preview; choose grass, hover sand
+    /// with Replace, capture; click to prepare it, capture the pending
+    /// review, Cancel. The World is unchanged; the brush rule and the
+    /// terrain choice are restored.
+    fn fill_demo(&mut self) -> Result<()> {
+        self.control(Control::Terrain)?;
+        let chosen = self.tools.terrain_choice().cloned();
+        let frame = self.frame(true)?;
+        let pixel = |cell: [i64; 2]| {
+            self.prepared
+                .cell_picks
+                .iter()
+                .find_map(|(id, key)| match key {
+                    SelectionKey::Cell { x, y, .. } if [*x, *y] == cell => pixel_for(&frame, *id),
+                    _ => None,
+                })
+                .ok_or("demonstration fill cell is not in the cell mask")
+        };
+        let (fill, replace) = (pixel(DEMO_FILL[0])?, pixel(DEMO_FILL[1])?);
+        let palette = tools::terrain_palette(self.session.catalog());
+        let (Some(first), Some(last)) = (palette.first(), palette.last()) else {
+            return Err("empty demo terrain palette".into());
+        };
+        let (first, last) = (first.clone(), last.clone());
+        let result = (|| {
+            self.control(Control::Palette {
+                grid: last.grid.clone(),
+                prototype: last.prototype.clone(),
+            })?;
+            self.control(Control::TerrainRule(TerrainRule::Fill))?;
+            self.hover_at(Some(fill));
+            self.capture("fill-preview")?;
+            self.control(Control::Palette {
+                grid: first.grid.clone(),
+                prototype: first.prototype.clone(),
+            })?;
+            self.control(Control::TerrainRule(TerrainRule::Replace))?;
+            self.hover_at(Some(replace));
+            self.capture("replace-preview")?;
+            self.fill_at(replace.0, replace.1)?;
+            self.capture("replace-pending")?;
+            self.action(Action::Cancel)
+        })();
+        self.tools.set_terrain_rule(TerrainRule::Brush);
+        if let Some(choice) = chosen {
+            self.tools
+                .choose_terrain(self.session.catalog(), &choice.grid, &choice.prototype)
+                .map_err(|error| error.to_string())?;
+        }
+        self.hover_at(None);
         result
     }
 
@@ -3737,14 +4122,15 @@ impl Application {
             }
             12 if self.session.catalog().editing().anchors.edit => self.anchor_demo()?,
             13 if grants_portals(self.session.catalog().editing()) => self.portal_demo()?,
-            14 => return Ok(true),
+            14 if !self.session.catalog().editing().terrain.is_empty() => self.fill_demo()?,
+            15 => return Ok(true),
             _ => {}
         }
         Ok(false)
     }
 
     fn demo_all(&mut self) -> Result<()> {
-        for step in 0..15 {
+        for step in 0..16 {
             if self.demo_step(step)? {
                 break;
             }
@@ -3937,6 +4323,7 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
                 dirty = true;
             }
             let stroke_before = app.tools.stroke().map(|s| (s.len(), s.capped()));
+            let hover_before = app.hover.cell.clone();
             let scroll_before = (app.sidebar_scroll, app.review_scroll);
             let composing = app.tools.is_composing();
             let draft_before = app.tools.input_revision().map(|revision| revision.draft);
@@ -4010,7 +4397,8 @@ fn native(mut app: Application, demo: bool) -> Result<()> {
             }
             dirty |= update_input_presentation(&mut app, scroll_before)
                 || result.is_err()
-                || stroke_before != app.tools.stroke().map(|s| (s.len(), s.capped()));
+                || stroke_before != app.tools.stroke().map(|s| (s.len(), s.capped()))
+                || hover_before != app.hover.cell;
             if let Err(error) = result {
                 eprintln!("{}", terminal_field(&error));
                 app.notice = Some(error);
@@ -4072,6 +4460,7 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
         || (step == 11 && !(editing.zones.paint && editing.zones.manage))
         || (step == 12 && !editing.anchors.edit)
         || (step == 13 && !grants_portals(editing))
+        || (step == 14 && editing.terrain.is_empty())
     {
         None
     } else {
@@ -4090,6 +4479,7 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
             "zone-manage",
             "anchors",
             "portals",
+            "fill",
         ]
         .get(step)
         .copied()
@@ -4194,6 +4584,8 @@ fn native_text_event(
             ..
         } => {
             input.lose_focus();
+            // A window without focus hovers nothing.
+            app.forget_hover();
             let result = if app.tools.draft_text().is_some() {
                 app.tools
                     .cancel_preedit()
@@ -4469,6 +4861,19 @@ fn native_input_event(
         } if !minimized && app.tools.stroke().is_some() => {
             native_stroke_motion(app, [*x, *y], mousestate.left(), logical, physical)
         }
+        // A pointer that left the window hovers nothing; focus loss is
+        // handled with the text input (`native_text_event`).
+        Event::Window {
+            win_event: WindowEvent::MouseLeave,
+            ..
+        } => {
+            app.forget_hover();
+            Ok(())
+        }
+        Event::MouseMotion { x, y, .. } if !minimized && app.tools.mode() == ToolMode::Terrain => {
+            native_hover(app, [*x, *y], logical, physical);
+            Ok(())
+        }
         Event::MouseButtonUp {
             mouse_btn: MouseButton::Left,
             x,
@@ -4588,7 +4993,9 @@ fn native_pointer_selection(
         Hit::World(x, y) if app.tools.portal_picking() => app.pick_portal_target(x, y),
         Hit::World(x, y) => {
             app.tools.cancel();
-            if matches!(app.tools.mode(), ToolMode::Terrain | ToolMode::Zone) {
+            if app.tools.filling() {
+                app.fill_at(x, y)
+            } else if matches!(app.tools.mode(), ToolMode::Terrain | ToolMode::Zone) {
                 app.begin_stroke(x, y)
             } else if app.tools.mode() == ToolMode::Place {
                 app.place_at(x, y)
@@ -4598,6 +5005,20 @@ fn native_pointer_selection(
         }
         Hit::Panel | Hit::Outside => Ok(()),
     }
+}
+
+/// Pointer motion in Terrain mode: where the pointer is over the map, and
+/// with the Fill or Replace rule the hovered cell under it; none over a
+/// panel or outside the window.
+fn native_hover(
+    app: &mut Application,
+    position: [f32; 2],
+    logical: (u32, u32),
+    physical: (u32, u32),
+) {
+    let pixel = crate::viewport::physical_pixel(position, logical, physical)
+        .filter(|&(x, y)| matches!(app.ui.hit(x, y), Hit::World(..)));
+    app.hover_at(pixel);
 }
 
 /// A drag sample while a stroke runs. Motion without the left button means
@@ -4726,6 +5147,9 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         Keycode::LeftBracket if brushing(app) => app.control(Control::BrushSize(-1)),
         Keycode::RightBracket if brushing(app) => app.control(Control::BrushSize(1)),
         Keycode::B if brushing(app) => app.control(Control::BrushShape),
+        Keycode::F if app.tools.mode() == ToolMode::Terrain => {
+            app.control(Control::TerrainRule(app.tools.terrain_rule().next()))
+        }
         Keycode::W | Keycode::A | Keycode::S | Keycode::D => {
             let change = match key {
                 Keycode::W => [0.0, -1.0],
@@ -4750,7 +5174,7 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
 /// grant.
 fn brushing(app: &Application) -> bool {
     match app.tools.mode() {
-        ToolMode::Terrain => true,
+        ToolMode::Terrain => !app.tools.filling(),
         ToolMode::Zone => app.session.catalog().editing().zones.paint,
         _ => false,
     }
@@ -4849,6 +5273,9 @@ fn stroke_changes(app: &Application) -> Option<Vec<[i64; 2]>> {
 /// default), and [`zone_overlay`] leaves those cells out, so the preview
 /// replaces their resting tint rather than stacking on it.
 fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    if app.tools.stroke().is_none() {
+        return fill_overlay(app);
+    }
     let (Some(stroke), Some(changes)) = (app.tools.stroke(), stroke_changes(app)) else {
         return Vec::new();
     };
@@ -4885,6 +5312,46 @@ fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
         })
         .collect();
     crate::workspace_render::stroke_overlay(&app.prepared, &cells)
+}
+
+/// The hover preview of a fill or replace: the cells a click would change,
+/// marked like a terrain stroke's, through the same overlay.
+fn fill_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    let (Some(changes), Some(preview)) = (app.fill_changes(), app.hover.preview.as_ref()) else {
+        return Vec::new();
+    };
+    let Action::FillTerrain {
+        plane, layer, grid, ..
+    } = &preview.action
+    else {
+        return Vec::new();
+    };
+    let cells = changes
+        .iter()
+        .map(|&[x, y]| SelectionKey::Cell {
+            plane: plane.clone(),
+            layer: *layer,
+            grid: grid.clone(),
+            x,
+            y,
+        })
+        .collect();
+    crate::workspace_render::stroke_overlay(&app.prepared, &cells)
+}
+
+/// The cells the person's own preview marks: a running stroke's, or the
+/// hovered fill's.
+fn previewed_cells(app: &Application) -> std::collections::BTreeSet<[i64; 2]> {
+    match app.tools.stroke() {
+        Some(_) => stroke_changes(app)
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+        None => app
+            .fill_changes()
+            .map(|cells| cells.iter().copied().collect())
+            .unwrap_or_default(),
+    }
 }
 
 /// The zone overlay: every in-view tile that has a zone, tinted with its
@@ -4932,13 +5399,7 @@ fn proposal_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     if highlight.tints.is_empty() || app.prepared.frame_revision != app.view.frame_revision {
         return Vec::new();
     }
-    let previewed: std::collections::BTreeSet<[i64; 2]> = app
-        .tools
-        .stroke()
-        .and_then(|_| stroke_changes(app))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let previewed = previewed_cells(app);
     crate::workspace_render::tile_overlay(&app.prepared, |at| {
         if previewed.contains(&at) {
             None

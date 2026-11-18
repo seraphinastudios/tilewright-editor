@@ -166,7 +166,7 @@ made from, holds that art, and `render` sends its pixels to the client.
 `kind` and exactly that kind's members, every one present, `null` for an
 absent option, and `expected`, the sandbox revision it was made for
 (`state.revision`). The input schema says this as an `anyOf` with one
-choice per kind (15), each listing exactly its members as required, with
+choice per kind (16), each listing exactly its members as required, with
 `additionalProperties: false`, and at the action's root the list of kinds
 and the two members every kind has. It uses only keywords that draft-07
 and 2020-12 read alike: `anyOf` rather than `oneOf` (the kinds' consts
@@ -175,8 +175,9 @@ location's `at` as `items` with `minItems` and `maxItems` 2 rather than
 `prefixItems`, which a draft-07 reading would turn into "no item allowed". Strings are at most 4,096 characters
 and hold no NUL; `x`, `y` and a cell's coordinates are integers of
 magnitude at most 2^53 − 1; `layer` is a 32-bit integer; `cells` holds 1 to
-4,096 distinct `[x, y]` pairs; a portal `target` is `null`, an anchor or a
-location; a field `value` is any JSON value. The kind's `const` decides the
+4,096 distinct `[x, y]` pairs; `contiguous` (of `fill_terrain`) is a
+boolean; a portal `target` is `null`, an anchor or a location; a field
+`value` is any JSON value. The kind's `const` decides the
 choice, so a member of the wrong type fails the one choice that applies;
 there is no ambiguity of the kind the revision warns about for
 compositions at a schema's root.

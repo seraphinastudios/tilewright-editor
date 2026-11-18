@@ -74,6 +74,8 @@ pub enum Control {
     Nudge([i64; 2]),
     BrushSize(i8),
     BrushShape,
+    /// Terrain mode: what a press does, the brush, fill or replace.
+    TerrainRule(tilewright_editor_ui::tools::TerrainRule),
     Field(String),
     Palette {
         grid: String,

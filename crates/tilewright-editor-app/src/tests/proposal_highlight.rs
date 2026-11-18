@@ -137,7 +137,7 @@ fn shown(app: &mut Application) -> Option<(usize, Concerns, Vec<Seen>)> {
     Some((highlight.step, highlight.concerns, tiles(highlight)))
 }
 
-/// What step `step` (from 0) of the 15 kinds highlights on the person's
+/// What step `step` (from 0) of the 17 kinds highlights on the person's
 /// world as each step finds it.
 fn expected_kind(step: usize) -> (Concerns, Vec<Seen>) {
     let tiles = match step {
@@ -155,7 +155,21 @@ fn expected_kind(step: usize) -> (Concerns, Vec<Seen>) {
         // Outside the view: listed, not drawn.
         13 => main0(&[("anchor", [-2, 0])]),
         // gate_west's tile, and arrival where step 12 moved it.
-        _ => main0(&[("object", [0, 3]), ("target", [6, 3])]),
+        14 => main0(&[("object", [0, 3]), ("target", [6, 3])]),
+        // The start cell, then the sand block east of x = 4 in x, then y
+        // order, less the view's empty cell.
+        15 => {
+            let mut cells = vec![("cell", [5, 0])];
+            for x in 4..8 {
+                for y in 0..6 {
+                    if [x, y] != [5, 0] && [x, y] != [6, 4] {
+                        cells.push(("cell", [x, y]));
+                    }
+                }
+            }
+            main0(&cells)
+        }
+        _ => main0(&[("cell", [6, 4])]),
     };
     (Concerns::Tiles, tiles)
 }
@@ -259,6 +273,30 @@ fn tiles_on_another_layer_outside_the_view_or_not_placed_are_not_drawn() {
     };
     let main = || String::from("main");
     let not_placed = (Concerns::NotPlaced, Vec::new());
+    // A fill that would change nothing, or starts outside the view, names
+    // only its start cell; one that would names the start cell first.
+    let fill = |x: i64, proto: &str, contiguous: bool| Action::FillTerrain {
+        plane: main(),
+        layer: 0,
+        grid: "floor".into(),
+        x,
+        y: 0,
+        proto: proto.into(),
+        contiguous,
+        expected,
+    };
+    assert_eq!(
+        of(fill(0, "grass", true)),
+        (Concerns::Tiles, main0(&[("cell", [0, 0])]))
+    );
+    assert_eq!(
+        of(fill(100, "sand", false)),
+        (Concerns::Tiles, main0(&[("cell", [100, 0])]))
+    );
+    let (_, replaced) = of(fill(3, "sand", false));
+    assert_eq!(replaced.len(), 24);
+    assert_eq!(replaced[0].3, [3, 0]);
+    assert_eq!(replaced[1].3, [0, 0]);
     assert_eq!(
         of(Action::Move {
             uid: "missing".into(),
