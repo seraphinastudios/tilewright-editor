@@ -199,6 +199,18 @@ fn each_tile_takes_its_band_of_the_view_range() {
 }
 
 #[test]
+fn no_tint_is_drawn_from_a_frame_that_is_not_the_views() {
+    let (_temporary, mut app) = zone_application(sloped);
+    app.control(Control::HeightOverlay).unwrap();
+    assert_eq!(tint_quads(&mut app).len(), 48);
+    let generation = app.view.frame_revision;
+    app.prepared.frame_revision = generation + 1;
+    assert!(tint_quads(&mut app).is_empty());
+    app.prepared.frame_revision = generation;
+    assert_eq!(tint_quads(&mut app).len(), 48);
+}
+
+#[test]
 fn zone_tints_draw_over_height_tints() {
     let (_temporary, mut app) = zone_application(sloped);
     app.control(Control::HeightOverlay).unwrap();
