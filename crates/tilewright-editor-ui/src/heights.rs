@@ -135,17 +135,18 @@ pub fn tints(heights: &[([i64; 2], i32)]) -> (Option<HeightRange>, BTreeMap<[i64
     (range, tints)
 }
 
-/// The legend of the height tint: a line with the range, then for a range
-/// that is not flat the darkest and the lightest band, each with the band
-/// its swatch shows.
+/// The legend of the height tint: a line with the range of the view's
+/// heights, then for a range that is not flat the darkest and the lightest
+/// band, each with the band its swatch shows. The two band lines name the
+/// ends again, so they stay readable when a narrow sidebar cuts the first.
 pub fn legend(range: Option<HeightRange>) -> Vec<(String, Option<usize>)> {
     match range {
         None => vec![("Heights: no tiles in view".into(), None)],
         Some(range) if range.is_flat() => {
-            vec![(format!("Heights: all {} in view, no tint", range.min), None)]
+            vec![(format!("Heights: all {}, no tint", range.min), None)]
         }
         Some(HeightRange { min, max }) => vec![
-            (format!("Heights {min} to {max} in view"), None),
+            (format!("Heights {min} to {max}"), None),
             (format!("Darkest: lowest, {min}"), Some(0)),
             (format!("Lightest: highest, {max}"), Some(RAMP.len() - 1)),
         ],
@@ -154,7 +155,9 @@ pub fn legend(range: Option<HeightRange>) -> Vec<(String, Option<usize>)> {
 
 /// The inspector's height line for plane tile `x, y` on `layer`: its stored
 /// height, and with a profile `layer_height` also the layer's base
-/// (`layer × layer_height`) and the sum, computed in 128-bit integers.
+/// (`layer × layer_height`) and the sum, computed in 128-bit integers, as
+/// "Height: 7 + base 32 = 39". The stored height comes first, so it stays
+/// when a narrow sidebar cuts the line.
 pub fn inspector_line(world: &World, plane: &str, layer: i32, x: i64, y: i64) -> String {
     let Some(h) = world
         .planes()
@@ -168,7 +171,7 @@ pub fn inspector_line(world: &World, plane: &str, layer: i32, x: i64, y: i64) ->
         Some(layer_height) => {
             let base = i128::from(layer) * i128::from(layer_height);
             let total = base + i128::from(h);
-            format!("Height: {h} (layer base {base}, total {total})")
+            format!("Height: {h} + base {base} = {total}")
         }
     }
 }
@@ -248,7 +251,7 @@ mod tests {
         assert_eq!(
             legend(found),
             [
-                ("Heights 0 to 12 in view".to_owned(), None),
+                ("Heights 0 to 12".to_owned(), None),
                 ("Darkest: lowest, 0".to_owned(), Some(0)),
                 ("Lightest: highest, 12".to_owned(), Some(7)),
             ]
@@ -256,10 +259,7 @@ mod tests {
         // A flat view: no tint at all, and the legend says so.
         let (flat, none) = super::tints(&[([0, 0], 5), ([1, 0], 5)]);
         assert!(none.is_empty());
-        assert_eq!(
-            legend(flat),
-            [("Heights: all 5 in view, no tint".to_owned(), None)]
-        );
+        assert_eq!(legend(flat), [("Heights: all 5, no tint".to_owned(), None)]);
         let (empty, none) = super::tints(&[]);
         assert!(empty.is_none() && none.is_empty());
         assert_eq!(
