@@ -246,6 +246,7 @@
                     "set_field",
                     "paint",
                     "paint_stroke",
+                    "fill_terrain",
                     "paint_zones",
                     "remove",
                     "place",
@@ -445,6 +446,65 @@
                     "grid",
                     "cells",
                     "proto",
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "fill_terrain"
+                    },
+                    "plane": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "layer": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    },
+                    "grid": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "x": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "proto": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "contiguous": {
+                      "type": "boolean",
+                      "description": "The fill rule. true: set proto on the cells joined to the start cell (x, y) through edge neighbours (not diagonals) that hold the same terrain as the start cell (an empty start cell matches empty cells), within the catalog's active view. false: set proto on every cell of the active view that holds the same terrain as the start cell (an empty start cell matches empty cells). The start cell must be in the active view; cells already holding proto are left out."
+                    },
+                    "expected": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The sandbox revision the action was made for: state.revision."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "plane",
+                    "layer",
+                    "grid",
+                    "x",
+                    "y",
+                    "proto",
+                    "contiguous",
                     "expected"
                   ],
                   "additionalProperties": false
