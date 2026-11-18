@@ -69,8 +69,10 @@ them.
   stroke can produce is what counts: every height in the view and the
   ring around it, and the 0 of tiles without a height grid. The desktop
   refuses an edit whose result cannot be drawn at its current view: the
-  change is cancelled and the person is told to zoom out or adjust by less,
-  so the session is not blocked. Zooming in on an undrawable World still
+  change is cancelled, whatever the action, and the notice gives the
+  renderer's reason and what to do (for a height adjustment: zoom out, or
+  raise or lower by less; for any other edit: zoom out or pan and try
+  again), so the session is not blocked. Zooming in on an undrawable World still
   blocks the session for good; that older behaviour is a separate fix.
 - **One range per catalog.** The grant applies to the active view's plane
   and spatial layer, as `editing.zones.paint` does. Heights are one grid
@@ -100,7 +102,10 @@ them.
   - except a cell beyond the other end that moving by the amount does not
     bring into the range (`h + amount < min` for a raise, `> max` for a
     lower): the whole action is refused with `target.unsupported`, and the
-    message names the cell, its height and the amount it needs.
+    message names the cell, its height and the amount it needs. When that
+    is more than 1,024, the most one action can move, the message says
+    instead that this tool cannot bring the cell in and that it should be
+    left out of the stroke.
 
   So the tool never writes outside the range, never moves a cell by more
   than the amount and never moves one away from the range, and it can bring
@@ -121,8 +126,9 @@ them.
   World removes the grid again when all its heights return to 0.
 - **Cells that would not change are left out**: those at or beyond the end
   the amount moves toward. A stroke left with no change is `change.none`,
-  and the message counts the covered cells at that end and those in chunks
-  that do not exist, so an agent knows to paint terrain first.
+  and the message counts the covered cells at or beyond that end ("at or
+  above the top", "at or below the bottom") and those in chunks that do
+  not exist, so an agent knows to paint terrain first.
   Every other cell expects its committed height, so World refuses the
   transaction if the source changed.
 - **No new refusal code.** The checks run in this order: the stroke rule

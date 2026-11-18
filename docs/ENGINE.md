@@ -227,7 +227,8 @@ prepared, the engine (`tilewright_editor_ui::sculpt`), in this order:
    - beyond the other end, and still outside the range after moving by the
      amount (`h + amount < min` for a raise, `> max` for a lower): the whole
      action is refused with target.unsupported, and the message names the
-     cell, its height and the amount it needs;
+     cell, its height and the amount it needs, or, when that is more than
+     1,024, says this tool cannot bring the cell in;
    - otherwise: `clamp(h + amount, min, max)`. A cell beyond the other end
      thus moves into the range by at most the amount, never further and
      never away from it;
@@ -235,7 +236,8 @@ prepared, the engine (`tilewright_editor_ui::sculpt`), in this order:
    bits on its layer (`layer × layer_height + height`, as the preview draws
    it); only a very far layer can reach this;
 6. refuses with change.none when no cell is left, and the message counts
-   the covered cells at the end of the range and those in chunks that do
+   the covered cells at or beyond the end the amount moves toward ("at or
+   above the top", "at or below the bottom") and those in chunks that do
    not exist (painting terrain creates them).
 
 The result is one `terrain.set` on the `height` grid in which each cell

@@ -460,8 +460,22 @@ fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
 }
 
 /// Why an edit was refused when the World it prepared cannot be drawn at
-/// the current view. The change is cancelled; nothing is pending.
-pub(crate) const UNDRAWABLE_CHANGE: &str = "Refused: this change cannot be drawn at the current view, so it was cancelled. Heights too steep for this ground art at this zoom cause this: zoom out, or raise or lower by less.";
+/// the current view, for every action kind. The change is cancelled;
+/// nothing is pending.
+pub(crate) const UNDRAWABLE_CHANGE: &str =
+    "Refused: this change cannot be drawn at the current view, so it was cancelled.";
+
+/// The notice for a change [`UNDRAWABLE_CHANGE`] refused: what to do, which
+/// for a height adjustment is to adjust less steeply, and the renderer's own
+/// `reason`.
+pub(crate) fn undrawable_notice(heights: bool, reason: &str) -> String {
+    let advice = if heights {
+        "Zoom out, or raise or lower by less."
+    } else {
+        "Zoom out or pan and try again."
+    };
+    format!("{UNDRAWABLE_CHANGE} {advice} Renderer: {reason}")
+}
 
 impl Application {
     fn rebuild(&mut self) -> Result<()> {
@@ -530,7 +544,8 @@ impl Application {
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
-        self.funnel(accept, false, |app| {
+        let heights = matches!(action, Action::AdjustHeights { .. });
+        self.funnel(accept, false, heights, |app| {
             app.session
                 .dispatch(action, &mut app.recovery)
                 .map_err(|error| error.to_string())
@@ -545,6 +560,7 @@ impl Application {
         &mut self,
         accept: bool,
         prepare: bool,
+        heights: bool,
         dispatch: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
         let records = self.recovery.records().len();
@@ -579,9 +595,15 @@ impl Application {
             {
                 self.blocked = None;
                 refreshed = self.rebuild();
+                // A second failure is reachable only by a race: dispatch
+                // revalidated the same catalog and resources, and the
+                // committed World drew before the action. Then the catalog
+                // or art changed on disk in between; `rebuild` has blocked
+                // the session with that reason, and the funnel returns it.
                 if refreshed.is_ok() {
-                    result = Err(format!("{UNDRAWABLE_CHANGE} ({reason})"));
-                    self.notice = Some(UNDRAWABLE_CHANGE.into());
+                    let notice = undrawable_notice(heights, &reason);
+                    result = Err(notice.clone());
+                    self.notice = Some(notice);
                 }
             }
         }

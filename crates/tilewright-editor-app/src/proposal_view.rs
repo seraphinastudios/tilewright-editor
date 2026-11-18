@@ -980,7 +980,16 @@ impl Application {
         if let Some(reason) = &self.blocked {
             return Err(format!("rendering blocked editing: {reason}"));
         }
-        self.funnel(false, true, |app| {
+        // A height step gets the height advice if it cannot be drawn.
+        let heights = self
+            .proposal
+            .as_ref()
+            .and_then(|open| {
+                let next = open.progress.as_ref()?.next();
+                open.proposal.steps().get(next)
+            })
+            .is_some_and(|step| matches!(step.action(), Action::AdjustHeights { .. }));
+        self.funnel(false, true, heights, |app| {
             let Some(open) = app.proposal.as_mut() else {
                 return Err("no proposal is open".into());
             };

@@ -136,11 +136,14 @@ fn a_change_that_cannot_be_drawn_at_this_zoom_is_cancelled_not_blocking() {
     app.view.camera.zoom = 8.0;
     app.rebuild().unwrap();
     let error = app.action(raise(&app)).unwrap_err();
-    assert!(
-        error.starts_with(crate::prototype::UNDRAWABLE_CHANGE),
-        "{error}"
+    // The neutral first sentence, the height advice, the renderer's reason.
+    let notice = format!(
+        "{} Zoom out, or raise or lower by less. Renderer: invalid world view",
+        crate::prototype::UNDRAWABLE_CHANGE
     );
-    assert!(error.contains("invalid world view"), "{error}");
+    assert_eq!(error, notice);
+    assert_eq!(app.notice.as_deref(), Some(notice.as_str()));
+    assert_eq!(app.status_label(), "Input not applied. Details below.");
     assert!(app.session.history().pending().is_none());
     assert!(app.blocked.is_none());
     // Zoomed out, the same change is drawn, pending for review.
@@ -148,5 +151,55 @@ fn a_change_that_cannot_be_drawn_at_this_zoom_is_cancelled_not_blocking() {
     app.rebuild().unwrap();
     app.action(raise(&app)).unwrap();
     assert!(app.session.history().pending().is_some());
+    assert!(app.blocked.is_none());
+}
+
+#[test]
+fn another_change_that_cannot_be_drawn_gets_no_height_advice() {
+    // Grass painted onto the empty tile (6, 4), whose ground then bends
+    // over the reviewer's ±512 pattern: a Paint, not a height change.
+    let (_person, mut app) = person_application(|root| {
+        edit_json(root, "profile/profile.jsonc", |profile| {
+            profile["projection"] =
+                json!({"kind": "isometric", "tile_width": 32, "tile_height": 16});
+        });
+        let pattern = [[1, 1, -1], [1, -1, -1], [-1, -1, 1]];
+        let rows: Vec<Vec<i32>> = (0..32_usize)
+            .map(|y| {
+                (0..32_usize)
+                    .map(|x| {
+                        if (5..8).contains(&x) && (3..6).contains(&y) {
+                            pattern[y - 3][x - 5] * 512
+                        } else {
+                            0
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        edit_json(root, "planes/main/layers/0/0_0.jsonc", |chunk| {
+            chunk["terrain"]["height"] = json!({ "rows": rows });
+        });
+    });
+    app.view.camera.zoom = 8.0;
+    app.rebuild().unwrap();
+    let paint = Action::Paint {
+        plane: "main".into(),
+        layer: 0,
+        grid: "floor".into(),
+        x: 6,
+        y: 4,
+        proto: "grass".into(),
+        expected: super::proposal::revision(&app.session),
+    };
+    let error = app.action(paint).unwrap_err();
+    let notice = format!(
+        "{} Zoom out or pan and try again. Renderer: invalid world view",
+        crate::prototype::UNDRAWABLE_CHANGE
+    );
+    assert_eq!(error, notice);
+    assert_eq!(app.notice.as_deref(), Some(notice.as_str()));
+    assert_eq!(app.status_label(), "Input not applied. Details below.");
+    assert!(app.session.history().pending().is_none());
     assert!(app.blocked.is_none());
 }

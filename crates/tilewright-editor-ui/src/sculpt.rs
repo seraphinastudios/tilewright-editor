@@ -7,11 +7,17 @@
 //!
 //! The rule is part of what a recorded `adjust_heights` step means, so it
 //! is fixed here for that action kind (`docs/ENGINE.md`, "Raise and
-//! lower"): each covered cell of an existing chunk becomes
-//! `clamp(height + amount, min, max)` with the catalog's `editing.heights`
-//! range, computed in 64-bit integers. The amount is flat and applies once
-//! per stroke: a stroke's cells are a set, so a cell is changed once
-//! however often the brush passed over it.
+//! lower"; [`adjusted`]). With the catalog's `editing.heights` range and
+//! 64-bit arithmetic, each covered cell of an existing chunk is:
+//!
+//! - left out when it is at or beyond the end the amount moves toward;
+//! - refused, with the whole action, when it is beyond the other end and
+//!   moving it by the amount does not bring it into the range;
+//! - otherwise set to `clamp(height + amount, min, max)`.
+//!
+//! Cells of chunks that do not exist are left out. The amount is flat and
+//! applies once per stroke: a stroke's cells are a set, so a cell is
+//! changed once however often the brush passed over it.
 use tilewright_editor_preview::{HeightGrant, PreviewCatalog};
 use tilewright_source::World;
 
@@ -158,13 +164,17 @@ pub fn plan(
                 } else {
                     ("above", "lowering")
                 };
-                return Err(refuse(
-                    RefusalCode::TargetUnsupported,
-                    &format!(
-                        "cell ({x}, {y}) has height {before}, {side} the granted range {} to {}: {verb} it into the range needs an amount of at least {needed}",
-                        grant.min, grant.max
-                    ),
-                ));
+                let (low, high) = (grant.min, grant.max);
+                let message = if needed > u64::from(MAXIMUM_AMOUNT.unsigned_abs()) {
+                    format!(
+                        "cell ({x}, {y}) has height {before}, {side} the granted range {low} to {high}: it is {needed} from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"
+                    )
+                } else {
+                    format!(
+                        "cell ({x}, {y}) has height {before}, {side} the granted range {low} to {high}: {verb} it into the range needs an amount of at least {needed}"
+                    )
+                };
+                return Err(refuse(RefusalCode::TargetUnsupported, &message));
             }
             Adjusted::To(after) => {
                 if i32::try_from(base + i64::from(after)).is_err() {
@@ -180,11 +190,15 @@ pub fn plan(
         }
     }
     if changes.is_empty() {
-        let end = if amount > 0 { "top" } else { "bottom" };
+        let end = if amount > 0 {
+            "at or above the top"
+        } else {
+            "at or below the bottom"
+        };
         return Err(refuse(
             RefusalCode::ChangeNone,
             &format!(
-                "height adjustment changes no cell: {at_end} covered cells already at the {end} of the range, {missing} in map chunks that do not exist (painting terrain there creates them)"
+                "height adjustment changes no cell: {at_end} covered cells already {end} of the range, {missing} in map chunks that do not exist (painting terrain there creates them)"
             ),
         ));
     }

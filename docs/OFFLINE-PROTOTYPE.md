@@ -502,8 +502,10 @@ art twice the diamond's height (the neutral sample's 32 × 32 on a 32 × 16
 diamond) up to about ±460; art four times its height (64 × 128 on 64 × 32)
 up to about ±129. [ADR 0006](../decisions/0006-catalog-heights.md) has the
 table. If an edit's result cannot be drawn at the current view, the
-desktop cancels it and says so (zoom out, or raise or lower by less); the
-session stays usable. Zooming in on a World that cannot be drawn at the
+desktop cancels it and says so, with the renderer's reason ("Refused: this
+change cannot be drawn at the current view, so it was cancelled.", then
+"Zoom out, or raise or lower by less." for a height adjustment and "Zoom
+out or pan and try again." for any other edit); the session stays usable. Zooming in on a World that cannot be drawn at the
 new zoom still blocks the session for good, a known limitation that a
 later change fixes. The
 member is the same in catalog formats 1 and 2; a catalog without it loads

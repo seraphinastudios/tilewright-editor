@@ -132,9 +132,11 @@ from the catalog's `editing.heights` each time the step is prepared
 ([docs/ENGINE.md](ENGINE.md#raise-and-lower)). On the world it was recorded
 from, under the same range, it gives the same transaction again. Under
 another range it may give other heights (a raise that stopped at the old
-top goes further under a higher one) and is then refused with
-`proposal.step_diverged`; when no cell reaches either end, the heights are
-the same and the step applies. Under a catalog without the range it is
+top goes further under a higher one, and a cell left out can change) and
+is then refused with `proposal.step_diverged`. It can also be refused with
+`proposal.step_refused` and the engine's target.unsupported, when a cell
+is now beyond the other end and the amount does not bring it in. When no
+cell reaches either end, the heights are the same and the step applies. Under a catalog without the range it is
 refused with `proposal.step_refused` and the engine's grant.missing. An
 amount of 0, past 1,024 or not an integer is `proposal.invalid` when the
 proposal is read. An editor from before `adjust_heights` refuses a whole

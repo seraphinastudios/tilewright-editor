@@ -396,11 +396,53 @@ fn cells_far_outside_the_range_at_the_integer_extremes() {
         .dispatch(adjust(&session, vec![[1, 0]], 1024), &mut records)
         .unwrap_err();
     assert_eq!(error.code(), RefusalCode::TargetUnsupported);
-    assert!(error.message().ends_with("at least 2147483642"), "{error}");
+    assert!(
+        error.message().ends_with(
+            "it is 2147483642 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"
+        ),
+        "{error}"
+    );
     let error = session
         .dispatch(adjust(&session, vec![[0, 0]], -1024), &mut records)
         .unwrap_err();
-    assert!(error.message().ends_with("at least 2147483641"), "{error}");
+    assert!(
+        error.message().ends_with("it is 2147483641 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_cell_more_than_one_adjustment_from_the_range_cannot_be_brought_in() {
+    // Range -6 to 6: (0, 0) is exactly 1,024 above it, (1, 0) 1,025 above.
+    let (_dir, mut session) = fixture_with(|root| {
+        set_heights(root, |at| match at {
+            [0, 0] => 1030,
+            [1, 0] => 1031,
+            _ => 0,
+        });
+    });
+    let mut records = Records::default();
+    let error = session
+        .dispatch(adjust(&session, vec![[0, 0]], -1023), &mut records)
+        .unwrap_err();
+    assert_eq!(
+        error.message(),
+        "cell (0, 0) has height 1030, above the granted range -6 to 6: lowering it into the range needs an amount of at least 1024"
+    );
+    session
+        .dispatch(adjust(&session, vec![[0, 0]], -1024), &mut records)
+        .unwrap();
+    assert_eq!(pending_cells(&session)[&[0, 0]], (6, 1030));
+    session.dispatch(Action::Cancel, &mut records).unwrap();
+    let error = session
+        .dispatch(adjust(&session, vec![[1, 0]], -1024), &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::TargetUnsupported);
+    assert_eq!(
+        error.message(),
+        "cell (1, 0) has height 1031, above the granted range -6 to 6: it is 1025 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"
+    );
+    assert!(session.history().pending().is_none());
 }
 
 #[test]
@@ -456,7 +498,7 @@ fn nothing_to_change_says_why() {
     assert_eq!(error.code(), RefusalCode::ChangeNone);
     assert_eq!(
         error.message(),
-        "height adjustment changes no cell: 3 covered cells already at the top of the range, 2 in map chunks that do not exist (painting terrain there creates them)"
+        "height adjustment changes no cell: 3 covered cells already at or above the top of the range, 2 in map chunks that do not exist (painting terrain there creates them)"
     );
 }
 
@@ -464,52 +506,57 @@ fn nothing_to_change_says_why() {
 fn a_height_that_would_stack_past_32_bits_on_a_far_layer_is_refused() {
     // layer_height 3 on layer 715,827,882: base 2,147,483,646, so height 1
     // stacks to i32::MAX and height 2 past it.
-    const FAR: i32 = 715_827_882;
-    let (dir, mut session) = fixture_with(|root| {
+    far_layer(715_827_882, 1, 2);
+    // On layer -715,827,882 the base is -2,147,483,646: -2 stacks to
+    // i32::MIN, -3 past it, and a raise is far from the edge.
+    far_layer(-715_827_882, -2, -3);
+    far_layer(-715_827_882, 8, -3);
+}
+
+/// On layer `far` (`layer_height` 3), raising or lowering a cell at 0 to
+/// `fits` is prepared and to `past` is refused as stacking past 32 bits.
+fn far_layer(far: i32, fits: i32, past: i32) {
+    let (_dir, mut session) = fixture_with(|root| {
         edit_json(root, "profile/profile.jsonc", |profile| {
             profile["layer_height"] = json!(3);
         });
-        let far = root.join(format!("planes/main/layers/{FAR}"));
-        fs::create_dir_all(&far).unwrap();
+        let directory = root.join(format!("planes/main/layers/{far}"));
+        fs::create_dir_all(&directory).unwrap();
         let mut chunk: Value =
             serde_json::from_slice(&fs::read(root.join(CHUNK)).unwrap()).unwrap();
-        chunk["layer"] = json!(FAR);
+        chunk["layer"] = json!(far);
         chunk["objects"] = json!([]);
         chunk["terrain"]["height"] = json!({"fill": 0});
         fs::write(
-            far.join("0_0.jsonc"),
+            directory.join("0_0.jsonc"),
             serde_json::to_vec_pretty(&chunk).unwrap(),
         )
         .unwrap();
         edit_json(root, "preview.jsonc", |catalog| {
-            catalog["view"]["layer"] = json!(FAR);
+            catalog["view"]["layer"] = json!(far);
         });
     });
+    // The fixture's range is -6 to 6: a raise by 8 stops at 6.
     let mut records = Records::default();
     let expected = revision(&session);
-    let far = |cells: Vec<[i64; 2]>, amount: i32| Action::AdjustHeights {
+    let to = |height: i32| Action::AdjustHeights {
         plane: "main".into(),
-        layer: FAR,
-        cells,
-        amount,
+        layer: far,
+        cells: vec![[0, 0]],
+        amount: height,
         expected,
     };
-    session
-        .dispatch(far(vec![[0, 0]], 1), &mut records)
-        .unwrap();
+    session.dispatch(to(fits), &mut records).unwrap();
     session.dispatch(Action::Cancel, &mut records).unwrap();
-    let error = session
-        .dispatch(far(vec![[0, 0]], 2), &mut records)
-        .unwrap_err();
+    let error = session.dispatch(to(past), &mut records).unwrap_err();
     assert_eq!(error.code(), RefusalCode::TargetUnsupported);
     assert_eq!(
         error.message(),
         format!(
-            "cell (0, 0): height 2 on layer {FAR} would stack past the 32-bit range the preview draws"
+            "cell (0, 0): height {past} on layer {far} would stack past the 32-bit range the preview draws"
         )
     );
     assert!(session.history().pending().is_none());
-    drop(dir);
 }
 
 #[test]
