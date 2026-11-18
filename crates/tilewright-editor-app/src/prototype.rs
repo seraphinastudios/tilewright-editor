@@ -3146,6 +3146,19 @@ impl Application {
         self.session.review()
     }
 
+    /// Make the brush scatter catalog palette `name`, sampling its grid.
+    fn choose_scatter_palette(&mut self, name: &str) -> Result<()> {
+        self.tools
+            .choose_scatter(self.session.catalog(), name)
+            .map_err(|error| error.to_string())?;
+        let grid = self.session.catalog().editing().palettes[name].grid.clone();
+        if self.view.grid.as_deref() != Some(grid.as_str()) {
+            self.view.grid = Some(grid);
+            self.action(Action::ClearSelection)?;
+        }
+        Ok(())
+    }
+
     fn control(&mut self, control: Control) -> Result<()> {
         self.presented_generation = None;
         self.notice = None;
@@ -3222,19 +3235,7 @@ impl Application {
                 self.forget_hover();
                 Ok(())
             }
-            Control::ScatterPalette(name) => {
-                self.tools
-                    .choose_scatter(self.session.catalog(), &name)
-                    .map_err(|error| error.to_string())?;
-                let grid = self.session.catalog().editing().palettes[&name]
-                    .grid
-                    .clone();
-                if self.view.grid.as_deref() != Some(grid.as_str()) {
-                    self.view.grid = Some(grid);
-                    self.action(Action::ClearSelection)?;
-                }
-                Ok(())
-            }
+            Control::ScatterPalette(name) => self.choose_scatter_palette(&name),
             Control::Palette { grid, prototype } => {
                 self.tools
                     .choose_terrain(self.session.catalog(), &grid, &prototype)
