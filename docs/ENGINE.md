@@ -212,21 +212,21 @@ and a flat amount, not the heights it writes. It needs the catalog's
 prepared, the engine (`tilewright_editor_ui::sculpt`), in this order:
 
 1. checks the stroke rule (1 to 4,096 cells, distinct and ordered:
-   `input.budget`, `input.invalid`) and the amount (not 0: `input.invalid`;
-   at most 1,024 either way: `input.budget`);
-2. refuses without the range (`grant.missing`, checked before the view, as
+   input.budget, input.invalid) and the amount (not 0: input.invalid;
+   at most 1,024 either way: input.budget);
+2. refuses without the range (grant.missing, checked before the view, as
    for a paint) and for a cell outside the active view
-   (`scope.outside_view`);
+   (scope.outside_view);
 3. leaves out cells of chunks that do not exist: a height is the ground's,
    and writing one there would create a chunk that holds only heights;
-4. refuses the whole action with `target.unsupported` when a covered cell's
+4. refuses the whole action with target.unsupported when a covered cell's
    height is already outside the range, naming the cell: moving it into
    the range could jump it any distance, and leaving it out would make a
    lower that does not lower;
 5. gives every other cell `clamp(height + amount, min, max)`, computed in
    64-bit integers, so no stored height or amount can overflow, and leaves
    out the cells this does not change (those already at the end the amount
-   moves toward). If none is left the action is refused with `change.none`.
+   moves toward). If none is left the action is refused with change.none.
 
 The result is one `terrain.set` on the `height` grid in which each cell
 expects its committed height (0 in a chunk without a height grid, which
