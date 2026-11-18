@@ -375,9 +375,11 @@ fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation(
         Keycode::Left,
         Keycode::N,
         Keycode::O,
+        Keycode::H,
     ] {
         super::native_key(&mut app, key).unwrap();
     }
+    assert!(!app.tools.heights_visible());
     app.refresh_ui();
     assert_eq!(app.tools.draft_text(), Some(draft.as_str()));
     assert_ne!(
@@ -2048,6 +2050,9 @@ fn p_a_palette_row_and_a_tile_click_review_one_placement_that_accepts_and_undoes
     assert_eq!(app.tools.mode(), ToolMode::Place);
     // The first palette row is chosen on entry.
     assert_eq!(app.tools.placement_choice(), Some("bush"));
+    // The last palette row sits one scroll step down in this window, below
+    // the zone and height toggles.
+    app.sidebar_scroll = 1;
     app.refresh_ui();
     let rows: Vec<_> = app
         .ui
@@ -2160,6 +2165,9 @@ mod scatter;
 mod stored_breaks;
 #[path = "zones.rs"]
 mod zones;
+
+#[path = "heights.rs"]
+mod heights;
 
 #[path = "zone_manage.rs"]
 mod zone_manage;

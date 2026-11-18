@@ -390,6 +390,89 @@ whose names its `fields` member lists, with the same active-view scope. The
 entry carries no field values. The per-uid `movable_uids` and `fields` grants
 keep their own reach and combine with it.
 
+### Heights
+
+World stores one whole-number height per tile and spatial layer (any 32-bit
+value; 0 where a chunk has no height grid). The preview already draws them:
+top-down ground shifts up by its height and isometric ground bends. To read
+them, H (or the sidebar's "Show heights  H" row, in every mode under the zone
+toggle) toggles a **height tint**. It is off by default and the choice is
+kept across modes.
+
+The tint colours each tile of the view whose chunk exists by its stored
+height, on a fixed ramp of eight bands from dark violet (lowest) through teal
+and green to pale yellow (highest). The tint is opaque, so while it shows it
+hides the ground art under it; it is a toggle, and H brings the art back.
+Opaque, a tile shows its band's own colour whatever the ground (light art,
+dark art or a tile without ground), and each band is at least 9 CIE L*
+lighter than the band below it (tested). A translucent tint let the ground
+decide part of a tile's lightness, and neighbouring bands then swapped over
+light and dark ground. So the order reads without telling hues apart, and
+both ends are darker and lighter than any zone tint. The range is the lowest
+and highest stored height among the view's tiles: the catalog view's bounds,
+including tiles drawn outside the window (panned or zoomed away, or lifted
+out of the frame); tiles of chunks that do not exist are neither tinted nor
+counted. It is taken in the shown World (the pending one while a change is
+reviewed, then the committed one after Accept, Cancel or Undo). A tile's band is the nearest of the eight evenly spaced
+band positions, a half rounded up, computed in integers:
+`((h - min) × 14 + (max - min)) div (2 × (max - min))`. The lowest height is
+always band 0 and the highest band 7, whatever the span. A flat view (every
+height the same) has no tint at all. The tint uses the stored heights, not
+the stacked ones, so a profile's `layer_height` does not change it.
+
+While the tint shows, the sidebar gives its legend under the toggle:
+"Heights 0 to 12", then "Darkest: lowest, 0" and "Lightest: highest, 12" with
+the two end bands as swatches. While zone tints are drawn too (the zone
+overlay shows and some tile of the view has a zone), a last line says "Zone
+tints cover it: O hides them", or in Zone mode, where zones always show and
+O does nothing, "Zone tints cover it in Zone mode", since tiles inside zones
+then do not match the swatches. A flat view reads "Heights: all 0, no tint",
+and a view without chunks "Heights: no tiles in view". The tint is made like
+the zone tints: unpickable copies of the prepared cell-reference quads in the
+World's draw order, so objects, nearer tiles and the terrain transition art
+drawn over a tile (such as the sample's grass edges on sand) still draw over
+it, the semantic planes
+and every pick are unchanged, and a tile the prepared cell scene does not draw
+(for example ground lifted far out of the frame) has no tint either. A zone
+tint of the same tile draws over it, and the proposal highlight and the brush
+preview over both; turn the zones off to read the heights alone. The brush
+preview (white) and the proposal highlights (black) signal by lightness too,
+so on the tint a previewed or highlighted tile can read as a neighbouring
+band (a previewed tile lighter, a highlighted one darker); turn the tint off while painting or reviewing a
+proposal to read those marks. When the cells' draw order cannot be computed
+the status line says "Height tint unavailable for this view." (or names the
+height tint with the zone overlay and stroke preview when those are wanted
+too), and when the overlays would pass the scene
+limits it says which were left out.
+
+The inspector of a selected tile shows its height after its value: "Height:
+7", or with a profile `layer_height` the stacked height first, then the
+stored height and the layer's base: "Height: 39 (7 + base 32)" (layer ×
+`layer_height` + height, computed in 128-bit integers; a narrow sidebar cuts
+the line with "..." after the stacked height). A
+tile of a chunk that does not exist reads "Height: none, no chunk here". No
+heights are written yet, and nothing marks a slope "too steep": the profile's
+movement limits are only reported as stored (`overview`'s
+`profile.movement`), because the format does not define what they mean.
+
+Hand test (the sample has no heights, so use a copy):
+
+1. Copy `crates/tilewright-editor-testkit/fixtures/prototype-neutral` to a
+   directory of your own, and give the copy's
+   `planes/main/layers/0/0_0.jsonc` a height grid inside `terrain`, for
+   example 32 rows of 32 numbers `3 × x - y` written as
+   `"height": {"rows": [[0, 3, 6, ...], ...]}`. Provision the copy with
+   `tools/provision-prototype.py --world <copy>` as above.
+2. Press H: the view is tinted dark at the bottom left (-5) to light at the
+   top right (21), and the legend reads "Heights -5 to 21". Press O: the zone
+   tints draw over it; O again hides them.
+3. Click tile (3, 2): the inspector reads "Height: 7". Press H again: the tint
+   and legend go, and the frame is the one before the first H.
+
+The World pixels of the existing demonstration captures are unchanged, since
+the tint is off by default; their interface changed: the sidebar has the
+height toggle row, and the inspector of a selected tile has the height line.
+
 ### Zones
 
 Zone mode (the toolbar's Zone, or N) shows which zone every tile of the view

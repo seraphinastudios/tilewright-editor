@@ -139,7 +139,11 @@ The reports are built by the same functions as the CLI's, from the same
 facts; a test compares each with the CLI's `--json` document. The output
 shapes are those of [docs/CLI.md](CLI.md#output-shapes), with two
 differences: JSON is compact (no whitespace), and each paged list is
-followed by `<list>_cursor` as well as `<list>_more`.
+followed by `<list>_cursor` as well as `<list>_more`. Members that are there
+only sometimes are optional in the output schemas, for example
+`overview`'s `profile.movement` (the profile's movement limits as stored,
+only when it has them; the format does not define their meaning yet, and
+nothing here interprets them).
 
 - Arguments are what the input schemas say, and the server accepts exactly
   what they accept at their bounds (tested from the schemas sent): an

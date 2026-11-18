@@ -123,7 +123,8 @@ other worlds are unchanged. Every report with a `catalog` member has it:
 `overview`, `tile`, `catalog`, `lint` and `render`.
 
 - `tilewright.editor-overview/1`: `profile` (id, version, projection, render
-  and ground layers, terrain layer, terrains, layer height), `definitions`,
+  and ground layers, terrain layer, terrains, layer height, and `movement`
+  only when the profile has movement limits), `definitions`,
   `plane_count`, `planes` (each with title, kind, chunk size, default zone,
   counts of zones, anchors, stairwells, chunks, placed objects, carried
   inventory objects and portals, and per spatial layer its chunk count and
@@ -134,8 +135,16 @@ other worlds are unchanged. Every report with a `catalog` member has it:
   `grants`: per-uid moves and fields, terrain grids and values,
   per-prototype object entries (layer, fields, default field names,
   portal), and the zone and anchor flags.
+  `profile.movement` is `{"max_step": N, "fall_unit": N}`, the profile's
+  numbers as stored; the member is absent when the profile has none, so
+  reports of other worlds are unchanged. The World format stores these
+  limits but does not yet define what they mean (which neighbours, which
+  direction, what a fall unit is), so the editor reports them and does not
+  interpret them: no report, lint finding or overlay judges a slope by them.
 - `tilewright.editor-tile/1`: `tile`, `chunk` (path and chunk coordinates, or
-  null), `ground` per grid, `height`, `zone` (id, whether it is the plane
+  null), `ground` per grid, `height` (the tile's stored height, relative to
+  its layer; 0 in a chunk without a height grid, null when the chunk does
+  not exist), `zone` (id, whether it is the plane
   default, path innermost first, display name), `catalog.in_view`, `objects`
   on the tile in source order (uid, prototype, render layer, sub-layer, z,
   field overrides with their kind, portal target, direct inventory entries,
