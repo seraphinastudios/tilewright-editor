@@ -10,9 +10,21 @@ mod common;
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
+/// Remove the neutral sample's own `editing.palettes` from the copy at
+/// `root`.
+fn without_palettes(root: &Path) {
+    common::edit(root, "preview.jsonc", |catalog| {
+        catalog["editing"]
+            .as_object_mut()
+            .unwrap()
+            .remove("palettes");
+    });
+}
+
 #[test]
 fn catalog_lists_scatter_palettes_only_when_the_catalog_has_them() {
     let (_plain_directory, plain) = common::fixture_copy("prototype-neutral");
+    without_palettes(&plain);
     let (_directory, root) = common::fixture_copy("prototype-neutral");
     common::edit(&root, "preview.jsonc", |catalog| {
         catalog["editing"]["palettes"] = json!([
@@ -158,6 +170,7 @@ fn palettes_after_a_large_prototype_list_still_fit_at_the_default_limit() {
 #[test]
 fn a_catalog_without_palettes_has_an_empty_palettes_section() {
     let (_directory, root) = common::fixture_copy("prototype-neutral");
+    without_palettes(&root);
     let mut server = common::server(&root);
     let page = common::call(&mut server, "catalog", &json!({"section": "palettes"}))
         .structured()

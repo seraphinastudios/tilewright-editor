@@ -108,5 +108,7 @@
   "terrain_palette": [],
   "terrain_palette_more": 0,
   "zone_palette": [],
-  "zone_palette_more": 0
+  "zone_palette_more": 0,
+  "palettes": [],
+  "palettes_more": 0
 }

@@ -127,7 +127,10 @@
       "terrain_palette_cursor": null,
       "zone_palette": [],
       "zone_palette_more": 0,
-      "zone_palette_cursor": null
+      "zone_palette_cursor": null,
+      "palettes": [],
+      "palettes_more": 0,
+      "palettes_cursor": null
     },
     "isError": false,
     "_meta": {

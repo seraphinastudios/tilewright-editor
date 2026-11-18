@@ -91,3 +91,5 @@ terrain_palette: (none)
 terrain_palette_more: 0
 zone_palette: (none)
 zone_palette_more: 0
+palettes: (none)
+palettes_more: 0
