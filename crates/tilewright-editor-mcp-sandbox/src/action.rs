@@ -12,13 +12,17 @@ use tilewright_jsonc::Value;
 
 /// Every action kind and its members besides `kind` and `expected`, in
 /// the decoder's order. Each member's schema is [`member`]'s.
-pub const KINDS: [(&str, &[&str]); 15] = [
+pub const KINDS: [(&str, &[&str]); 16] = [
     ("move", &["uid", "x", "y"]),
     ("set_field", &["uid", "field", "value"]),
     ("paint", &["plane", "layer", "grid", "x", "y", "proto"]),
     (
         "paint_stroke",
         &["plane", "layer", "grid", "cells", "proto"],
+    ),
+    (
+        "fill_terrain",
+        &["plane", "layer", "grid", "x", "y", "proto", "contiguous"],
     ),
     ("paint_zones", &["plane", "layer", "cells", "zone"]),
     ("remove", &["uid"]),
@@ -91,6 +95,7 @@ fn member(kind: &str, name: &str) -> String {
             layer(),
             cell()
         ),
+        "contiguous" => r#"{"type":"boolean","description":"The fill rule. true: set proto on the cells joined to the start cell (x, y) through edge neighbours (not diagonals) that hold the same terrain as the start cell (an empty start cell matches empty cells), within the catalog's active view. false: set proto on every cell of the active view that holds the same terrain as the start cell (an empty start cell matches empty cells). The start cell must be in the active view; cells already holding proto are left out."}"#.to_owned(),
         "name" | "parent" => optional_text(),
         "zone" if kind == "paint_zones" => optional_text(),
         _ => text(),

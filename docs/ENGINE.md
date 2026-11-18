@@ -78,8 +78,8 @@ descriptor it reports back with `Session::set_recovery_descriptor`.
 
 Every edit action names its target by uid, plane, layer, grid and plane
 coordinates, never by the frame selection: `Move`, `SetField`, `Remove`
-and `SetPortal` by uid; `Paint`, `PaintStroke`, `PaintZones` and `Place` by
-plane tile; zone and anchor actions by plane and id. `Select` and
+and `SetPortal` by uid; `Paint`, `PaintStroke`, `FillTerrain`, `PaintZones`
+and `Place` by plane tile; zone and anchor actions by plane and id. `Select` and
 `ClearSelection` only change what the desktop app highlights; an accepted
 placement selects the new object.
 
@@ -95,6 +95,51 @@ Per-uid grants (`movable_uids` and `fields`) are not bounded by the view's
 tiles. A per-uid field edit applies to its object wherever it is. A per-uid
 move still needs a placed (not carried) object in the active plane and
 spatial layer, and a destination inside the view.
+
+## Fill and replace
+
+`FillTerrain { plane, layer, grid, x, y, proto, contiguous, expected }`
+records a fill as it was meant, not its cells. When it is prepared, the
+engine works the cells out from the committed World
+(`tilewright_editor_ui::fill::region`):
+
+- The start tile `x, y` must be a tile of the active view (its plane, spatial
+  layer and bounds). Its value on ground grid `grid` is the value matched; a
+  tile with no terrain on that grid (an empty cell, or one of a chunk that
+  does not exist) matches tiles with no terrain.
+- With `contiguous` (fill): the tiles reachable from the start tile through
+  edge neighbours (x ± 1 or y ± 1; diagonal tiles are not neighbours) that
+  hold the matched value, never stepping outside the view, so an area that
+  joins only outside the view is two areas.
+- Without (replace): every tile of the view that holds the matched value.
+
+The cells are a set, ordered by x, then y, the order of a stroke's cells, so
+the result depends only on the World and the view, never on the order cells
+are visited in. They then go through the brush stroke's planner unchanged:
+the stroke rule (at least one, at most the 4,096-cell cap, distinct and
+ordered; a view holds at most 4,096 cells, so a fill always fits, but the
+rule is still checked), the terrain grant and view checks, one
+`terrain.set` setting `proto` with each cell expecting its committed value
+(`null` for no terrain) and cells already holding `proto` left out. A fill
+of an area that already holds `proto` is refused with the code change.none. Filling a region of
+a chunk that does not exist creates it, as a stroke there does.
+
+The start tile is checked first, exactly as a one-cell `Paint` there: an
+ungranted grid or value is refused with the code grant.missing wherever
+the tile is, a tile outside the view with scope.outside_view, and a stale
+revision with revision.stale. No refusal code is new. Because the cells are expanded
+from the committed World each time, a recorded fill prepared again on the
+same World under the same active view gives the same transaction byte for
+byte (and under another actor, all but the actor), and one whose covered
+cells changed since is refused by World's per-cell `expect`, or differs, and
+is not applied. The active view is an input of a fill as much as the World:
+under a catalog with other view bounds, the same fill on the same World
+can cover other cells, and then it prepares another change.
+
+`Session::fill_changes` answers, for a `FillTerrain`, the cells dispatching
+it would change now, from the same code; it prepares nothing. The desktop's
+hover preview and a proposal step's map highlight use it, or the region
+function it is built on.
 
 ## Refusal codes
 
