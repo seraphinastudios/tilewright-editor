@@ -301,6 +301,69 @@ To try it by hand in a real window:
 3. Replace from a cell with no terrain in a sparse view: every empty cell of
    the view, and only of the view, is marked. Cancel.
 
+### Scatter palettes
+
+A catalog may name palettes for the scatter brush in an optional
+`editing.palettes` member, next to the grants: each a weighted set of
+terrain values the catalog already grants on one ground grid.
+
+```json
+"editing": {
+  "terrain": [{"grid": "floor", "values": ["grass", "sand"]}],
+  "palettes": [
+    {"name": "speckle", "grid": "floor", "entries": [
+      {"value": "grass", "weight": 3},
+      {"value": "sand", "weight": 1}
+    ]}
+  ]
+}
+```
+
+Each palette has a `name` (a World identifier of at most 64 bytes, unique
+in the catalog), a `grid` with an `editing.terrain` grant, and 1 to 32
+`entries`, each a `value` granted on that grid (no value twice) and an
+integer `weight` from 1 to 10,000. A catalog holds at most 32 palettes. A
+catalog that breaks any of these rules does not load. The member is the
+same in catalog formats 1 and 2; a catalog without it loads and behaves
+exactly as before, and an editor from before palettes refuses a catalog
+that has it, as it refuses any member it does not know
+([ADR 0005](../decisions/0005-catalog-palettes.md)). The `catalog` command
+and MCP tool list the palettes under `palettes` (name, grid, and each
+value with its weight), only when the catalog has some.
+
+In Terrain mode the sidebar lists the palettes after the terrain palette,
+under "Scatter palettes", each row naming its grid, its name and its
+weighted values ("floor / speckle: grass 3, sand 1"). Choosing one makes
+the brush scatter it instead of painting one terrain; choosing a terrain
+value again goes back to painting. Fill and Replace paint one terrain, so
+with a palette chosen they ask for a terrain value.
+
+A scatter stroke is a brush stroke in every other way: the same brush,
+footprint, 4,096-cell cap, live preview, one pending change and one undo
+step. When the press begins it, the editor draws a fresh seed from the
+operating system's random source; each covered cell then gets one of the
+palette's values, drawn by weight from the seed and the cell alone
+([docs/ENGINE.md](ENGINE.md#scatter)), so a value is as likely as its
+weight's share of the total. The status line names the palette and the
+seed ("Painting 18 cells from palette speckle (seed 1234), 11 to change;
+release to review."). The preview marks exactly the cells the release will
+change, computed by the engine from the same seed: cells that already hold
+their drawn value stay unmarked, as for a stroke. It marks which cells
+change, not which value each gets; the review and the pending scene show
+the values. The seed is part of the recorded action, so a proposal step
+replays the same values; another stroke draws another seed, and stroking
+the same cells again usually changes some of them again.
+
+To try it by hand in a real window, with a copy of the sample whose
+catalog has the palette above:
+
+1. In Terrain mode choose "floor / speckle", then drag across a grass
+   area: the white preview marks about a quarter of the cells (those that
+   draw sand) and the status line names the seed.
+2. Release: the pending scene shows grass and sand mixed about 3 to 1 where
+   the preview was. Accept, then Undo: one step restores the area.
+3. Drag the same area again: another seed gives another mix.
+
 ### Deleting objects
 
 Select an object, then press Delete or choose Delete in the toolbar or the

@@ -171,6 +171,14 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let fixture = tree(&fixture_world("prototype-neutral"));
     let source = root.join("source");
     copy_tree(&fixture_world("prototype-neutral"), &source);
+    // A scatter palette in the source catalog, so a scatter step can be
+    // recorded and replayed.
+    let catalog_path = source.join("preview.jsonc");
+    let mut catalog: Value =
+        serde_json::from_slice(&std::fs::read(&catalog_path).unwrap()).unwrap();
+    catalog["editing"]["palettes"] = json!([{"name": "speckle", "grid": "floor",
+        "entries": [{"value": "grass", "weight": 3}, {"value": "sand", "weight": 1}]}]);
+    std::fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
     let original = tree(&source);
     let parent = root.join("sandboxes");
     std::fs::create_dir(&parent).unwrap();
@@ -223,9 +231,15 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         json!({"kind": "fill_terrain", "plane": "main", "layer": 0, "grid": "floor",
         "x": 2, "y": 0, "proto": "sand", "contiguous": true}),
     );
+    // A scatter, recorded with its palette name and seed: the desktop draws
+    // the same values again.
+    runner.step(
+        json!({"kind": "scatter_terrain", "plane": "main", "layer": 0, "grid": "floor",
+        "cells": [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]], "palette": "speckle", "seed": 1234}),
+    );
     let submitted = runner.simple("submit");
     let proposal = &submitted["proposal"];
-    assert_eq!(proposal["steps"], 8);
+    assert_eq!(proposal["steps"], 9);
     assert_eq!(proposal["base"], base.as_str());
     let name = proposal["file"].as_str().unwrap().to_owned();
     runner.simple("quit");
@@ -388,7 +402,7 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     assert_eq!(opened["agent"], AGENT);
     assert_eq!(opened["person"], PERSON);
     assert!(!opened.to_string().contains('\u{202e}'));
-    for step in 1..=8 {
+    for step in 1..=9 {
         let record = evidence(&format!("proposal-step-{step:06}.json"));
         assert_eq!(record["step"], step);
         assert_eq!(record["actor"], PERSON);
@@ -408,13 +422,13 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         );
     }
     assert_eq!(
-        evidence("proposal-step-8-applied.json")["proposal"]["state"],
+        evidence("proposal-step-9-applied.json")["proposal"]["state"],
         "finished"
     );
-    assert!(!desktop.join("evidence/proposal-step-000009.json").exists());
+    assert!(!desktop.join("evidence/proposal-step-000010.json").exists());
     // One recovery record per Accept, each named by its step's evidence.
     let retained = tree(&desktop.join("recovery"));
-    let named: Vec<String> = (1..=8)
+    let named: Vec<String> = (1..=9)
         .map(|step| {
             evidence(&format!("proposal-step-{step:06}.json"))["recovery"]["name"]
                 .as_str()
@@ -430,7 +444,7 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
             .iter()
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
-        8
+        9
     );
 
     // Neither the source nor the fixture changed.

@@ -247,6 +247,9 @@ pub struct ToolState {
     next_draft: u64,
     brush: Brush,
     stroke: Option<Stroke>,
+    /// The catalog palette the brush scatters instead of one terrain; a
+    /// terrain choice and a palette choice exclude each other.
+    scatter: Option<String>,
     /// What a press does in Terrain mode; kept across modes like the brush.
     terrain_rule: TerrainRule,
     zone: Option<ZoneChoice>,
@@ -1057,6 +1060,26 @@ impl ToolState {
             grid: grid.into(),
             prototype: prototype.into(),
         });
+        self.scatter = None;
+        Ok(())
+    }
+    /// The catalog palette the brush scatters, when one is chosen.
+    pub fn scatter_choice(&self) -> Option<&str> {
+        self.scatter.as_deref()
+    }
+    /// Choose catalog palette `name` (`editing.palettes`) for the brush to
+    /// scatter, in place of the chosen terrain. Fill and Replace paint one
+    /// terrain, so they need a terrain chosen again.
+    pub fn choose_scatter(
+        &mut self,
+        catalog: &PreviewCatalog,
+        name: &str,
+    ) -> Result<(), ToolError> {
+        if !catalog.editing().palettes.contains_key(name) {
+            return Err(ToolError("The catalog has no palette of this name"));
+        }
+        self.scatter = Some(name.to_owned());
+        self.terrain = None;
         Ok(())
     }
     pub fn placement_choice(&self) -> Option<&str> {
@@ -1552,6 +1575,18 @@ impl ToolState {
         cell: &SelectionKey,
         pending: bool,
     ) -> Result<(), ToolError> {
+        self.begin_seeded_stroke(inspector, cell, pending, 0)
+    }
+    /// [`ToolState::begin_stroke`], with `seed` for a scatter stroke: one of
+    /// the chosen palette ([`ToolState::choose_scatter`]), recorded in its
+    /// [`Action::ScatterTerrain`]. Other strokes ignore the seed.
+    pub fn begin_seeded_stroke(
+        &mut self,
+        inspector: &Inspector<'_>,
+        cell: &SelectionKey,
+        pending: bool,
+        seed: u32,
+    ) -> Result<(), ToolError> {
         if self.mode == ToolMode::Zone {
             return self.begin_zone_stroke(inspector, cell, pending);
         }
@@ -1559,6 +1594,9 @@ impl ToolState {
             return Err(ToolError(
                 "The Fill and Replace rules click; they do not drag",
             ));
+        }
+        if self.scatter.is_some() {
+            return self.begin_scatter_stroke(inspector, cell, pending, seed);
         }
         let Action::Paint {
             plane,
@@ -1590,6 +1628,66 @@ impl ToolState {
             bounds,
         );
         stroke.stamp([x, y]);
+        self.stroke = Some(stroke);
+        Ok(())
+    }
+    /// A scatter stroke: checked like a paint, against the chosen palette's
+    /// grid instead of a terrain choice.
+    fn begin_scatter_stroke(
+        &mut self,
+        inspector: &Inspector<'_>,
+        cell: &SelectionKey,
+        pending: bool,
+        seed: u32,
+    ) -> Result<(), ToolError> {
+        available(pending)?;
+        if self.mode != ToolMode::Terrain {
+            return Err(ToolError("Terrain tool is not active"));
+        }
+        let stamp = inspector
+            .stamp
+            .as_ref()
+            .filter(|s| &s.key == cell)
+            .ok_or(ToolError("Paint requires the current inspected cell"))?;
+        let name = self
+            .scatter
+            .clone()
+            .ok_or(ToolError("Choose a palette to scatter"))?;
+        let SelectionKey::Cell {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+        } = cell
+        else {
+            return Err(ToolError("Paint requires a cell"));
+        };
+        if inspector
+            .catalog
+            .editing()
+            .palettes
+            .get(&name)
+            .is_none_or(|palette| &palette.grid != grid)
+        {
+            return Err(ToolError("The palette is unavailable for this grid"));
+        }
+        let (_, _, bounds) = inspector.catalog.view();
+        self.retire_draft();
+        let mut stroke = Stroke::begin(
+            plane.clone(),
+            *layer,
+            grid.clone(),
+            StrokeTarget::Scatter {
+                palette: name,
+                seed,
+            },
+            self.brush,
+            stamp.revision,
+            stamp.generation,
+            bounds,
+        );
+        stroke.stamp([*x, *y]);
         self.stroke = Some(stroke);
         Ok(())
     }

@@ -154,6 +154,7 @@ mod insertion;
 pub mod inspector;
 pub mod portals;
 mod removal;
+pub mod scatter;
 pub mod text_input;
 pub mod tools;
 pub mod uid;

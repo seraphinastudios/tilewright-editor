@@ -5,7 +5,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fmt::Write, fs, path::Path};
 use tilewright_editor_preview::{
-    AnchorGrant, ObjectGrant, PreviewLimits, SelectionKey, ZoneGrant, loader, prepare, render_scene,
+    AnchorGrant, ObjectGrant, Palette, PreviewLimits, SelectionKey, ZoneGrant, loader, prepare,
+    render_scene,
 };
 use tilewright_render_api::{BackendPreference, TargetDescriptor, TargetKind};
 use tilewright_render_resources::ResourceRequest;
@@ -1155,4 +1156,203 @@ fn the_file_limit_counts_the_header_so_2048_by_2048_is_refused() {
     let mut catalog = original;
     catalog["resources"][0]["width"] = json!(0);
     assert!(load_catalog(dir.path(), &root, &world, &catalog).is_err());
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn optional_palettes_parse_strictly_in_both_formats_and_their_absence_changes_nothing() {
+    let (dir, root, world, mut original) = fixture(false, false);
+    original["editing"]["terrain"] = json!([{"grid": "floor", "values": ["grass", "marker"]}]);
+    let (absent, _) = load_catalog(dir.path(), &root, &world, &original).unwrap();
+    assert!(absent.editing().palettes.is_empty());
+    let entry = |value: &str, weight: Value| json!({"value": value, "weight": weight});
+    let palette =
+        |name: &str, entries: Value| json!({"name": name, "grid": "floor", "entries": entries});
+    for format in ["tilewright.editor-preview/1", "tilewright.editor-preview/2"] {
+        let mut granted = original.clone();
+        granted["format"] = json!(format);
+        granted["editing"]["palettes"] = json!([
+            palette(
+                "meadow",
+                json!([entry("marker", json!(1)), entry("grass", json!(3))])
+            ),
+            palette("bare", json!([entry("grass", json!(10_000))])),
+        ]);
+        let (catalog, _) = load_catalog(dir.path(), &root, &world, &granted).unwrap();
+        let palettes = &catalog.editing().palettes;
+        assert_eq!(palettes.keys().collect::<Vec<_>>(), ["bare", "meadow"]);
+        let meadow = Palette {
+            grid: "floor".into(),
+            entries: [("grass".to_owned(), 3), ("marker".to_owned(), 1)].into(),
+        };
+        assert_eq!(palettes["meadow"], meadow);
+        assert_eq!(meadow.total_weight(), 4);
+        // Every other capability is exactly what the catalog without the
+        // member grants.
+        assert_eq!(catalog.editing().terrain, absent.editing().terrain);
+        assert_eq!(catalog.editing().objects, absent.editing().objects);
+        assert_eq!(catalog.editing().zones, absent.editing().zones);
+    }
+    // An empty list is allowed and names no palette.
+    let mut empty = original.clone();
+    empty["editing"]["palettes"] = json!([]);
+    let (catalog, _) = load_catalog(dir.path(), &root, &world, &empty).unwrap();
+    assert!(catalog.editing().palettes.is_empty());
+
+    let good = || json!([entry("grass", json!(1))]);
+    let many = |count: usize| {
+        Value::Array(
+            (0..count)
+                .map(|index| palette(&format!("p{index}"), good()))
+                .collect(),
+        )
+    };
+    let entries = |count: usize| {
+        let mut list = vec![entry("grass", json!(1))];
+        list.extend((1..count).map(|_| entry("marker", json!(1))));
+        Value::Array(list)
+    };
+    for (case, (palettes, expected)) in [
+        (json!({}), "expected array"),
+        (
+            json!([{"name": "meadow", "grid": "floor"}]),
+            "unknown or missing",
+        ),
+        (
+            json!([{"name": "meadow", "grid": "floor", "entries": good(), "seed": 1}]),
+            "unknown or missing",
+        ),
+        (json!([palette("", good())]), "bounded nonempty"),
+        (json!([palette("Meadow", good())]), "invalid identifier"),
+        (json!([palette(&"m".repeat(65), good())]), "name too long"),
+        (
+            json!([palette("a", good()), palette("a", good())]),
+            "duplicate palette name",
+        ),
+        (
+            json!([{"name": "meadow", "grid": "edge", "entries": good()}]),
+            "no terrain capability",
+        ),
+        (json!([palette("meadow", json!([]))]), "1 to 32 entries"),
+        (json!([palette("meadow", entries(33))]), "1 to 32 entries"),
+        (
+            json!([palette("meadow", json!([entry("nothing", json!(1))]))]),
+            "not granted",
+        ),
+        (
+            json!([palette(
+                "meadow",
+                json!([entry("grass", json!(1)), entry("grass", json!(2))])
+            )]),
+            "duplicate palette value",
+        ),
+        (
+            json!([palette("meadow", json!([entry("grass", json!(0))]))]),
+            "weight",
+        ),
+        (
+            json!([palette("meadow", json!([entry("grass", json!(-1))]))]),
+            "weight",
+        ),
+        (
+            json!([palette("meadow", json!([entry("grass", json!(10_001))]))]),
+            "weight",
+        ),
+        (
+            json!([palette("meadow", json!([entry("grass", json!(1.5))]))]),
+            "weight",
+        ),
+        (
+            json!([palette("meadow", json!([entry("grass", json!(1e30))]))]),
+            "weight",
+        ),
+        (
+            json!([palette("meadow", json!([entry("grass", json!("1"))]))]),
+            "weight",
+        ),
+        (
+            // The strict reader itself refuses an integer past i64.
+            json!([palette("meadow", json!([entry("grass", json!(u64::MAX))]))]),
+            "integer_out_of_range",
+        ),
+        (
+            json!([palette("meadow", json!([{"value": "grass"}]))]),
+            "unknown or missing",
+        ),
+        (many(33), "too many palettes"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut c = original.clone();
+        c["editing"]["palettes"] = palettes;
+        let Err(error) = load_catalog(dir.path(), &root, &world, &c) else {
+            panic!("case {case} loaded");
+        };
+        assert!(error.contains(expected), "case {case}: {error}");
+    }
+    // A refusal names the palette (by its place until its name is known
+    // to be valid) and the entry's value.
+    for (palettes, expected) in [
+        (
+            json!([palette("a", good()), palette(&"m".repeat(65), good())]),
+            "palette 2: palette name too long",
+        ),
+        (
+            json!([
+                palette("a", good()),
+                palette("meadow", json!([entry("grass", json!(0))]))
+            ]),
+            "palette meadow value grass: palette weight must be an integer from 1 to 10000",
+        ),
+        (
+            json!([palette(
+                "meadow",
+                json!([entry("marker", json!(1)), entry("marker", json!(2))])
+            )]),
+            "palette meadow value marker: duplicate palette value",
+        ),
+        (
+            json!([palette("meadow", json!([entry("nothing", json!(1))]))]),
+            "palette meadow value nothing: palette value is not granted on its grid",
+        ),
+        (
+            json!([palette("a", good()), palette("Bad", good())]),
+            "palette 2: invalid identifier",
+        ),
+        (
+            json!([palette("a", good()), palette("a", good())]),
+            "palette a: duplicate palette name",
+        ),
+        (
+            json!([{"name": "meadow", "grid": "edge", "entries": good()}]),
+            "palette meadow: palette grid has no terrain capability",
+        ),
+    ] {
+        let mut c = original.clone();
+        c["editing"]["palettes"] = palettes;
+        let Err(error) = load_catalog(dir.path(), &root, &world, &c) else {
+            panic!("loaded: {expected}");
+        };
+        assert_eq!(error, expected);
+    }
+    // Exactly the bounds load.
+    let mut c = original.clone();
+    let mut largest = entries(1);
+    largest[0]["weight"] = json!(10_000);
+    c["editing"]["palettes"] = many(32);
+    c["editing"]["palettes"][0] = palette(&"m".repeat(64), largest);
+    let (catalog, _) = load_catalog(dir.path(), &root, &world, &c).unwrap();
+    assert_eq!(catalog.editing().palettes.len(), 32);
+    // A value granted on another grid only is not enough: the grant is per
+    // grid. (Only `floor` exists in this profile, so a palette on a grid
+    // without a terrain grant is the case above.)
+    let mut c = original;
+    c["editing"]["terrain"] = json!([{"grid": "floor", "values": ["marker"]}]);
+    c["editing"]["palettes"] = json!([palette("meadow", good())]);
+    assert!(
+        load_catalog(dir.path(), &root, &world, &c)
+            .err()
+            .is_some_and(|error| error.contains("not granted"))
+    );
 }

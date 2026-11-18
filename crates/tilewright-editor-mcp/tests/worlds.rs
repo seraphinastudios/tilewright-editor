@@ -37,6 +37,14 @@ fn crowded() -> (tempfile::TempDir, PathBuf) {
             .unwrap()
             .push(json!(proto));
     }
+    // The most scatter palettes a catalog may name, a paged list too.
+    catalog["editing"]["palettes"] = (0..32)
+        .map(|index| {
+            json!({"name": format!("crowd_palette_{index:02}"), "grid": "floor",
+                "entries": (0..8).map(|value| json!({"value": format!("crowd_{value:03}"),
+                    "weight": index + value + 1})).collect::<Vec<_>>()})
+        })
+        .collect();
     // Seventy objects on tile (0, 0), each with a portal to that tile.
     let mut objects = Vec::new();
     for index in 0..70 {

@@ -192,6 +192,14 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let fixture = tree(&fixture_world("prototype-neutral"));
     let source = root.join("source");
     copy_tree(&fixture_world("prototype-neutral"), &source);
+    // A scatter palette in the source catalog, so a scatter step can be
+    // recorded and replayed.
+    let catalog_path = source.join("preview.jsonc");
+    let mut catalog: Value =
+        serde_json::from_slice(&std::fs::read(&catalog_path).unwrap()).unwrap();
+    catalog["editing"]["palettes"] = json!([{"name": "speckle", "grid": "floor",
+        "entries": [{"value": "grass", "weight": 3}, {"value": "sand", "weight": 1}]}]);
+    std::fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
     let original = tree(&source);
     let parent = root.join("sandboxes");
     std::fs::create_dir(&parent).unwrap();
@@ -251,6 +259,16 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         json!({"kind": "fill_terrain", "plane": "main", "layer": 0, "grid": "floor",
         "x": 3, "y": 3, "proto": "sand", "contiguous": false}),
     );
+    // A scatter, recorded with its palette name and seed; the catalog tool
+    // lists the palette.
+    assert_eq!(
+        client.ok("catalog", json!({}))["palettes"][0]["name"],
+        "speckle"
+    );
+    client.step(
+        json!({"kind": "scatter_terrain", "plane": "main", "layer": 0, "grid": "floor",
+        "cells": [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]], "palette": "speckle", "seed": 1234}),
+    );
     // The observe tools see the sandbox at its revision, and render
     // returns the real encoder's PNG.
     let now = client.revision();
@@ -265,7 +283,7 @@ fn an_mcp_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     assert!(image["data"].as_str().unwrap().starts_with("iVBORw0KGgo"));
     let submitted = client.ok("submit", json!({}));
     let proposal = &submitted["proposal"];
-    assert_eq!(proposal["steps"], 5);
+    assert_eq!(proposal["steps"], 6);
     assert_eq!(proposal["base"], base.as_str());
     let name = proposal["file"].as_str().unwrap().to_owned();
     // The client ends the session by closing the server's input.

@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 //! `catalog`: the editor catalog's prototypes and the terrain and zone
-//! palettes, optionally filtered as the desktop Place palette filters.
+//! palettes, optionally filtered as the desktop Place palette filters, and
+//! the scatter palettes (`editing.palettes`) when the catalog has any.
 use crate::limits::{MAXIMUM_FIELDS, MAXIMUM_PROTOTYPES, MAXIMUM_TERRAIN_CHOICES, MAXIMUM_ZONES};
 use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::Observed;
+use tilewright_editor_preview::{MAXIMUM_PALETTE_ENTRIES, MAXIMUM_PALETTES};
 use tilewright_editor_ui::{tools::palette_matches, zones};
 
 pub const FORMAT: &str = "tilewright.editor-catalog/1";
@@ -16,8 +18,9 @@ pub fn report(observed: &Observed, filter: Option<&str>) -> Map {
     report_paged(observed, filter, &Bounded)
 }
 
-/// The pageable lists of the report, by their path in it.
-pub const SECTIONS: [&str; 3] = ["prototypes", "terrain_palette", "zone_palette"];
+/// The pageable lists of the report, by their path in it. `palettes` is
+/// in the report only when the catalog has `editing.palettes`.
+pub const SECTIONS: [&str; 4] = ["prototypes", "terrain_palette", "zone_palette", "palettes"];
 
 /// [`report`] with its [`SECTIONS`] listed as `pager` decides.
 pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager) -> Map {
@@ -79,7 +82,7 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
         .into_iter()
         .flat_map(|plane| plane.zones.keys().map(move |id| (plane, id.as_str())))
         .filter(|(_, id)| keep(id));
-    header
+    let report = header
         .paged(
             pager,
             "prototypes",
@@ -108,5 +111,44 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
                     .optional_text("name", zones::display_name(plane, id))
                     .into()
             },
-        )
+        );
+    palettes(report, editing, &keep, pager)
+}
+
+/// `palettes`, the catalog's `editing.palettes` kept by name, after the
+/// other lists and paged like them. Only a catalog with palettes has the
+/// member, so every report of another catalog is unchanged.
+fn palettes(
+    report: Map,
+    editing: &tilewright_editor_preview::EditingCapabilities,
+    keep: &dyn Fn(&str) -> bool,
+    pager: &dyn Pager,
+) -> Map {
+    if editing.palettes.is_empty() {
+        return report;
+    }
+    report.paged(
+        pager,
+        "palettes",
+        "palettes",
+        editing.palettes.iter().filter(|(name, _)| keep(name)),
+        MAXIMUM_PALETTES,
+        |(name, palette)| {
+            Map::new()
+                .text("name", name)
+                .text("grid", &palette.grid)
+                .bounded(
+                    "entries",
+                    &palette.entries,
+                    MAXIMUM_PALETTE_ENTRIES,
+                    |(value, weight)| {
+                        Map::new()
+                            .text("value", value)
+                            .with("weight", Node::Integer(i64::from(*weight)))
+                            .into()
+                    },
+                )
+                .into()
+        },
+    )
 }

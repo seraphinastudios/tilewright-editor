@@ -607,6 +607,7 @@ fn expected(action: &Action) -> [u8; 32] {
         | Action::Paint { expected, .. }
         | Action::PaintStroke { expected, .. }
         | Action::FillTerrain { expected, .. }
+        | Action::ScatterTerrain { expected, .. }
         | Action::PaintZones { expected, .. }
         | Action::Remove { expected, .. }
         | Action::Place { expected, .. }

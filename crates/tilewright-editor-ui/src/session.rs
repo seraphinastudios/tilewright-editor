@@ -102,6 +102,22 @@ pub enum Action {
         contiguous: bool,
         expected: [u8; 32],
     },
+    /// One scatter brush gesture: each covered cell of the active view on
+    /// ground grid `grid` gets a value of the catalog palette `palette`
+    /// (`editing.palettes`), drawn by weight for that cell from `seed`
+    /// ([`crate::scatter`]), in one reviewed `terrain.set`. The palette is
+    /// named, not copied: it is read from the catalog when the action is
+    /// prepared. Cells whose drawn value they already hold are left out;
+    /// every other cell expects its committed value.
+    ScatterTerrain {
+        plane: String,
+        layer: i32,
+        grid: String,
+        cells: Vec<[i64; 2]>,
+        palette: String,
+        seed: u32,
+        expected: [u8; 32],
+    },
     /// One zone brush gesture: every covered cell of the active view gets
     /// `zone`, or is emptied (`None`, the plane's default zone), in one
     /// reviewed `terrain.set` on the grid `zone`. Needs `editing.zones.paint`.
@@ -347,6 +363,7 @@ enum Preparing {
 
 /// One cell a `terrain.set` changes and the value it holds before.
 type TerrainChange<'w> = ([i64; 2], Option<&'w str>);
+use crate::scatter::ScatterChange;
 
 pub struct Session {
     history: History,
@@ -774,8 +791,61 @@ impl Session {
             crate::brush::StrokeTarget::Zone(zone) => {
                 self.zone_plan(stroke.plane(), stroke.layer(), &cells, zone.as_deref())?
             }
+            crate::brush::StrokeTarget::Scatter { palette, seed } => self
+                .scatter_plan(
+                    stroke.plane(),
+                    stroke.layer(),
+                    stroke.grid(),
+                    &cells,
+                    palette,
+                    *seed,
+                )?
+                .into_iter()
+                .map(|(at, before, _)| (at, before))
+                .collect(),
         };
         Ok(changes.into_iter().map(|(at, _)| at).collect())
+    }
+    /// The cells of one scatter stroke that its `terrain.set` changes, each
+    /// with its committed value and the value [`crate::scatter::value`]
+    /// draws for it, in stroke order. Dispatch of [`Action::ScatterTerrain`]
+    /// and [`Session::stroke_changes`] both use this. Refused like a brush
+    /// stroke (cells, grant, view, grid), and with
+    /// [`RefusalCode::GrantMissing`] when the catalog has no palette of
+    /// that name for `grid`.
+    fn scatter_plan<'w>(
+        &'w self,
+        plane: &str,
+        layer: i32,
+        grid: &str,
+        cells: &[[i64; 2]],
+        palette: &str,
+        seed: u32,
+    ) -> Result<Vec<ScatterChange<'w>>, SessionError> {
+        crate::scatter::plan(
+            self.history.document().world(),
+            &self.catalog,
+            plane,
+            layer,
+            grid,
+            cells,
+            palette,
+            seed,
+        )
+    }
+    /// A fresh scatter seed from the session's uid source: the operating
+    /// system's random source, or the deterministic source tests and the
+    /// scripted demonstration inject. The desktop draws one when a scatter
+    /// stroke begins; the seed is then part of the recorded action.
+    ///
+    /// # Errors
+    /// [`RefusalCode::UidUnavailable`] when the source fails.
+    pub fn draw_seed(&mut self) -> Result<u32, SessionError> {
+        let mut bytes = [0; 16];
+        self.uids
+            .fill(&mut bytes)
+            .map_err(|error| SessionError::new(RefusalCode::UidUnavailable, error.0))?;
+        Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
     /// The cells a fill from `at` changes, each with its committed value,
     /// in increasing order of x, then y. Dispatch of
@@ -1141,6 +1211,7 @@ impl Session {
                     | Action::Paint { .. }
                     | Action::PaintStroke { .. }
                     | Action::FillTerrain { .. }
+                    | Action::ScatterTerrain { .. }
                     | Action::PaintZones { .. }
                     | Action::Remove { .. }
                     | Action::Place { .. }
@@ -1354,6 +1425,23 @@ impl Session {
                 );
                 // The same single operation as a brush stroke: replay of a
                 // recorded fill on the same World gives the same bytes.
+                self.prepare(expected,&json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":grid,"cells":cells}))
+            }
+            Action::ScatterTerrain {
+                plane,
+                layer,
+                grid,
+                cells,
+                palette,
+                seed,
+                expected,
+            } => {
+                let cells: Vec<Value> = self
+                    .scatter_plan(&plane, layer, &grid, &cells, &palette, seed)?
+                    .into_iter()
+                    .map(|(at, before, value)| json!({"at":at,"value":value,"expect":before}))
+                    .collect();
+                // One gesture, one operation, as for a brush stroke.
                 self.prepare(expected,&json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":grid,"cells":cells}))
             }
             Action::PaintZones {
@@ -1625,6 +1713,7 @@ fn is_edit(action: &Action) -> bool {
         | Action::Paint { .. }
         | Action::PaintStroke { .. }
         | Action::FillTerrain { .. }
+        | Action::ScatterTerrain { .. }
         | Action::PaintZones { .. }
         | Action::Remove { .. }
         | Action::Place { .. }
@@ -1648,7 +1737,7 @@ fn is_edit(action: &Action) -> bool {
 
 /// A stroke's cells: at least one, at most the stroke cap, distinct and in
 /// order.
-fn stroke_cells(cells: &[[i64; 2]]) -> Result<(), SessionError> {
+pub(crate) fn stroke_cells(cells: &[[i64; 2]]) -> Result<(), SessionError> {
     if cells.is_empty() || cells.len() > crate::brush::MAXIMUM_STROKE_CELLS {
         return Err(refuse(
             RefusalCode::InputBudget,

@@ -313,6 +313,12 @@ pub(super) fn step_tiles<'a>(
             cells,
             ..
         }
+        | Action::ScatterTerrain {
+            plane,
+            layer,
+            cells,
+            ..
+        }
         | Action::PaintZones {
             plane,
             layer,
@@ -1581,6 +1587,42 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             shown(plane)
         ),
         Action::FillTerrain { .. } => fill_words(action, world, catalog),
+        Action::ScatterTerrain {
+            plane,
+            layer,
+            grid,
+            cells,
+            palette,
+            seed,
+            ..
+        } => {
+            // How many cells the engine's own plan would change in the
+            // person's world, as fill's words say; nothing when it would
+            // refuse for another reason.
+            let plan = tilewright_editor_ui::scatter::plan(
+                world, catalog, plane, *layer, grid, cells, palette, *seed,
+            );
+            let effect = match plan {
+                Ok(changes) => format!(", {} to change", changes.len()),
+                Err(error) if error.code() == tilewright_editor_ui::RefusalCode::ChangeNone => {
+                    ", none to change".to_owned()
+                }
+                Err(_) => String::new(),
+            };
+            format!(
+                "Scatter palette {}{} over {}{}{effect}, seed {seed} ({} on {}/{layer})",
+                shown(palette),
+                if catalog.editing().palettes.contains_key(palette) {
+                    ""
+                } else {
+                    " (not in this catalog)"
+                },
+                cells_words(cells.len()),
+                outside(catalog, plane, *layer, cells),
+                shown(grid),
+                shown(plane)
+            )
+        }
         Action::PaintZones {
             plane,
             layer,
