@@ -305,7 +305,8 @@ To try it by hand in a real window:
 
 A catalog may name palettes for the scatter brush in an optional
 `editing.palettes` member, next to the grants: each a weighted set of
-terrain values the catalog already grants on one ground grid.
+terrain values the catalog already grants on one ground grid. The neutral
+sample's catalog has one, `speckle`, mostly grass with some sand:
 
 ```json
 "editing": {
@@ -354,12 +355,12 @@ the values. The seed is part of the recorded action, so a proposal step
 replays the same values; another stroke draws another seed, and stroking
 the same cells again usually changes some of them again.
 
-To try it by hand in a real window, with a copy of the sample whose
-catalog has the palette above:
+To try it by hand in a real window on the neutral sample, which has the
+palette above, with no catalog editing:
 
-1. In Terrain mode choose "floor / speckle", then drag across a grass
-   area: the white preview marks about a quarter of the cells (those that
-   draw sand) and the status line names the seed.
+1. In Terrain mode choose "floor / speckle", then drag across the grass
+   columns: the white preview marks about a quarter of the cells (those
+   that draw sand) and the status line names the seed.
 2. Release: the pending scene shows grass and sand mixed about 3 to 1 where
    the preview was. Accept, then Undo: one step restores the area.
 3. Drag the same area again: another seed gives another mix.
@@ -984,7 +985,14 @@ palette value it hovers (1,1) (`fill-preview`); with Replace and the first
 value it hovers (5,1) (`replace-preview`), clicks there (`replace-pending`)
 and cancels, so it changes nothing; the brush rule and terrain choice are
 restored. Those frames' JSON has a `fill_preview` member: the rule, start
-cell, terrain and how many cells are marked. It is a
+cell, terrain and how many cells are marked. When the catalog names a
+scatter palette it then chooses the first (`speckle` in the sample) and
+drags a 3x3 brush from (1,1) to (2,4), over 20 cells of the grass columns,
+capturing the live preview mid-gesture (`scatter-preview`; the status line
+names the seed), the pending review (`scatter`) and the accepted result
+(`scattered`); the brush and the terrain choice are restored. Its seed comes
+from the same seeded source as the placements' uids, so the drawn values
+are the same on every run. It is a
 deterministic scripted demonstration,
 not a claim of human input. `--reference` produces composed workspace CPU
 reference evidence and

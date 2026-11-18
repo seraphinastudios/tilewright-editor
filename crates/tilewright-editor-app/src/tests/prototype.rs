@@ -117,7 +117,7 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
         assert!(!app.demo_step(step).unwrap());
     }
     let selected_before_zones = app.session.selection().cloned();
-    for step in 10..16 {
+    for step in 10..17 {
         if app.demo_step(step).unwrap() {
             break;
         }
@@ -211,7 +211,44 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
             .portal,
         None
     );
-    assert_eq!(app.session.history().depths(), (16, 0));
+    // The scatter step draws its seed from the seeded source, after the
+    // two placements' uids, and scatters `speckle` (grass 3, sand 1) over
+    // the grass columns with a 3x3 brush: one more change. The seed and
+    // every drawn value are the same on every run.
+    let mut seed_bytes = [0; 16];
+    tilewright_editor_ui::uid::UidSource::fill(&mut source, &mut seed_bytes).unwrap();
+    let seed = u32::from_be_bytes([seed_bytes[0], seed_bytes[1], seed_bytes[2], seed_bytes[3]]);
+    assert_eq!(seed, 3_332_693_014);
+    let rows: Vec<String> = (0..6)
+        .map(|y| {
+            (0..8)
+                .map(|x| match terrain_value(&app, x, y).as_deref() {
+                    Some("grass") => 'g',
+                    Some("sand") => 's',
+                    _ => '.',
+                })
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            "sgggssss", "sgggssss", "ggggssss", "sgggssss", "ggggssss", "gsggssss"
+        ]
+    );
+    // Captured mid-gesture, at review and after Accept.
+    for (phase, pending) in [
+        ("scatter-preview", false),
+        ("scatter", true),
+        ("scattered", false),
+    ] {
+        let record: serde_json::Value = serde_json::from_slice(
+            &fs::read(temporary.path().join(format!("evidence/{phase}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["pending"], pending, "{phase}");
+    }
+    assert_eq!(app.session.history().depths(), (17, 0));
     for phase in [
         "before",
         "pending",
@@ -256,6 +293,12 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
         "portal-tile-set",
         "portal-clear",
         "portal-cleared",
+        "fill-preview",
+        "replace-preview",
+        "replace-pending",
+        "scatter-preview",
+        "scatter",
+        "scattered",
     ] {
         assert!(
             temporary

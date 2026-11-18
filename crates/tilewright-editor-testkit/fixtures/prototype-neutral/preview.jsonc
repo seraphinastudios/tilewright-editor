@@ -377,6 +377,22 @@
         ]
       }
     ],
+    "palettes": [
+      {
+        "name": "speckle",
+        "grid": "floor",
+        "entries": [
+          {
+            "value": "grass",
+            "weight": 3
+          },
+          {
+            "value": "sand",
+            "weight": 1
+          }
+        ]
+      }
+    ],
     "fields": [
       {
         "uid": "marker_1",
