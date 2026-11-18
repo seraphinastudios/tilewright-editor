@@ -165,6 +165,7 @@ class PackageAssetTests(unittest.TestCase):
             for name, text in (
                 ('crates/x/fixtures/w/preview.jsonc', '{"resources": [{"license": "MIT"}]}'),
                 ('docs/examples/world/preview.jsonc', '{"resources": [{"license": "project"}]}'),
+                ('examples/other/Preview.JSONC', '{"resources": [{"license": "project"}]}'),
             ):
                 (root/name).parent.mkdir(parents=True, exist_ok=True)
                 (root/name).write_text(text)
@@ -178,6 +179,11 @@ class PackageAssetTests(unittest.TestCase):
             self.assertFalse(any(name.startswith('target/') for name in files))
             with self.assertRaisesRegex(ValueError, 'docs/examples/world/preview.jsonc'):
                 validation.committed_catalogs_are_mit(root)
+            # A catalog named in another case is a catalog too.
+            (root/'docs/examples/world/preview.jsonc').write_text('{"resources": [{"license": "MIT"}]}')
+            with self.assertRaisesRegex(ValueError, 'examples/other/Preview.JSONC'):
+                validation.committed_catalogs_are_mit(root)
+            (root/'docs/examples/world/preview.jsonc').write_text('{"resources": [{"license": "project"}]}')
             validation.committed_resources_are_listed(set(), root)
             (root/'docs/examples/world/art.ATX1').write_bytes(b'ATX1')
             with self.assertRaisesRegex(ValueError, 'outside the asset manifest: docs/examples/world/art.ATX1'):
@@ -198,12 +204,20 @@ class PackageAssetTests(unittest.TestCase):
         calls = []
         catalogs, resources = validation.committed_catalogs_are_mit, validation.committed_resources_are_listed
         try:
-            validation.committed_catalogs_are_mit = lambda *args, **kwargs: calls.append('catalogs')
-            validation.committed_resources_are_listed = lambda *args, **kwargs: calls.append('resources')
+            validation.committed_catalogs_are_mit = lambda *args, **kwargs: calls.append(('catalogs', args, kwargs))
+            validation.committed_resources_are_listed = lambda *args, **kwargs: calls.append(('resources', args, kwargs))
             validation.validate()
         finally:
             validation.committed_catalogs_are_mit, validation.committed_resources_are_listed = catalogs, resources
-        self.assertEqual(sorted(calls), ['catalogs', 'resources'])
+        self.assertEqual(sorted(call[0] for call in calls), ['catalogs', 'resources'])
+        # Both get every file of the repository, not a subset, and the
+        # repository root (the default).
+        everything = validation.committed_files()
+        self.assertIn('tools/check-prototype-assets.py', everything)
+        for name, args, kwargs in calls:
+            passed = kwargs.get('files', args[-1] if args and isinstance(args[-1], list) else None)
+            self.assertEqual(passed, everything, name)
+            self.assertNotIn('root', kwargs, name)
         # And the script itself refuses a repository with a labelled catalog.
         script = (ROOT/'tools/check-prototype-assets.py').read_text()
         self.assertIn("raise SystemExit(f'prototype assets refused: {error}')", script)

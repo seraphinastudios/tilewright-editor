@@ -99,12 +99,12 @@ pub fn marked(frame: &ReferenceFrame) -> Option<ReferenceFrame> {
     let stride = usize::try_from(width).ok()?.checked_mul(4)?;
     let (text, scale) = layout(width);
     let mut rgba8 = Vec::with_capacity(stride.checked_mul(usize::try_from(height).ok()?)?);
-    if original > 0 {
-        for row in frame.rgba8.chunks_exact(original) {
-            rgba8.extend_from_slice(row);
-            for _ in 0..columns(frame.width) {
-                rgba8.extend_from_slice(&BAND);
-            }
+    // Row by row, so a zero-width frame of any height gets its full rows
+    // of band colour too.
+    for row in 0..usize::try_from(frame.height).ok()? {
+        rgba8.extend_from_slice(&frame.rgba8[row * original..(row + 1) * original]);
+        for _ in 0..columns(frame.width) {
+            rgba8.extend_from_slice(&BAND);
         }
     }
     for row in 0..height - frame.height {
@@ -349,6 +349,33 @@ mod tests {
             for x in end..720 {
                 assert_ne!(pixel(&marked, x, y), INK);
             }
+        }
+    }
+
+    #[test]
+    fn a_zero_width_or_height_frame_is_marked_too() {
+        for (width, height) in [(0, 5), (0, 0), (5, 0)] {
+            let original = ReferenceFrame {
+                width,
+                height,
+                rgba8: Vec::new(),
+            };
+            let marked = marked(&original).unwrap();
+            assert_eq!(
+                (marked.width, marked.height),
+                (MINIMUM_WIDTH, height + 12),
+                "{width}x{height}"
+            );
+            assert_eq!(
+                marked.rgba8.len(),
+                (marked.width * marked.height * 4) as usize
+            );
+            for y in 0..height {
+                for x in 0..MINIMUM_WIDTH {
+                    assert_eq!(pixel(&marked, x, y), BAND);
+                }
+            }
+            assert!(reads(&marked, height, SHORT_TEXT));
         }
     }
 

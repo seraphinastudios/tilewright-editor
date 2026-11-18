@@ -68,7 +68,8 @@ def committed_catalogs_are_mit(root=ROOT, files=None):
     copies.
     """
     files = committed_files(root) if files is None else files
-    catalogs = [name for name in files if PurePosixPath(name).name == 'preview.jsonc']
+    # Any case: a file system that ignores case loads `Preview.jsonc` too.
+    catalogs = [name for name in files if PurePosixPath(name).name.casefold() == 'preview.jsonc']
     if not catalogs:
         raise ValueError('no committed editor catalog found')
     for name in catalogs:
