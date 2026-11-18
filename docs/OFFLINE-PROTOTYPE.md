@@ -911,6 +911,21 @@ change before its current frame has been presented. An uncertain
 applied/durable/cleaned result blocks further editing and preserves its record.
 Reopen is explicit inspection/reload, never blind recovery or retry.
 
+Some views cannot be drawn: steep heights under isometric ground art taller
+than its diamond, for example, cannot be bent at a high zoom, and the
+renderer refuses the whole view. A zoom or pan into such a view is refused:
+the view stays at its last good zoom and position, the status line says
+"Cannot zoom in: this view cannot be drawn. Staying at the previous zoom."
+(or zoom out, or pan), the details give the renderer's reason, and editing
+continues. When the World itself cannot be drawn at the current view (a
+pending change whose preview cannot be drawn, or the catalog or its art
+changed on disk) editing is blocked, but not for good: zooming out, panning
+or Cancel rebuild the frame, and the first rebuild that succeeds ends the
+block and says "The view can be drawn again." While blocked, zoom and pan
+steps are kept even when their view does not draw either, so stepping out
+one key at a time works. A changed catalog or art ends the block only when
+its bytes are back as the session loaded them.
+
 The first external-map edit moves an eligible UID-bearing top-level object only
 when its original block has one existing `x` and `y`, within original bounds.
 Same-chunk coordinate changes use guarded generic World path transactions to

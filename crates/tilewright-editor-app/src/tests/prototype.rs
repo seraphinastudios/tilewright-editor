@@ -86,6 +86,7 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         unsupported_runs: 0,
         presented_generation: None,
         blocked: None,
+        view_note: None,
         text: crate::font_pack::test_system(),
         displayed_text: None,
         presented_text_revision: None,
@@ -2183,6 +2184,9 @@ mod proposal;
 
 #[path = "proposal_highlight.rs"]
 mod proposal_highlight;
+
+#[path = "view_refusal.rs"]
+mod view_refusal;
 
 fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(fs::read(path).unwrap()))
