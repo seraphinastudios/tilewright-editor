@@ -250,7 +250,7 @@ mod tests {
             [92.0 / 255.0, 146.0 / 255.0, 78.0 / 255.0],
             [205.0 / 255.0, 180.0 / 255.0, 118.0 / 255.0],
         ];
-        for band in 0..RAMP.len() {
+        for (band, own) in RAMP.iter().enumerate() {
             let [r, g, b, alpha] = tint_color(band);
             for ground in grounds {
                 let drawn = [r, g, b]
@@ -258,7 +258,7 @@ mod tests {
                     .zip(ground)
                     .map(|(tint, under)| alpha * tint + (1.0 - alpha) * under)
                     .collect::<Vec<f32>>();
-                assert_eq!(drawn, RAMP[band], "band {band} over {ground:?}");
+                assert_eq!(drawn, own, "band {band} over {ground:?}");
             }
         }
     }
