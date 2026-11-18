@@ -4,7 +4,9 @@
 //! The sandbox server's observe tools on a world whose catalog contains
 //! project art: the same members and the marked `render`. No project art is
 //! used: the MIT neutral sample is labelled `project` in the sandbox's
-//! temporary copy only.
+//! temporary copy only. Linux only, as the sandbox server tests are.
+#![cfg(target_os = "linux")]
+
 mod common;
 
 use common::Layout;
