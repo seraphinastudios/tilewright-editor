@@ -236,6 +236,15 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
             "sgggssss", "sgggssss", "ggggssss", "sgggssss", "ggggssss", "gsggssss"
         ]
     );
+    // The scatter is the last step: the fill and replace previews before
+    // it still see the sample's grass columns whole, 24 cells each.
+    for phase in ["fill-preview", "replace-preview"] {
+        let record: serde_json::Value = serde_json::from_slice(
+            &fs::read(temporary.path().join(format!("evidence/{phase}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["fill_preview"]["cells"], 24, "{phase}");
+    }
     // Captured mid-gesture, at review and after Accept.
     for (phase, pending) in [
         ("scatter-preview", false),

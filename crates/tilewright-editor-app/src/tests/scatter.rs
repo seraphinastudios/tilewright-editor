@@ -392,3 +392,23 @@ fn the_samples_own_palette_loads_and_its_scripted_scatter_is_fixed() {
         assert_eq!(record["pending"], pending, "{phase}");
     }
 }
+
+#[test]
+fn without_palettes_the_scripted_scatter_step_is_skipped() {
+    let (temporary, mut app) =
+        terrain_application(crate::prototype::DEMO_UID_SEED, without_palettes);
+    assert!(app.session.catalog().editing().palettes.is_empty());
+    let world = app.session.world().source_digest();
+    // Step 15 is skipped, not an error, and the script goes on to its end.
+    assert!(!app.demo_step(15).unwrap());
+    assert_eq!(app.session.history().depths(), (0, 0));
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.session.world().source_digest(), world);
+    let evidence: Vec<String> = fs::read_dir(temporary.path().join("evidence"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("scatter"))
+        .collect();
+    assert!(evidence.is_empty(), "{evidence:?}");
+    assert!(app.demo_step(16).unwrap());
+}
