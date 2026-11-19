@@ -450,8 +450,9 @@ The inspector of a selected tile shows its height after its value: "Height:
 stored height and the layer's base: "Height: 39 (7 + base 32)" (layer ×
 `layer_height` + height, computed in 128-bit integers; a narrow sidebar cuts
 the line with "..." after the stacked height). A
-tile of a chunk that does not exist reads "Height: none, no chunk here". No
-heights are written yet, and nothing marks a slope "too steep": the profile's
+tile of a chunk that does not exist reads "Height: none, no chunk here". The
+desktop writes no heights yet (agents and proposals can, under a
+[height range](#height-range)), and nothing marks a slope "too steep": the profile's
 movement limits are only reported as stored (`overview`'s
 `profile.movement`), because the format does not define what they mean.
 
@@ -472,6 +473,55 @@ Hand test (the sample has no heights, so use a copy):
 The World pixels of the existing demonstration captures are unchanged, since
 the tint is off by default; their interface changed: the sidebar has the
 height toggle row, and the inspector of a selected tile has the height line.
+
+#### Height range
+
+A catalog may let the editor change tile heights in an optional
+`editing.heights` member, next to the grants: the range of heights it may
+write in the active view's plane and spatial layer. For example, to allow
+heights from -64 to 64:
+
+```json
+"editing": {
+  "terrain": [{"grid": "floor", "values": ["grass", "sand"]}],
+  "heights": {"min": -64, "max": 64}
+}
+```
+
+`min` and `max` are integers with `min < max`, both from -1,024 to 1,024,
+the editor's hard bound; anything else, or any other member, refuses the
+whole catalog. The bound is only a sanity limit for the arithmetic and the
+wire form, not a promise that every range inside it can be drawn. A bent
+isometric tile maps its ground art onto a mesh, and art taller than the
+diamond magnifies the differences between corner heights, so what a view
+can draw depends on the ground art and the zoom: choose a range your
+views can draw. Measured on renderer 0.7.1 at zoom 8 (the largest), with
+the worst pattern of ±H around a tile: top-down ground has no limit;
+isometric diamond-only art (32 × 16 or 64 × 32) draws up to about ±1,430;
+art twice the diamond's height (the neutral sample's 32 × 32 on a 32 × 16
+diamond) up to about ±460; art four times its height (64 × 128 on 64 × 32)
+up to about ±129. [ADR 0006](../decisions/0006-catalog-heights.md) has the
+table. If an edit's result cannot be drawn at the current view, the
+desktop cancels it and says so, with the renderer's reason ("Change
+refused: it cannot be drawn at this view, so it was cancelled.", then
+"Zoom out, or raise or lower by less." for a height adjustment and "Zoom
+out or pan and try again." for any other edit); editing continues. The
+member is the same in catalog formats 1 and 2; a catalog without it loads
+and behaves exactly as before, and an editor from before it refuses a
+catalog that has it. The `catalog` command and MCP tool report it as
+`heights` (`min` and `max`), only when the catalog has it. The neutral
+sample has none.
+
+Under a range, an `adjust_heights` action (an agent's `edit` or a proposal
+step; the desktop's sculpt mode comes later) raises or lowers the covered
+cells of the active view by a flat amount, once each, and stops at the
+range's ends ([docs/ENGINE.md](ENGINE.md#raise-and-lower)). Hand test with
+the copy above, its catalog given `"heights": {"min": -8, "max": 32}`: in a
+sandbox of it ([docs/SANDBOX.md](SANDBOX.md)), `edit` the action
+`{"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": [[3, 2]], "amount": 8}`
+with its `expected`, then `accept`: `tile` at (3, 2) reports `height` 15,
+and the submitted proposal applied in the desktop shows the raised tile
+under H.
 
 ### Zones
 
@@ -921,9 +971,13 @@ reason, and editing continues. A later refused input's notice replaces that
 line; the next zoom, pan or control clears it.
 
 Rendering can still pause editing, and the status line and the details say
-which of three causes it is and how it ends. When the session's World
-itself cannot be drawn at the current view ("Editing paused: this view
-cannot be drawn."), zooming out, panning or Cancel (key or button) rebuild
+which of three causes it is and how it ends. An edit or a proposal step
+whose result cannot be drawn at the current view is cancelled when it is
+prepared ("Change refused: it cannot be drawn at this view, so it was
+cancelled.", see [Height range](#height-range)), so a pause from a
+pending change only arises when the view changes after the change was
+prepared. When the session's World itself cannot be drawn at the current
+view ("Editing paused: this view cannot be drawn."), zooming out, panning or Cancel (key or button) rebuild
 the frame; while paused, zoom and pan steps are kept even when their view
 does not draw either, so stepping out one key at a time works. When the
 session's catalog or its art changed on disk ("Editing paused: catalog or

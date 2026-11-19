@@ -106,6 +106,9 @@ fn random_request_lines_each_get_exactly_one_well_formed_reply() {
             r#"{{"request":"edit","action":{{"kind":"scatter_terrain","plane":"main","layer":0,"grid":"floor","cells":[[0,1],[1,1]],"palette":"speckle","seed":1234,"expected":"{base}"}}}}"#
         ),
         format!(
+            r#"{{"request":"edit","action":{{"kind":"adjust_heights","plane":"main","layer":0,"cells":[[0,1],[1,1]],"amount":-8,"expected":"{base}"}}}}"#
+        ),
+        format!(
             r#"{{"request":"edit","action":{{"kind":"set_field","uid":"marker_1","field":"label","value":{{"a":[1,2.5,null,true]}},"expected":"{base}"}}}}"#
         ),
     ]

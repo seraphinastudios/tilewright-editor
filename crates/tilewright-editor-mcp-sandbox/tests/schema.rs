@@ -157,6 +157,7 @@ fn bases(revision: &str) -> Vec<Value> {
         json!({"kind": "paint_stroke", "plane": "main", "layer": 0, "grid": "floor", "cells": [[0, 0], [0, 1]], "proto": "grass"}),
         json!({"kind": "fill_terrain", "plane": "main", "layer": 0, "grid": "floor", "x": 0, "y": 0, "proto": "sand", "contiguous": true}),
         json!({"kind": "scatter_terrain", "plane": "main", "layer": 0, "grid": "floor", "cells": [[0, 0], [0, 1]], "palette": "speckle", "seed": 1234}),
+        json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": [[0, 0], [0, 1]], "amount": 8}),
         json!({"kind": "paint_zones", "plane": "main", "layer": 0, "cells": [[0, 0]], "zone": null}),
         json!({"kind": "remove", "uid": "marker_1"}),
         json!({"kind": "place", "plane": "main", "layer": 0, "x": 1, "y": 1, "proto": "marker"}),
@@ -178,6 +179,7 @@ fn bases(revision: &str) -> Vec<Value> {
 }
 
 /// Variations of `base` at and past the bounds of each of its members.
+#[allow(clippy::too_many_lines)]
 fn variations(base: &Value) -> Vec<Value> {
     const MOST: i64 = (1 << 53) - 1;
     let with = |name: &str, value: Value| {
@@ -255,6 +257,16 @@ fn variations(base: &Value) -> Vec<Value> {
                 found.push(with(name, json!(i64::from(u32::MAX) + 1)));
                 found.push(with(name, json!(-1)));
                 found.push(with(name, json!(7.0)));
+                found.push(with(name, json!(7.5)));
+                found.push(with(name, json!("7")));
+                found.push(with(name, Value::Null));
+            }
+            "amount" => {
+                for number in [1, -1, 1024, -1024, 1025, -1025, 0] {
+                    found.push(with(name, json!(number)));
+                }
+                found.push(with(name, json!(7.0)));
+                found.push(with(name, json!(-0.0)));
                 found.push(with(name, json!(7.5)));
                 found.push(with(name, json!("7")));
                 found.push(with(name, Value::Null));

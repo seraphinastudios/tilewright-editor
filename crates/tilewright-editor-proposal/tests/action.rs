@@ -110,6 +110,22 @@ fn every_edit_kind_round_trips_exactly_with_edge_values() {
             seed: 0,
             expected: [0; 32],
         },
+        Action::AdjustHeights {
+            plane: odd.clone(),
+            layer: i32::MIN,
+            cells: vec![[-MAX, MAX]],
+            amount: -limits::HEIGHT_AMOUNT,
+            expected: [0xff; 32],
+        },
+        Action::AdjustHeights {
+            plane: "p".into(),
+            layer: i32::MAX,
+            cells: (0..i64::try_from(limits::CELLS).unwrap())
+                .map(|x| [x, x])
+                .collect(),
+            amount: limits::HEIGHT_AMOUNT,
+            expected: [0; 32],
+        },
         Action::PaintZones {
             plane: "p".into(),
             layer: 0,
@@ -219,6 +235,13 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         seed: 7,
         expected: revision,
     };
+    let raised = |amount: i32| Action::AdjustHeights {
+        plane: "p".into(),
+        layer: 0,
+        cells: vec![[0, 0]],
+        amount,
+        expected: revision,
+    };
     let mut deep = json!(1);
     for _ in 0..=limits::FIELD_VALUE_DEPTH {
         deep = json!([deep]);
@@ -259,6 +282,10 @@ fn values_outside_the_bounds_are_refused_when_writing() {
             ),
             RefusalCode::ProposalBudget,
         ),
+        (raised(0), RefusalCode::ProposalInvalid),
+        (raised(1025), RefusalCode::ProposalInvalid),
+        (raised(-1025), RefusalCode::ProposalInvalid),
+        (raised(i32::MIN), RefusalCode::ProposalInvalid),
         (field(json!(u64::MAX)), RefusalCode::ProposalInvalid),
         (
             field(json!({"a": ["nul \u{0}"]})),
@@ -391,6 +418,8 @@ fn reading_refuses_every_other_form() {
     let fill = encode_action(&edit(15, [3; 32])).unwrap();
     let scatter = encode_action(&edit(17, [3; 32])).unwrap();
     assert_eq!(scatter["kind"], "scatter_terrain");
+    let heights = encode_action(&edit(18, [3; 32])).unwrap();
+    assert_eq!(heights["kind"], "adjust_heights");
     let with = |base: &Value, key: &str, value: Value| {
         let mut changed = base.clone();
         changed[key] = value;
@@ -471,6 +500,19 @@ fn reading_refuses_every_other_form() {
         with(&scatter, "cells", json!([[1, 0], [0, 0]])),
         with(&scatter, "proto", json!("grass")),
         with(&scatter, "kind", json!("scatter")),
+        with(&heights, "amount", json!(0)),
+        with(&heights, "amount", json!(1025)),
+        with(&heights, "amount", json!(-1025)),
+        with(&heights, "amount", json!(4_294_967_301_i64)),
+        with(&heights, "amount", json!(5.0)),
+        with(&heights, "amount", json!(-0.0)),
+        with(&heights, "amount", json!("5")),
+        with(&heights, "amount", json!(null)),
+        without(&heights, "amount"),
+        with(&heights, "grid", json!("height")),
+        with(&heights, "cells", json!([])),
+        with(&heights, "cells", json!([[0, 0], [0, 0]])),
+        with(&heights, "kind", json!("raise_terrain")),
         "[]".into(),
         "\"move\"".into(),
     ];

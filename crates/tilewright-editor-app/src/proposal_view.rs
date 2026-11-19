@@ -267,6 +267,7 @@ pub(super) type Named<'a> = (Role, &'a str, i32, [i64; 2]);
 /// most [`HIGHLIGHT_TILES`] of a stroke's cells. A step whose object or
 /// anchor is not placed in `world` names none of its tiles: without the
 /// object there is no plane and layer for a move's destination either.
+#[allow(clippy::too_many_lines)]
 pub(super) fn step_tiles<'a>(
     action: &'a Action,
     world: &'a World,
@@ -314,6 +315,12 @@ pub(super) fn step_tiles<'a>(
             ..
         }
         | Action::ScatterTerrain {
+            plane,
+            layer,
+            cells,
+            ..
+        }
+        | Action::AdjustHeights {
             plane,
             layer,
             cells,
@@ -978,7 +985,16 @@ impl Application {
     /// never accepts it.
     pub(super) fn prepare_proposal_step(&mut self) -> Result<()> {
         self.refuse_while_paused()?;
-        self.funnel(false, true, |app| {
+        // A height step gets the height advice if it cannot be drawn.
+        let heights = self
+            .proposal
+            .as_ref()
+            .and_then(|open| {
+                let next = open.progress.as_ref()?.next();
+                open.proposal.steps().get(next)
+            })
+            .is_some_and(|step| matches!(step.action(), Action::AdjustHeights { .. }));
+        self.funnel(false, true, heights, |app| {
             let Some(open) = app.proposal.as_mut() else {
                 return Err("no proposal is open".into());
             };
@@ -1623,6 +1639,37 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
                 cells_words(cells.len()),
                 outside(catalog, plane, *layer, cells),
                 shown(grid),
+                shown(plane)
+            )
+        }
+        Action::AdjustHeights {
+            plane,
+            layer,
+            cells,
+            amount,
+            ..
+        } => {
+            // How many cells the engine's own plan would change in the
+            // person's world, as scatter's words say; nothing when it would
+            // refuse for another reason.
+            let plan =
+                tilewright_editor_ui::sculpt::plan(world, catalog, plane, *layer, cells, *amount);
+            let effect = match plan {
+                Ok(changes) => format!(", {} to change", changes.len()),
+                Err(error) if error.code() == tilewright_editor_ui::RefusalCode::ChangeNone => {
+                    ", none to change".to_owned()
+                }
+                Err(_) if catalog.editing().heights.is_none() => {
+                    ", not granted by this catalog".to_owned()
+                }
+                Err(_) => String::new(),
+            };
+            format!(
+                "{} {} by {}{effect}{} (on {}/{layer})",
+                if *amount < 0 { "Lower" } else { "Raise" },
+                cells_words(cells.len()),
+                amount.unsigned_abs(),
+                outside(catalog, plane, *layer, cells),
                 shown(plane)
             )
         }

@@ -206,9 +206,10 @@ fn the_view_words_fit_the_status_line_of_the_smallest_window() {
 /// A paint of tile (6, 4), empty in the sample, prepared at zoom 5.96,
 /// where it draws; then the zoom set to 8 and the frame rebuilt directly.
 /// At 8 the new ground bends over the steep heights around it and cannot
-/// be drawn: a render block of a pending World. The zoom is set directly
-/// for brevity; today the keys reach the same state (twelve `+` to zoom 8,
-/// where the committed World draws, then the paint).
+/// be drawn: a render block of a pending World. The zoom is set directly:
+/// the keys cannot reach this state any more, since a zoom that cannot be
+/// drawn is refused and an edit whose result cannot be drawn at the
+/// current zoom is cancelled when it is prepared.
 fn blocked_with_a_pending_change() -> (tempfile::TempDir, Application) {
     let (temporary, mut app) = zone_application(|root| steep(root, [5, 3], 512));
     app.view.camera.zoom = 5.960_464_5;

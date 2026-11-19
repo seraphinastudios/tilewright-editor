@@ -87,6 +87,14 @@ pub fn encode_action(action: &Action) -> Result<Value, ProposalError> {
             json!({"kind": "scatter_terrain", "plane": text(plane)?, "layer": layer, "grid": text(grid)?,
             "cells": encode_cells(cells)?, "palette": text(palette)?, "seed": seed, "expected": hex(expected)})
         }
+        Action::AdjustHeights {
+            plane,
+            layer,
+            cells,
+            amount,
+            expected,
+        } => json!({"kind": "adjust_heights", "plane": text(plane)?, "layer": layer,
+            "cells": encode_cells(cells)?, "amount": height_amount(i64::from(*amount))?, "expected": hex(expected)}),
         Action::PaintZones {
             plane,
             layer,
@@ -209,6 +217,7 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
         "paint_stroke" => &["plane", "layer", "grid", "cells", "proto"],
         "fill_terrain" => &["plane", "layer", "grid", "x", "y", "proto", "contiguous"],
         "scatter_terrain" => &["plane", "layer", "grid", "cells", "palette", "seed"],
+        "adjust_heights" => &["plane", "layer", "cells", "amount"],
         "paint_zones" => &["plane", "layer", "cells", "zone"],
         "remove" => &["uid"],
         "place" => &["plane", "layer", "x", "y", "proto"],
@@ -274,6 +283,13 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
             cells: fields.cells("cells")?,
             palette: fields.text("palette")?,
             seed: fields.seed("seed")?,
+            expected,
+        },
+        "adjust_heights" => Action::AdjustHeights {
+            plane: fields.text("plane")?,
+            layer: fields.layer("layer")?,
+            cells: fields.cells("cells")?,
+            amount: height_amount(fields.integer("amount")?)?,
             expected,
         },
         "paint_zones" => Action::PaintZones {
@@ -495,6 +511,15 @@ fn integer(value: i64) -> Result<i64, ProposalError> {
     }
     Ok(value)
 }
+/// A height adjustment's amount: an integer, not 0, at most
+/// [`limits::HEIGHT_AMOUNT`] either way, the engine's rule.
+fn height_amount(amount: i64) -> Result<i32, ProposalError> {
+    i32::try_from(amount)
+        .ok()
+        .filter(|amount| tilewright_editor_ui::sculpt::check_amount(*amount).is_ok())
+        .ok_or_else(|| invalid("a height amount is an integer from -1024 to 1024, not 0"))
+}
+
 /// The engine's rule for a stroke's cells (`stroke_cells` in the ui
 /// crate's session): at least one, at most [`limits::CELLS`], distinct
 /// and in increasing order.

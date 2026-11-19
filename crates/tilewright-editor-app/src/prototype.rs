@@ -554,6 +554,24 @@ fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(format!("/proc/self/fd/{value}")))
 }
 
+/// Why an edit was refused when the World it prepared cannot be drawn at
+/// the current view, for every action kind. The change is cancelled;
+/// nothing is pending.
+pub(crate) const UNDRAWABLE_CHANGE: &str =
+    "Change refused: it cannot be drawn at this view, so it was cancelled.";
+
+/// The notice for a change [`UNDRAWABLE_CHANGE`] refused: what to do, which
+/// for a height adjustment is to adjust less steeply, and the renderer's own
+/// `reason`.
+pub(crate) fn undrawable_notice(heights: bool, reason: &str) -> String {
+    let advice = if heights {
+        "Zoom out, or raise or lower by less."
+    } else {
+        "Zoom out or pan and try again."
+    };
+    format!("{UNDRAWABLE_CHANGE} {advice} Renderer: {reason}")
+}
+
 impl Application {
     /// Prepares the frame of the session's World at the current view. A
     /// failure blocks editing, since the shown frame is then not the World
@@ -686,8 +704,9 @@ impl Application {
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
+        let heights = matches!(action, Action::AdjustHeights { .. });
         let paused_cancel = self.blocked.is_some() && self.session.history().pending().is_some();
-        let result = self.funnel(accept, false, |app| {
+        let result = self.funnel(accept, false, heights, |app| {
             app.session
                 .dispatch(action, &mut app.recovery)
                 .map_err(|error| error.to_string())
@@ -714,10 +733,12 @@ impl Application {
         &mut self,
         accept: bool,
         prepare: bool,
+        heights: bool,
         dispatch: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
         let records = self.recovery.records().len();
-        let result = dispatch(self);
+        let was_pending = self.session.history().pending().is_some();
+        let mut result = dispatch(self);
         if let Some(error) = self.recovery.last_error() {
             self.session.set_recovery_descriptor(error.to_string());
         } else if let Some(record) = self.recovery.records().last() {
@@ -729,7 +750,38 @@ impl Application {
         }
         // Failed commands may still invalidate pending state (for example an
         // empty Undo). Always rebuild from Session's actual current World.
-        let refreshed = self.rebuild();
+        let mut refreshed = self.rebuild();
+        // A change this action just prepared whose World cannot be drawn
+        // at the current view (heights too steep for the ground art at
+        // this zoom) is cancelled and refused, rather than left pending
+        // with editing paused.
+        if result.is_ok()
+            && !was_pending
+            && self.session.history().pending().is_some()
+            && let Err(reason) = &refreshed
+        {
+            let reason = reason.clone();
+            if self
+                .session
+                .dispatch(Action::Cancel, &mut self.recovery)
+                .is_ok()
+            {
+                // Cleared here, not by `rebuild`, so no "view can be drawn
+                // again" note replaces this refusal's notice.
+                self.blocked = None;
+                refreshed = self.rebuild();
+                // A second failure is reachable only by a race: dispatch
+                // revalidated the same catalog and resources, and the
+                // committed World drew before the action. Then the catalog
+                // or art changed on disk in between; `rebuild` has paused
+                // editing with that reason, and the funnel returns it.
+                if refreshed.is_ok() {
+                    let notice = undrawable_notice(heights, &reason);
+                    result = Err(notice.clone());
+                    self.notice = Some(notice);
+                }
+            }
+        }
         self.report();
         let settled = self.settle_proposal(accept.then_some(records), prepare);
         self.refresh_highlight();

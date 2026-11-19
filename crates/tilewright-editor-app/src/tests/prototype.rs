@@ -2165,6 +2165,9 @@ mod fill;
 #[path = "scatter.rs"]
 mod scatter;
 
+#[path = "height_steps.rs"]
+mod height_steps;
+
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]
