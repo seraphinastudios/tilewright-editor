@@ -72,8 +72,7 @@ them.
   change is cancelled, whatever the action, and the notice gives the
   renderer's reason and what to do (for a height adjustment: zoom out, or
   raise or lower by less; for any other edit: zoom out or pan and try
-  again), so the session is not blocked. Zooming in on an undrawable World still
-  blocks the session for good; that older behaviour is a separate fix.
+  again), and editing continues instead of pausing.
 - **One range per catalog.** The grant applies to the active view's plane
   and spatial layer, as `editing.zones.paint` does. Heights are one grid
   per chunk, not a ground grid, so the per-grid shape of `editing.terrain`

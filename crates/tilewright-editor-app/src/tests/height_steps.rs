@@ -143,7 +143,15 @@ fn a_change_that_cannot_be_drawn_at_this_zoom_is_cancelled_not_blocking() {
     );
     assert_eq!(error, notice);
     assert_eq!(app.notice.as_deref(), Some(notice.as_str()));
+    // The refusal is what the status line and details show, not the
+    // "view can be drawn again" note of a pause ending.
+    assert!(app.view_note.is_none());
     assert_eq!(app.status_label(), "Input not applied. Details below.");
+    // Rows may break inside a word: compare without white space.
+    let bare = |text: &str| text.split_whitespace().collect::<String>();
+    let details = bare(&app.review_lines(620).join(" "));
+    assert!(details.contains(&bare(&notice)), "{details}");
+    assert!(!details.contains(&bare("can be drawn again")), "{details}");
     assert!(app.session.history().pending().is_none());
     assert!(app.blocked.is_none());
     // Zoomed out, the same change is drawn, pending for review.

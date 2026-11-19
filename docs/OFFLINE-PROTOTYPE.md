@@ -502,12 +502,10 @@ art twice the diamond's height (the neutral sample's 32 × 32 on a 32 × 16
 diamond) up to about ±460; art four times its height (64 × 128 on 64 × 32)
 up to about ±129. [ADR 0006](../decisions/0006-catalog-heights.md) has the
 table. If an edit's result cannot be drawn at the current view, the
-desktop cancels it and says so, with the renderer's reason ("Refused: this
-change cannot be drawn at the current view, so it was cancelled.", then
+desktop cancels it and says so, with the renderer's reason ("Change
+refused: it cannot be drawn at this view, so it was cancelled.", then
 "Zoom out, or raise or lower by less." for a height adjustment and "Zoom
-out or pan and try again." for any other edit); the session stays usable. Zooming in on a World that cannot be drawn at the
-new zoom still blocks the session for good, a known limitation that a
-later change fixes. The
+out or pan and try again." for any other edit); editing continues. The
 member is the same in catalog formats 1 and 2; a catalog without it loads
 and behaves exactly as before, and an editor from before it refuses a
 catalog that has it. The `catalog` command and MCP tool report it as
@@ -962,6 +960,39 @@ semantic selections survive acceptance. Native input cannot accept a pending
 change before its current frame has been presented. An uncertain
 applied/durable/cleaned result blocks further editing and preserves its record.
 Reopen is explicit inspection/reload, never blind recovery or retry.
+
+Some views cannot be drawn: steep heights under isometric ground art taller
+than its diamond, for example, cannot be bent at a high zoom, and the
+renderer refuses the whole view. A zoom or pan into such a view is refused:
+the view stays at its last good zoom and position, the status line says
+"Cannot zoom in: this view cannot be drawn." (or zoom out, or pan there),
+the details say the view stayed where it was and give the renderer's
+reason, and editing continues. A later refused input's notice replaces that
+line; the next zoom, pan or control clears it.
+
+Rendering can still pause editing, and the status line and the details say
+which of three causes it is and how it ends. An edit or a proposal step
+whose result cannot be drawn at the current view is cancelled when it is
+prepared ("Change refused: it cannot be drawn at this view, so it was
+cancelled.", see [Height range](#height-range)), so a pause from a
+pending change only arises when the view changes after the change was
+prepared. When the session's World itself cannot be drawn at the current
+view ("Editing paused: this view cannot be drawn."), zooming out, panning or Cancel (key or button) rebuild
+the frame; while paused, zoom and pan steps are kept even when their view
+does not draw either, so stepping out one key at a time works. When the
+session's catalog or its art changed on disk ("Editing paused: catalog or
+art files changed."), editing resumes only when the files match what the
+session loaded again: put them back, then zoom or pan once to check again
+(nothing checks them on its own); otherwise quit and start a new session.
+Cancel still drops a pending change there and says "Pending change
+cancelled. Editing stays paused." When the frame could not be composed or
+shown ("Editing paused: the frame could not be shown."), the next zoom, pan
+or Cancel tries again. Every other action, Accept, Undo, Redo, Reopen, map
+clicks and the proposal's control included, is refused with the pause's
+reason. The first rebuild that succeeds ends the pause and says "The view can be drawn again. Editing is possible again."; an open
+proposal's panel and highlight come back with it. The window title reads
+"editing paused" meanwhile. This is separate from a blocked session (an
+uncertain publication), which only Reopen ends.
 
 The first external-map edit moves an eligible UID-bearing top-level object only
 when its original block has one existing `x` and `y`, within original bounds.

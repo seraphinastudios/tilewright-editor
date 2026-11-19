@@ -86,6 +86,7 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         unsupported_runs: 0,
         presented_generation: None,
         blocked: None,
+        view_note: None,
         text: crate::font_pack::test_system(),
         displayed_text: None,
         presented_text_revision: None,
@@ -670,10 +671,13 @@ fn long_display_labels_elide_using_shared_measurements_and_keep_full_draft() {
 fn blocked_render_reason_precedes_source_excerpt_and_ready_status_is_plain() {
     let (_temporary, mut app) = application();
     assert!(!app.status_label().contains("applied"));
-    app.blocked = Some("Font resources could not be verified".into());
+    app.blocked = Some(super::Blocked::new(
+        super::BlockCause::Present,
+        "Font resources could not be verified",
+    ));
     assert_eq!(
         app.status_label(),
-        "Editing blocked. Recovery details below."
+        "Editing paused: the frame could not be shown."
     );
     let lines = app.review_lines(620);
     assert!(lines[0].starts_with("Rendering blocked:"));
@@ -2186,6 +2190,9 @@ mod proposal;
 
 #[path = "proposal_highlight.rs"]
 mod proposal_highlight;
+
+#[path = "view_refusal.rs"]
+mod view_refusal;
 
 fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(fs::read(path).unwrap()))

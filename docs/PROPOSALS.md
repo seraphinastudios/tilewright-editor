@@ -427,7 +427,7 @@ and for the step that is pending, where the map shows the pending world, so
 the highlight marks where the change is; there is none when every step is
 applied, after a Cancel, while the person's own change is pending, when the
 world moved or is at several places on the path, when the proposal does not
-apply, or while the session is blocked. The tint is black at 50 % over the
+apply, or while the session is blocked or editing is paused. The tint is black at 50 % over the
 tile (25 % for a `from` tile): it darkens, where the brush preview's white
 lightens and the zone tints colour, and selection is not drawn on the map.
 Only tiles on the active view's plane and layer and inside its bounds are
@@ -475,7 +475,7 @@ edit; "Continue from step j" (the world is after a step the progress has
 not reached) and "Resume at step j" (after a Cancel) start again from where
 the world is, preparing nothing. There is no control while a change is
 pending, the world is not on the path or at several places on it, the
-session is blocked or every step is applied. G waits for the displayed
+session is blocked, editing is paused or every step is applied. G waits for the displayed
 frame, as Enter does. Accept (Enter) and Cancel (Esc) are the ordinary
 ones; nothing in the desktop accepts a step for the person.
 
@@ -499,7 +499,8 @@ ones; nothing in the desktop accepts a step for the person.
 | Stopped by Cancel; it cannot resume from where the world is. | As above, and the world is now at no single place on the path (or a change is pending). | Undo own edits, or finish the pending change. |
 | All n steps applied. | | |
 | Does not apply to this world; nothing can be prepared. | Neither begin nor resume applied at start-up. | Edit normally. |
-| This session cannot continue (blocked). | The session or the rendering is blocked. | Inspect recovery, as for any blocked session. |
+| This session cannot continue (blocked). | The session is blocked (an uncertain publication or a refused Reopen). | Inspect recovery, as for any blocked session. |
+| Waiting: editing is paused. The details below say why. | Rendering blocks editing for now: the view cannot be drawn, the catalog or its art changed on disk, or the frame could not be shown. | Follow the details: zoom out, pan or Cancel, or put the changed files back. The panel continues when the frame draws again. |
 
 A refusal stays on the state line until the person's next action of any
 kind (a selection included); it does not come back after an edit and its
