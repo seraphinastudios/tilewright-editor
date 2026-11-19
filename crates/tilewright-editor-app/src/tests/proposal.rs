@@ -1135,8 +1135,11 @@ fn the_key_waits_for_the_displayed_panel() {
 fn a_blocked_session_offers_nothing() {
     let mut twin = twin(2, |_| {}, |_| {}, None);
     open(&mut twin);
-    twin.app.blocked = Some("test".into());
-    assert_eq!(state(&twin.app), State::Blocked);
+    twin.app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::View,
+        "test",
+    ));
+    assert_eq!(state(&twin.app), State::Paused);
     assert_eq!(control(&mut twin.app), None);
     assert!(twin.app.prepare_proposal_step().is_err());
     assert!(twin.app.continue_proposal().is_err());
@@ -1145,9 +1148,47 @@ fn a_blocked_session_offers_nothing() {
     assert!(
         texts
             .iter()
-            .any(|text| text == "This session cannot continue (blocked)."),
+            .any(|text| text == "Waiting: editing is paused. The details below say why."),
         "{texts:?}"
     );
+}
+
+#[test]
+fn the_sessions_own_block_outranks_a_rendering_pause() {
+    // Reopen while the catalog differs: the session's own Blocked phase,
+    // which only Reopen ends, and a rendering pause from the funnel's
+    // rebuild. The panel and the status line say blocked, not paused,
+    // before and after the pause ends.
+    let mut twin = twin(2, |_| {}, |_| {}, None);
+    open(&mut twin);
+    let catalog = twin.person.path().join("world/preview.jsonc");
+    let original = fs::read(&catalog).unwrap();
+    fs::write(&catalog, [original.as_slice(), b"\n"].concat()).unwrap();
+    assert!(twin.app.action(Action::Reopen).is_err());
+    assert_eq!(
+        twin.app.session.status().phase,
+        tilewright_editor_ui::SessionPhase::Blocked
+    );
+    assert!(twin.app.blocked.is_some());
+    let says_blocked = |app: &mut Application| {
+        assert_eq!(state(app), State::Blocked);
+        assert!(
+            panel(app)
+                .iter()
+                .any(|text| text == "This session cannot continue (blocked)."),
+            "{:?}",
+            panel(app)
+        );
+        assert_eq!(
+            app.status_label(),
+            "Editing blocked. Recovery details below."
+        );
+    };
+    says_blocked(&mut twin.app);
+    fs::write(&catalog, &original).unwrap();
+    route(&mut twin.app, &key(Keycode::Equals)).unwrap();
+    assert!(twin.app.blocked.is_none());
+    says_blocked(&mut twin.app);
 }
 
 #[test]
@@ -2375,8 +2416,11 @@ fn fresh_state(app: &Application) -> State {
     use tilewright_editor_ui::SessionPhase;
     let open = app.proposal.as_ref().unwrap();
     let session = &app.session;
-    if app.blocked.is_some() || session.status().phase == SessionPhase::Blocked {
+    if session.status().phase == SessionPhase::Blocked {
         return State::Blocked;
+    }
+    if app.blocked.is_some() {
+        return State::Paused;
     }
     let Some(progress) = &open.progress else {
         return State::DoesNotApply;
