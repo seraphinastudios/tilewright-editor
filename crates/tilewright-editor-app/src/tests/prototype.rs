@@ -2211,6 +2211,9 @@ mod fill;
 #[path = "scatter.rs"]
 mod scatter;
 
+#[path = "terrain_names.rs"]
+mod terrain_names;
+
 #[path = "height_steps.rs"]
 mod height_steps;
 

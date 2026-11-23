@@ -9,7 +9,10 @@ use crate::limits::{MAXIMUM_FIELDS, MAXIMUM_PROTOTYPES, MAXIMUM_TERRAIN_CHOICES,
 use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::Observed;
 use tilewright_editor_preview::{MAXIMUM_PALETTE_ENTRIES, MAXIMUM_PALETTES};
-use tilewright_editor_ui::{tools::palette_matches, zones};
+use tilewright_editor_ui::{
+    tools::{TerrainName, palette_matches, terrain_name},
+    zones,
+};
 
 pub const FORMAT: &str = "tilewright.editor-catalog/1";
 
@@ -98,7 +101,7 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
             "terrain_palette",
             terrain,
             MAXIMUM_TERRAIN_CHOICES,
-            |(grid, value)| Map::new().text("grid", grid).text("value", value).into(),
+            |(grid, value)| terrain_choice(world, grid, value),
         )
         .paged(
             pager,
@@ -125,6 +128,20 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
         ),
         None => report,
     }
+}
+
+/// A `terrain_palette` entry: its grid and value, and, for a value in a
+/// terrain of the world's transitions, `terrain` and, for a variant,
+/// `variant`. Only such a value has the members, so the report of a world
+/// without transitions is unchanged.
+fn terrain_choice(world: &tilewright_source::World, grid: &str, value: &str) -> Node {
+    let row = Map::new().text("grid", grid).text("value", value);
+    match terrain_name(world, grid, value) {
+        TerrainName::Terrain(id) => row.text("terrain", id),
+        TerrainName::Variant(id) => row.text("terrain", id).with("variant", true),
+        TerrainName::Unnamed | TerrainName::Ungoverned => row,
+    }
+    .into()
 }
 
 /// `palettes`, the catalog's `editing.palettes` kept by name, after the

@@ -235,6 +235,35 @@ session with `--shared-string-field`; the terminal prints
     coordinates, zone names and the palette filter look and behave exactly
     as before.
 
+### Terrain palette
+
+Terrain mode's sidebar lists, under "Terrain palette", one row per value
+the catalog's `editing.terrain` grants, grid by grid and value by value,
+each with its prototype's thumbnail. A row names the World format's
+terrain the value is in (the terrain transitions of the World format's
+FORMAT.md, section 13), by the terrain's own id: a brush that paints a terrain
+writes the terrain's first prototype, and the preview draws the edges and
+variants around it. So on the profile's terrain layer a row reads, in full:
+
+- "floor / grass" when the value is the first prototype of a terrain with
+  the same id, as for both rows of the neutral sample;
+- "floor / lawn (grass)" when the terrain's id differs from the value;
+- "floor / lawn variant: grass_tall" when the value is another prototype
+  of the terrain: a variant, which counts as that terrain where it is
+  painted;
+- "floor / stone (no terrain)" when the value is in no terrain.
+
+On a grid that is not the terrain layer, or in a world whose profile has no
+transitions, a row names the grid and the value, as before. Choosing a row
+chooses exactly its granted value: what the brush, Fill, Replace and the
+review write is unchanged, and the rows are in the same order as before.
+A row too wide for the sidebar keeps the value it writes, which tells two
+rows apart: it drops the grid first ("lawn variant: grass_tall"), then the
+words ("lawn: grass_tall"), then shortens a terrain id of more than 16
+characters to its first 8 and last 6 around "...", and only then cuts the
+value in its middle, keeping its head and tail, as zone rows do. The
+`catalog` report names the same terrains ([CLI.md](CLI.md)).
+
 ### Terrain drag brush
 
 In Terrain mode, choose an explicit palette value, then press on a cell and
