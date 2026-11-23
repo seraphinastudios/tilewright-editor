@@ -56,6 +56,16 @@
       "name": "tilewright-source",
       "repository": "seraphinastudios/tilewright-world",
       "repository_id": 1423814231
+    },
+    {
+      "name": "tilewright-ui",
+      "repository": "seraphinastudios/tilewright-ui",
+      "repository_id": 1440618953
+    },
+    {
+      "name": "tilewright-ui-render",
+      "repository": "seraphinastudios/tilewright-ui",
+      "repository_id": 1440618953
     }
   ],
   "repository_id": 1327106902

@@ -91,7 +91,8 @@ class PackageProvenanceTests(unittest.TestCase):
         self.assertEqual({record['name'] for record in result['dependencies']},
                          {record['name'] for record in policy['dependencies']})
         self.assertEqual({record['repository'] for record in result['dependencies']},
-                         {'seraphinastudios/tilewright-renderer', 'seraphinastudios/tilewright-world'})
+                         {'seraphinastudios/tilewright-renderer', 'seraphinastudios/tilewright-ui',
+                          'seraphinastudios/tilewright-world'})
 
 
 if __name__ == '__main__':

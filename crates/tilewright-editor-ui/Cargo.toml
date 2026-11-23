@@ -15,6 +15,7 @@ tilewright-editor-preview.workspace = true
 tilewright-source.workspace = true
 tilewright-edit.workspace = true
 tilewright-jsonc.workspace = true
+tilewright-ui.workspace = true
 serde_json.workspace = true
 unicode-segmentation = "=1.13.3"
 getrandom = { version = "=0.4.3", default-features = false }
