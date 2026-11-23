@@ -35,7 +35,7 @@ impl FieldImplementation {
     pub const ALL: [Self; 2] = [Self::Editor, Self::Shared];
 
     /// The name evidence records carry for the shared field.
-    pub const SHARED_NAME: &'static str = "tilewright-ui 0.1.0";
+    pub const SHARED_NAME: &'static str = "tilewright-ui 0.1.1";
 }
 
 /// The rejection wording of the editor's own field, for each shared refusal.
@@ -47,11 +47,6 @@ const COMPOSING: ToolError = ToolError("Finish or cancel composition first");
 pub struct SharedInput {
     ui: Ui,
     draft: u64,
-    /// The composer's committed text, kept after every change so callers
-    /// can borrow it as they borrow the editor's own draft.
-    text: String,
-    /// Whether a composition is open, kept with `text`.
-    composing: bool,
 }
 
 impl SharedInput {
@@ -62,18 +57,13 @@ impl SharedInput {
         };
         let mut ui =
             Ui::with_composition(limits, Composition::SingleField).map_err(shared_error)?;
-        ui.bind_field(text.clone()).map_err(|error| match error {
+        ui.bind_field(text).map_err(|error| match error {
             UiError::LimitExceeded => ToolError("Input exceeds byte budget"),
             other => shared_error(other),
         })?;
         ui.apply(Input::Focus(Some(COMPOSER)))
             .map_err(shared_error)?;
-        Ok(Self {
-            ui,
-            draft,
-            text,
-            composing: false,
-        })
+        Ok(Self { ui, draft })
     }
 
     /// The shared state, for the host's compiler.
@@ -89,20 +79,13 @@ impl SharedInput {
         self.ui.text_target().ok_or(ToolError("No input draft"))
     }
 
-    /// Read from the focused target, without a snapshot: the field is
-    /// focused for its whole life.
+    /// Read without a snapshot, as are the text, selection and composing
+    /// state ([`Ui::composer_text`] and its siblings).
     fn revision(&self) -> TextRevision {
         TextRevision {
             draft: self.draft,
-            revision: self
-                .ui
-                .text_target()
-                .map_or(0, |target| target.revision.get()),
+            revision: self.ui.composer_revision().get(),
         }
-    }
-
-    fn composing(&self) -> bool {
-        self.composing
     }
 
     /// Apply one composer input; a refusal changes nothing and is worded
@@ -112,15 +95,11 @@ impl SharedInput {
         input: Input,
         invalid: impl FnOnce(bool) -> ToolError,
     ) -> Result<(), ToolError> {
-        let composing = self.composing();
-        self.ui.apply(input).map_err(|error| match error {
+        let composing = self.ui.is_composing();
+        self.ui.apply(input).map(drop).map_err(|error| match error {
             UiError::InvalidInput => invalid(composing),
             other => shared_error(other),
-        })?;
-        let composer = self.ui.snapshot().composer;
-        self.composing = composer.composition.is_some();
-        self.text = composer.committed;
-        Ok(())
+        })
     }
 
     fn edit(&mut self, command: TextCommand) -> Result<(), ToolError> {
@@ -153,7 +132,7 @@ impl PartialEq for FieldInput {
         match (&self.0, &other.0) {
             (Backend::Editor(a), Backend::Editor(b)) => a == b,
             (Backend::Shared(a), Backend::Shared(b)) => {
-                a.draft == b.draft && a.text == b.text && a.ui.snapshot() == b.ui.snapshot()
+                a.draft == b.draft && a.ui.snapshot() == b.ui.snapshot()
             }
             _ => false,
         }
@@ -203,14 +182,14 @@ impl FieldInput {
     pub fn text(&self) -> &str {
         match &self.0 {
             Backend::Editor(input) => input.text(),
-            Backend::Shared(shared) => &shared.text,
+            Backend::Shared(shared) => shared.ui.composer_text(),
         }
     }
 
     pub fn selection(&self) -> TextSelection {
         match &self.0 {
             Backend::Editor(input) => input.selection(),
-            Backend::Shared(shared) => selection(shared.ui.snapshot().composer.selection),
+            Backend::Shared(shared) => selection(shared.ui.composer_selection()),
         }
     }
 
@@ -224,7 +203,7 @@ impl FieldInput {
     pub fn is_composing(&self) -> bool {
         match &self.0 {
             Backend::Editor(input) => input.is_composing(),
-            Backend::Shared(shared) => shared.composing(),
+            Backend::Shared(shared) => shared.ui.is_composing(),
         }
     }
 

@@ -5981,12 +5981,6 @@ fn native_pointer_selection(
             if Some(geometry.revision) != app.tools.input_revision() {
                 return Err("stale text layout".into());
             }
-            // The shared field's own Apply button reviews, as Review does.
-            if let Some(submit) = geometry.shared.as_ref().and_then(|shared| shared.submit)
-                && submit.contains(position[0], position[1])
-            {
-                return app.control(Control::ApplyDraft);
-            }
             if app.tools.is_composing() {
                 return app
                     .tools
@@ -6628,7 +6622,10 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     person.extend(stroke);
     // The shared string field is compiled first, so the editor's frame is
     // fitted with room for its quads: near the budget the highlight and the
-    // preview give way, as without it, instead of the frame failing.
+    // preview give way, as without it, instead of the frame failing. The
+    // field is then composed under the same limits, raster samples
+    // included; it reports no sample count to set aside, so a field that
+    // takes the samples over is refused there (`PreparedField::attach`).
     let mut field = prepare_shared_field(app)?;
     let compose = |app: &mut Application, reserved: usize| {
         let limits = tilewright_scene::SceneLimits {
@@ -6668,7 +6665,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         app.highlight_omitted = highlight;
     }
     if let Some(field) = field {
-        field.attach(&mut presentation)?;
+        field.attach(&mut presentation, app.frame_limits)?;
     }
     Ok(presentation)
 }
