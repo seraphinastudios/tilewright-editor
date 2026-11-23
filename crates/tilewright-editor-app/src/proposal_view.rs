@@ -999,7 +999,7 @@ impl Application {
                     let next = open.progress.as_ref()?.next();
                     open.proposal.steps().get(next)
                 })
-                .map(|step| step.action()),
+                .map(tilewright_editor_proposal::ProposalStep::action),
         );
         self.funnel(false, true, advice, |app| {
             let Some(open) = app.proposal.as_mut() else {

@@ -583,3 +583,25 @@ fn without_the_grant_heights_cannot_be_flattened_anywhere() {
     assert_eq!(error.code(), RefusalCode::InputBudget);
     assert!(session.history().pending().is_none());
 }
+
+#[test]
+fn the_desktop_target_is_the_press_tiles_height_inside_the_range() {
+    // A view over chunk 0_0 and the missing 0_1; (1, 30) at 9, outside -6 to 6.
+    let (_dir, session) = fixture_with(|root| {
+        set_heights(root, |at| if at == [1, 30] { 9 } else { generated(at) });
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["view"]["bounds"] = json!([0, 28, 8, 6]);
+        });
+    });
+    let target =
+        |at: [i64; 2]| sculpt::flatten_target(session.world(), session.catalog(), "main", 0, at);
+    assert_eq!(target([0, 30]), Ok(3));
+    assert_eq!(
+        target([1, 30]),
+        Err("Flatten refused: this tile's height 9 is outside the granted range -6 to 6; start on a tile inside it.".to_owned())
+    );
+    assert_eq!(
+        target([3, 32]),
+        Err("Flatten needs a starting tile with ground: tile (3, 32) has no map chunk.".to_owned())
+    );
+}
