@@ -1645,9 +1645,9 @@ checksum = "fd46d736f8c4d629bf3d19b720d99115817e38e4214481d292b42cc597ff96fa"
 
 [[package]]
 name = "tilewright-render-api"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f8c0553e9423df5cdf95d332f7a63ce3235990d8c458ded7d1c0138d961dc31"
+checksum = "fb6ed522c61429e326c9d59bacd2585a339f5bbdb8cc5226fbfc4ccf17cd5ec1"
 dependencies = [
  "tilewright-render-resources",
  "tilewright-scene",
@@ -1655,9 +1655,9 @@ dependencies = [
 
 [[package]]
 name = "tilewright-render-resources"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d08d8aa93c29d898603f9c34b7b1936ab3e2b41c2aef33644f415d3b52744bde"
+checksum = "59ac1a0d40825cd9996086b2c1df9dbc90b239a74694bc9f5a2f8caf6bbe4427"
 dependencies = [
  "sha2",
  "tilewright-scene",
@@ -1665,9 +1665,9 @@ dependencies = [
 
 [[package]]
 name = "tilewright-render-sdl3"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b37cd6bbcbf0e921728c833c79ef86f5c223c431ed5862f9bf134d34b4cde95"
+checksum = "8efa827d9c6c341dff662ad7ffceece8aedfacce6c600ff6c3e066c2865fc831"
 dependencies = [
  "sdl3",
  "tilewright-render-api",
@@ -1677,9 +1677,9 @@ dependencies = [
 
 [[package]]
 name = "tilewright-render-testkit"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce24bfa14a4cbd764ee48ec89677ded1f3aec19ff64d14fd7c178f02d1d114fa"
+checksum = "7b8cc01eeaacdfc2042bc4e99b9c12c2204e4d388af24c95ba397b15a30f9a7f"
 dependencies = [
  "sha2",
  "tilewright-render-api",
@@ -1691,9 +1691,9 @@ dependencies = [
 
 [[package]]
 name = "tilewright-render-ui"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca52c72820cd74458128ba651250b81b33ddd548a94b755c2c385258c12392c"
+checksum = "bcabc25037b79ca46641b9f6e22c3dd17a56e4c6151ad56d440ac7b17a3ea050"
 dependencies = [
  "parley",
  "sha2",
@@ -1704,9 +1704,9 @@ dependencies = [
 
 [[package]]
 name = "tilewright-render-wgpu"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7825e977462d9a6e32582ed3bce71683d8b6883b291358beb67a7c252b8b4235"
+checksum = "30d0b607f46ac720cd19bc88d6aab97d519b2c15c7afd49166d38d1928aa1473"
 dependencies = [
  "bytemuck",
  "js-sys",
@@ -1722,18 +1722,18 @@ dependencies = [
 
 [[package]]
 name = "tilewright-render-world"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d033dfeb8f7f6c5a8e1db13bc03301b760d50961c7aeca152baf351fc21fd11"
+checksum = "3e00a6db49e7b5f54e9574d6958b7c2c8365528f81b19e48d653f6cd34a057ed"
 dependencies = [
  "tilewright-scene",
 ]
 
 [[package]]
 name = "tilewright-scene"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1d2c41aec4b5f94a1964b09dd8f2e9698c08f1038f2de2869f2da216937b53e"
+checksum = "eea3ad0ddfd97df90a5dacd9025b2b98c5f362bb23ce7cee3e894df8d22e3b83"
 
 [[package]]
 name = "tilewright-source"

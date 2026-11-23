@@ -543,7 +543,7 @@ fn cpu_evidence_png_contains_shared_workspace_ui_and_preserves_world_revision_pr
     .unwrap();
     assert_eq!(proof["format"], "tilewright.prototype-frame/1");
     assert_eq!(proof["path"], "cpu-reference");
-    assert_eq!(proof["renderer"], "0.7.1");
+    assert_eq!(proof["renderer"], "0.7.2");
     let actual_keys: std::collections::BTreeSet<_> = proof
         .as_object()
         .unwrap()
