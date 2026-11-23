@@ -173,7 +173,10 @@ fn rows_name_the_terrain_a_variant_and_a_value_in_no_terrain() {
     // The sidebar cuts a row that does not fit with an ellipsis, after
     // the terrain, which comes first.
     let shown = texts(&rows);
-    assert_eq!([shown[0], shown[2], shown[3]], [labels[0], labels[2], labels[3]]);
+    assert_eq!(
+        [shown[0], shown[2], shown[3]],
+        [labels[0], labels[2], labels[3]]
+    );
     assert!(
         shown[1].starts_with("floor / lawn variant: ") && shown[1].ends_with("..."),
         "{shown:?}"
@@ -247,7 +250,10 @@ fn a_terrain_row_paints_fills_and_replaces_with_its_granted_value() {
     route(&mut app, &button(false, at)).unwrap();
     let filled = pending_cells(&app);
     assert!(!filled.is_empty());
-    assert!(filled.iter().all(|(_, value)| value == "grass"), "{filled:?}");
+    assert!(
+        filled.iter().all(|(_, value)| value == "grass"),
+        "{filled:?}"
+    );
     acknowledge_ui(&mut app);
     route(&mut app, &key(Keycode::Return)).unwrap();
     let step = app.session.applied_steps().last().unwrap();

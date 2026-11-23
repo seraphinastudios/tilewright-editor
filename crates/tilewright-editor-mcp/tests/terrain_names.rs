@@ -12,7 +12,7 @@ use std::path::Path;
 
 /// Rename the sample's terrains (sand to `dune`, grass to `lawn`), give
 /// `lawn` the variant `grass_edge_15`, and grant those values, `stone`
-/// (in no terrain) and, on the `edge` grid, `grass_edge_1`.
+/// (in no terrain) and, on the `edge` grid, `grass` and `grass_edge_1`.
 fn renamed_terrains(root: &Path) {
     common::edit(root, "profile/transitions.jsonc", |transitions| {
         let terrains = transitions["terrains"].as_array_mut().unwrap();
@@ -24,7 +24,7 @@ fn renamed_terrains(root: &Path) {
     common::edit(root, "preview.jsonc", |catalog| {
         catalog["editing"]["terrain"] = json!([
             {"grid": "floor", "values": ["sand", "grass", "grass_edge_15", "stone"]},
-            {"grid": "edge", "values": ["grass_edge_1"]},
+            {"grid": "edge", "values": ["grass", "grass_edge_1"]},
         ]);
         catalog["editing"]
             .as_object_mut()
@@ -45,6 +45,8 @@ fn catalog_names_the_terrain_of_each_granted_value() {
     assert_eq!(
         report["terrain_palette"],
         json!([
+            // `grass` is in `lawn` only on the terrain layer.
+            {"grid": "edge", "value": "grass"},
             {"grid": "edge", "value": "grass_edge_1"},
             {"grid": "floor", "value": "grass", "terrain": "lawn"},
             {"grid": "floor", "value": "grass_edge_15", "terrain": "lawn", "variant": true},
