@@ -18,12 +18,21 @@ use tilewright_editor_ui::Action;
 /// Rename the neutral sample's terrains (sand to `dune`, grass to `lawn`),
 /// give `lawn` the variant `grass_edge_15`, and grant `values` on `floor`.
 fn renamed(values: &'static [&'static str]) -> impl FnOnce(&Path) {
+    renamed_as("lawn", &["grass", "grass_edge_15"], values)
+}
+
+/// [`renamed`] with the grass terrain called `lawn` and given `protos`.
+fn renamed_as(
+    lawn: &'static str,
+    protos: &'static [&'static str],
+    values: &'static [&'static str],
+) -> impl FnOnce(&Path) {
     move |root| {
         edit_json(root, "profile/transitions.jsonc", |transitions| {
             let terrains = transitions["terrains"].as_array_mut().unwrap();
             terrains[0]["id"] = json!("dune");
-            terrains[1]["id"] = json!("lawn");
-            terrains[1]["protos"] = json!(["grass", "grass_edge_15"]);
+            terrains[1]["id"] = json!(lawn);
+            terrains[1]["protos"] = json!(protos);
             terrains[1]["transitions"][0]["with"] = json!(["dune"]);
         });
         edit_json(root, "preview.jsonc", |catalog| {
@@ -64,8 +73,7 @@ fn rows(app: &mut Application) -> Vec<(String, String, bool)> {
         .widgets
         .iter()
         .filter_map(|widget| match &widget.control {
-            Some(Control::Palette { grid, prototype }) => {
-                assert_eq!(grid, "floor");
+            Some(Control::Palette { prototype, .. }) => {
                 let texture = app
                     .session
                     .resources()
@@ -170,17 +178,14 @@ fn rows_name_the_terrain_a_variant_and_a_value_in_no_terrain() {
         })
         .collect();
     assert_eq!(full, labels);
-    // The sidebar cuts a row that does not fit with an ellipsis, after
-    // the terrain, which comes first.
+    // A row too wide for the sidebar drops its grid first and keeps the
+    // value it writes whole.
     let shown = texts(&rows);
     assert_eq!(
         [shown[0], shown[2], shown[3]],
         [labels[0], labels[2], labels[3]]
     );
-    assert!(
-        shown[1].starts_with("floor / lawn variant: ") && shown[1].ends_with("..."),
-        "{shown:?}"
-    );
+    assert_eq!(shown[1], "lawn variant: grass_edge_15");
     // One row per granted value, choosing exactly that value, in the
     // catalog's order.
     let values: Vec<&str> = rows.iter().map(|(_, value, _)| value.as_str()).collect();
@@ -309,4 +314,119 @@ fn the_rows_fit_at_the_minimum_window_and_scroll_whole() {
     }
     // Every row can be scrolled into view.
     assert_eq!(seen.len(), 4, "{seen:?}");
+}
+
+/// Every terrain palette row's text across every scroll position, by the
+/// value it chooses.
+fn shown_by_value(app: &mut Application) -> std::collections::BTreeMap<String, String> {
+    let mut shown = std::collections::BTreeMap::new();
+    for scroll in 0..60 {
+        app.sidebar_scroll = scroll;
+        for (text, value, _) in rows(app) {
+            let old = shown.insert(value, text.clone());
+            assert!(
+                old.as_ref().is_none_or(|old| *old == text),
+                "{old:?} {text}"
+            );
+        }
+    }
+    shown
+}
+
+/// Whether `text` shows `value` whole, or its head and tail around an
+/// ellipsis in the middle.
+fn shows(text: &str, value: &str) -> bool {
+    if text.contains(value) {
+        return true;
+    }
+    let Some((before, tail)) = text.rsplit_once("...") else {
+        return false;
+    };
+    !tail.is_empty()
+        && value.ends_with(tail)
+        && (1..=value.len() - tail.len()).any(|head| before.ends_with(&value[..head]))
+}
+
+#[test]
+fn rows_of_one_terrain_stay_distinguishable_by_the_value_they_write() {
+    const LONG: &str = "a-rather-long-terrain-id-for-the-sample-lawn-grass";
+    assert_eq!(LONG.len(), 50);
+    for lawn in ["lawn", LONG] {
+        for size in [BRUSH_WINDOW, (720, 480)] {
+            let (_temporary, mut app) = terrain_application_at(
+                size,
+                renamed_as(
+                    lawn,
+                    &["grass", "grass_edge_14", "grass_edge_15"],
+                    &["grass", "grass_edge_14", "grass_edge_15", "sand"],
+                ),
+            );
+            let shown = shown_by_value(&mut app);
+            let values: Vec<&str> = shown.keys().map(String::as_str).collect();
+            assert_eq!(values, ["grass", "grass_edge_14", "grass_edge_15", "sand"]);
+            let texts: std::collections::BTreeSet<&String> = shown.values().collect();
+            assert_eq!(texts.len(), shown.len(), "{lawn} {size:?}: {shown:?}");
+            for (value, text) in &shown {
+                assert!(shows(text, value), "{lawn} {size:?}: {text} for {value}");
+            }
+            if lawn == "lawn" {
+                // A short terrain id stays named at both sizes.
+                for value in ["grass_edge_14", "grass_edge_15"] {
+                    assert_eq!(shown[value], format!("lawn variant: {value}"), "{size:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn only_the_terrain_layer_names_terrains_even_when_it_is_not_the_first_grid() {
+    let (_temporary, mut app) = terrain_application(|root| {
+        renamed(&["grass", "sand"])(root);
+        edit_json(root, "profile/transitions.jsonc", |transitions| {
+            transitions["layer"] = json!("edge");
+            transitions["terrains"][1]["transitions"][0]["layer"] = json!("floor");
+        });
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["terrain"] = json!([
+                {"grid": "floor", "values": ["grass", "sand"]},
+                {"grid": "edge", "values": ["grass", "sand"]},
+            ]);
+        });
+    });
+    let full: Vec<String> = tilewright_editor_ui::tools::terrain_palette(app.session.catalog())
+        .iter()
+        .map(|choice| tilewright_editor_ui::tools::terrain_label(app.session.world(), choice))
+        .collect();
+    assert_eq!(
+        full,
+        [
+            "edge / lawn (grass)",
+            "edge / dune (sand)",
+            "floor / grass",
+            "floor / sand",
+        ]
+    );
+    let shown: Vec<String> = shown_by_value_and_grid(&mut app);
+    assert_eq!(shown, full);
+}
+
+/// Every terrain palette row's text across every scroll position, in
+/// palette order.
+fn shown_by_value_and_grid(app: &mut Application) -> Vec<String> {
+    let mut shown: Vec<(String, String, String)> = Vec::new();
+    for scroll in 0..60 {
+        app.sidebar_scroll = scroll;
+        app.refresh_ui();
+        for widget in &app.ui.widgets {
+            if let Some(Control::Palette { grid, prototype }) = &widget.control {
+                let row = (grid.clone(), prototype.clone(), widget.text.clone());
+                if !shown.contains(&row) {
+                    shown.push(row);
+                }
+            }
+        }
+    }
+    shown.sort();
+    shown.into_iter().map(|(.., text)| text).collect()
 }

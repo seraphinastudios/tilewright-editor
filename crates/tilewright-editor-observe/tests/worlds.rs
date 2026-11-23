@@ -715,6 +715,16 @@ fn widest() -> (tempfile::TempDir, PathBuf) {
             .push(json!(uid));
     }
     store_json(&root, "preview.jsonc", &catalog);
+    // Every long prototype a variant of a terrain with the longest id, so
+    // each terrain palette entry has `terrain` and `variant`.
+    edit(&root, "profile/transitions.jsonc", |transitions| {
+        let mut members = vec![json!("stone")];
+        members.extend(protos.iter().map(|proto| json!(proto)));
+        transitions["terrains"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": long_id('t', 0), "protos": members}));
+    });
     edit(&root, MAIN_CHUNK, |chunk| {
         chunk["objects"].as_array_mut().unwrap().extend(objects);
     });

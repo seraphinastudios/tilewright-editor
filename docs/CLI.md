@@ -158,7 +158,10 @@ other worlds are unchanged. Every report with a `catalog` member has it:
   field names and portal flag, plus the terrain grids that offer them),
   `terrain_palette` (grid and value, and, for a value in one of the
   world's terrains, `terrain`, that terrain's id, with `variant: true` when
-  the value is not the terrain's first prototype) and `zone_palette` (id and display
+  the value is not the terrain's first prototype; like any world text a
+  `terrain` longer than 256 characters would be followed by
+  `terrain_clipped: true`, which a terrain id, at most 128 characters,
+  never is) and `zone_palette` (id and display
   name) of the view's plane, and, only when the catalog has at least one
   palette in `editing.palettes` (not for an empty list), `palettes` (name, grid and `entries`, each a value and
   its weight), and, only when the catalog has `editing.heights`, `heights`

@@ -212,33 +212,69 @@ pub fn terrain_name<'w>(world: &'w World, grid: &str, value: &str) -> TerrainNam
     {
         return TerrainName::Ungoverned;
     }
+    // The loader lets a prototype be in at most one terrain.
     transitions
-        .terrains()
-        .iter()
-        .find_map(|terrain| {
-            let at = terrain.protos.iter().position(|proto| proto == value)?;
-            Some(if at == 0 {
+        .terrain_of(value)
+        .and_then(|index| transitions.terrains().get(index))
+        .map_or(TerrainName::Unnamed, |terrain| {
+            if terrain.protos.first().is_some_and(|first| first == value) {
                 TerrainName::Terrain(&terrain.id)
             } else {
                 TerrainName::Variant(&terrain.id)
-            })
+            }
         })
-        .unwrap_or(TerrainName::Unnamed)
 }
 
-/// The Terrain-mode palette row of `choice`: its grid, then the terrain it
-/// paints by the terrain's own id, with the value it writes when that
-/// differs; a variant names its terrain first, so a cut row still shows
-/// it; a value in no terrain on the terrain layer says so, and a value on
-/// another grid is named as it is.
+/// The Terrain-mode palette row of `choice` in full: its grid, then the
+/// terrain it paints by the terrain's own id, with the value it writes when
+/// that differs; a variant or a value in no terrain on the terrain layer
+/// says so, and a value on another grid is named as it is.
 pub fn terrain_label(world: &World, choice: &TerrainChoice) -> String {
+    let (prefix, suffix) = &terrain_label_variants(world, choice)[0];
+    format!("{prefix}{}{suffix}", choice.prototype)
+}
+
+/// The `(prefix, suffix)` texts around a terrain palette row's value, from
+/// the full label ([`terrain_label`]) to the shortest, for a sidebar that
+/// fits the first whose whole text fits and else elides the value in its
+/// middle after the last prefix. The value, which tells two rows apart and
+/// is what the row writes, is kept in every one; the grid goes first, then
+/// the words, then a long terrain id is shortened.
+pub fn terrain_label_variants(world: &World, choice: &TerrainChoice) -> Vec<(String, String)> {
     let (grid, value) = (&choice.grid, &choice.prototype);
+    let both = |prefix: String, suffix: &str| (prefix, suffix.to_owned());
+    let named = |id: &str, long: &str| {
+        let mut variants = vec![
+            both(format!("{grid} / {id}{long}"), ""),
+            both(format!("{id}{long}"), ""),
+            both(format!("{id}: "), ""),
+        ];
+        let chars: Vec<char> = id.chars().collect();
+        if chars.len() > 16 {
+            let head: String = chars[..8].iter().collect();
+            let tail: String = chars[chars.len() - 6..].iter().collect();
+            variants.push(both(format!("{head}...{tail}: "), ""));
+        }
+        variants
+    };
     match terrain_name(world, grid, value) {
-        TerrainName::Terrain(id) if id == value => format!("{grid} / {id}"),
-        TerrainName::Terrain(id) => format!("{grid} / {id} ({value})"),
-        TerrainName::Variant(id) => format!("{grid} / {id} variant: {value}"),
-        TerrainName::Unnamed => format!("{grid} / {value} (no terrain)"),
-        TerrainName::Ungoverned => format!("{grid} / {value}"),
+        TerrainName::Terrain(id) if id == value => {
+            vec![both(format!("{grid} / "), ""), both(String::new(), "")]
+        }
+        TerrainName::Terrain(id) => {
+            let mut variants = named(id, "");
+            variants[0] = both(format!("{grid} / {id} ("), ")");
+            variants[1] = both(format!("{id} ("), ")");
+            variants
+        }
+        TerrainName::Variant(id) => named(id, " variant: "),
+        TerrainName::Unnamed => vec![
+            both(format!("{grid} / "), " (no terrain)"),
+            both(String::new(), " (no terrain)"),
+            both(format!("{grid} / "), ""),
+            both(String::new(), ""),
+        ],
+        TerrainName::Ungoverned => vec![both(format!("{grid} / "), ""), both(String::new(), "")],
     }
 }
 
