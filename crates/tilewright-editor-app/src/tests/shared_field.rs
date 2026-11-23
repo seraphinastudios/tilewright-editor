@@ -17,7 +17,9 @@ use sdl3::{
 };
 use std::fs;
 use tilewright_editor_ui::field_input::FieldImplementation;
-use tilewright_editor_ui::text_input::{TextInputSnapshot, TextRevision};
+use tilewright_editor_ui::text_input::{
+    TextCursor, TextInputSnapshot, TextRevision, TextSelection,
+};
 
 fn labelled(
     implementation: FieldImplementation,
@@ -414,7 +416,7 @@ fn the_shared_field_has_no_button_of_its_own_and_its_text_takes_the_row() {
             x: 0.0,
             y: 0.0,
             width: 300.0,
-            height: 52.0,
+            height: 30.0,
         },
         tilewright_ui::Rect {
             x: 0.0,
@@ -448,25 +450,8 @@ fn the_shared_field_has_no_button_of_its_own_and_its_text_takes_the_row() {
 
 #[test]
 fn the_frame_leaves_room_for_the_shared_field_before_the_highlight() {
-    use crate::prototype::proposal_view::{HIGHLIGHT_FROM_TINT, HIGHLIGHT_TINT};
-    let mut twin = super::proposal::twin(1, |_| {}, |_| {}, None);
-    super::proposal::open(&mut twin);
+    let mut twin = highlighted();
     let app = &mut twin.app;
-    app.share_string_field().unwrap();
-    app.select_visible_object(crate::prototype::Capability::Field)
-        .unwrap();
-    app.control(Control::Field("label".into())).unwrap();
-    acknowledge_ui(app);
-    let highlight = |scene: &tilewright_scene::SceneBundle| {
-        scene
-            .quads()
-            .iter()
-            .filter(|quad| {
-                !quad.pickable
-                    && (quad.color == HIGHLIGHT_TINT || quad.color == HIGHLIGHT_FROM_TINT)
-            })
-            .count()
-    };
     let full = crate::prototype::workspace_presentation(app).unwrap();
     let shared = full
         .scene
@@ -572,42 +557,148 @@ fn raster_samples(scene: &tilewright_scene::SceneBundle, quads: &[tilewright_sce
     low
 }
 
-#[test]
-fn the_composed_frame_keeps_to_the_editors_own_raster_sample_limit() {
-    let (_temporary, mut app) = labelled(FieldImplementation::Shared, "Trail marker", (960, 640));
+/// The proposal twin with the shared field open on a marker's label, its
+/// highlight on screen.
+fn highlighted() -> super::proposal::Twin {
+    highlighted_at(1.0)
+}
+
+/// [`highlighted`] with the camera at `zoom`.
+fn highlighted_at(zoom: f32) -> super::proposal::Twin {
+    let mut twin = super::proposal::twin(1, |_| {}, |_| {}, None);
+    super::proposal::open(&mut twin);
+    let app = &mut twin.app;
+    app.view.camera.zoom = zoom;
+    app.rebuild().unwrap();
+    app.share_string_field().unwrap();
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
     app.control(Control::Field("label".into())).unwrap();
-    acknowledge_ui(&mut app);
-    let full = crate::prototype::workspace_presentation(&mut app).unwrap();
+    acknowledge_ui(app);
+    twin
+}
+
+fn highlight(scene: &tilewright_scene::SceneBundle) -> usize {
+    use crate::prototype::proposal_view::{HIGHLIGHT_FROM_TINT, HIGHLIGHT_TINT};
+    scene
+        .quads()
+        .iter()
+        .filter(|quad| {
+            !quad.pickable && (quad.color == HIGHLIGHT_TINT || quad.color == HIGHLIGHT_FROM_TINT)
+        })
+        .count()
+}
+
+fn field_drawn(scene: &tilewright_scene::SceneBundle) -> bool {
+    scene
+        .quads()
+        .iter()
+        .any(|quad| quad.semantic_id.0 >= SHARED_FIRST_SEMANTIC)
+}
+
+#[test]
+fn the_frame_leaves_room_for_the_shared_fields_raster_samples_before_the_highlight() {
+    // Zoomed in, the highlighted tiles cost more samples than the note that
+    // reports them left out, by less than the field's samples.
+    let mut twin = highlighted_at(2.0);
+    let app = &mut twin.app;
+    let full = crate::prototype::workspace_presentation(app).unwrap();
+    let field = crate::prototype::prepare_shared_field(app)
+        .unwrap()
+        .unwrap();
+    let samples = field.raster_samples();
     let quads = full.scene.quads();
-    let total = raster_samples(&full.scene, quads);
     let editor: Vec<_> = quads
         .iter()
         .copied()
         .filter(|quad| quad.semantic_id.0 < SHARED_FIRST_SEMANTIC)
         .collect();
     let own = raster_samples(&full.scene, &editor);
-    assert!(editor.len() < quads.len() && own < total, "{own} {total}");
+    // The field's count is exactly what it adds, by the scene library's
+    // own check, so the boundary is computed, not searched for.
+    let total = own + samples;
+    assert_eq!(raster_samples(&full.scene, quads), total);
+    assert!(samples > 0 && highlight(&full.scene) > 0);
     // Exactly enough: drawn whole.
     app.frame_limits.maximum_raster_samples = total;
-    let fitted = crate::prototype::workspace_presentation(&mut app).unwrap();
+    let fitted = crate::prototype::workspace_presentation(app).unwrap();
     assert_eq!(fitted.scene.quads(), quads);
-    // One sample less: the editor's own frame still fits, but the field
-    // would take it over the editor's limit, so it is refused and editing
-    // pauses with the draft kept. The crate reports no sample count, so
-    // the field's samples are not set aside beforehand.
+    assert!(!app.highlight_omitted);
+    // One sample less: the field's samples are set aside first, so the
+    // editor's frame gives way within its share (the highlight is left
+    // out) and the field is still drawn; nothing pauses.
     app.frame_limits.maximum_raster_samples = total - 1;
+    let fitted = crate::prototype::workspace_presentation(app).unwrap();
+    assert!(app.highlight_omitted);
+    assert_eq!(highlight(&fitted.scene), 0);
+    assert!(field_drawn(&fitted.scene));
+    assert!(raster_samples(&fitted.scene, fitted.scene.quads()) < total);
+    assert!(app.tools.shared_draft().is_some(), "the draft is kept");
+}
+
+#[test]
+fn composing_the_field_checks_the_editors_own_limits_as_a_backstop() {
+    let mut twin = highlighted();
+    let app = &mut twin.app;
+    let world = crate::workspace_render::compose_with_overlay(
+        &mut app.text,
+        &app.ui,
+        &app.prepared.scene,
+        app.prepared.resources.clone(),
+        &[],
+        tilewright_scene::SceneLimits::default(),
+    )
+    .unwrap();
+    let own = raster_samples(&world.scene, world.scene.quads());
+    let attach = |app: &mut Application, samples: u64| {
+        let field = crate::prototype::prepare_shared_field(app)
+            .unwrap()
+            .unwrap();
+        let limits = tilewright_scene::SceneLimits {
+            maximum_raster_samples: own + field.raster_samples() - samples,
+            ..tilewright_scene::SceneLimits::default()
+        };
+        let mut presentation = crate::workspace_render::Presentation {
+            scene: world.scene.clone(),
+            resources: world.resources.clone(),
+            unsupported_runs: 0,
+            editable: None,
+        };
+        field
+            .attach(&mut presentation, limits)
+            .map(|()| presentation)
+    };
+    assert!(field_drawn(&attach(app, 0).unwrap().scene));
+    let error = attach(app, 1).err().unwrap();
+    assert!(
+        error.starts_with("shared field") && error.contains("LimitExceeded"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_frame_with_no_room_pauses_with_the_draft_kept() {
+    let (_temporary, mut app) = labelled(FieldImplementation::Shared, "Trail marker", (960, 640));
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(&mut app);
+    let field = crate::prototype::prepare_shared_field(&mut app)
+        .unwrap()
+        .unwrap();
+    // Less than the field alone: the editor's share is nothing, so its own
+    // frame is what does not fit; the field is never drawn over the limit.
+    app.frame_limits.maximum_raster_samples = field.raster_samples() - 1;
     let error = crate::prototype::workspace_presentation(&mut app)
         .err()
         .unwrap();
     assert!(
-        error.starts_with("shared field") && error.contains("LimitExceeded"),
+        error.contains("LimitExceeded") && !error.starts_with("shared field"),
         "{error}"
     );
     assert_eq!(app.tools.draft_text(), Some("Trail marker"));
     assert!(app.session.history().pending().is_none());
     // The native loop pauses on that refusal. The first Esc discards the
-    // draft, and the next frame draws, but the pause stays; a second Esc
-    // ends it (as a zoom or a pan would).
+    // draft, but the pause stays (the frame still does not fit); a second
+    // Esc ends it (as a zoom or a pan would).
     app.blocked = Some(crate::prototype::Blocked::new(
         crate::prototype::BlockCause::Present,
         &error,
@@ -618,7 +709,6 @@ fn the_composed_frame_keeps_to_the_editors_own_raster_sample_limit() {
     let escape = input_key(7, Keycode::Escape, false);
     route(&mut app, &mut input, &escape, &mut clipboard).unwrap();
     assert!(app.tools.shared_draft().is_none(), "the draft is discarded");
-    crate::prototype::workspace_presentation(&mut app).unwrap();
     assert_eq!(app.status_label(), paused);
     let _ = route(&mut app, &mut input, &escape, &mut clipboard);
     assert!(app.blocked.is_none());
@@ -630,11 +720,124 @@ fn the_composed_frame_keeps_to_the_editors_own_raster_sample_limit() {
     app.control(Control::Field("label".into())).unwrap();
     acknowledge_ui(&mut app);
     let again = crate::prototype::workspace_presentation(&mut app).unwrap();
-    assert!(
-        again
-            .scene
-            .quads()
-            .iter()
-            .any(|quad| quad.semantic_id.0 >= SHARED_FIRST_SEMANTIC)
-    );
+    assert!(field_drawn(&again.scene));
+}
+
+/// `stored` in the label field, opened with `implementation` in a window
+/// of `logical` size at `scale`, then `edit` applied to the draft.
+fn opened(
+    implementation: FieldImplementation,
+    stored: &str,
+    logical: (u32, u32),
+    scale: u32,
+    edit: Edit,
+) -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = labelled(implementation, stored, logical);
+    let physical = (logical.0 * scale, logical.1 * scale);
+    app.ui = WorkspaceUi::new(logical, physical);
+    app.view.camera.width = physical.0;
+    app.view.camera.height = physical.1;
+    app.reflow().unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    edit(&mut app);
+    acknowledge_ui(&mut app);
+    (temporary, app)
+}
+
+/// Where a frame's quads are and their colours, in drawing order's place
+/// a sorted list: the two fields' quads differ in identity, painter order
+/// and atlas, not in what they cover or their colour.
+fn coverage(scene: &tilewright_scene::SceneBundle) -> Vec<[u32; 12]> {
+    let mut quads: Vec<_> = scene
+        .quads()
+        .iter()
+        .map(|quad| {
+            let mut key = [0; 12];
+            for (slot, value) in key
+                .iter_mut()
+                .zip(quad.positions.as_flattened().iter().chain(&quad.color))
+            {
+                *slot = value.to_bits();
+            }
+            key
+        })
+        .collect();
+    quads.sort_unstable();
+    quads
+}
+
+/// A change to the draft after it opens.
+type Edit = fn(&mut Application);
+
+#[test]
+// The two fields must agree exactly, not within a tolerance.
+#[allow(clippy::float_cmp)]
+fn the_styled_shared_field_covers_what_the_editors_own_field_covers() {
+    let long = "A long value past the width of the field, so it scrolls 0123";
+    let cases: [(&str, &str, Edit); 7] = [
+        ("empty", "", |_| {}),
+        ("short", "Trail marker", |_| {}),
+        ("long, scrolled to the end", long, |_| {}),
+        ("mixed direction", "Trail עברית 123 marker", |_| {}),
+        (
+            "stored line breaks",
+            "Trail\nmar\u{2028}ker\u{2029}",
+            |_| {},
+        ),
+        ("preedit", "Trail marker", |app| {
+            let revision = app.tools.input_revision().unwrap();
+            app.tools
+                .set_selection(TextSelection::caret(TextCursor::new(6)), revision)
+                .unwrap();
+            app.tools.update_preedit("にほん", 2, 0).unwrap();
+        }),
+        ("selection", "Trail marker", |app| {
+            app.tools.select_all().unwrap();
+        }),
+    ];
+    for (logical, scale) in [((1280, 800), 1), ((720, 480), 1), ((720, 480), 2)] {
+        for (name, stored, edit) in cases {
+            let [(_own, mut own), (_shared, mut shared)] = FieldImplementation::ALL
+                .map(|implementation| opened(implementation, stored, logical, scale, edit));
+            let case = format!("{name} at {logical:?}x{scale}");
+            assert!(shared.tools.shared_draft().is_some(), "{case}");
+            let frames = [&mut own, &mut shared]
+                .map(|app| crate::prototype::workspace_presentation(app).unwrap());
+            // The same row, so every row below stays where it was.
+            let row = |app: &Application| {
+                app.ui
+                    .widgets
+                    .iter()
+                    .find(|widget| widget.control == Some(Control::EditDraft))
+                    .map(|widget| widget.layout)
+            };
+            assert_eq!(row(&own), row(&shared), "{case}");
+            assert_eq!(shared.ui.shared_field, row(&own), "{case}");
+            // The same text origin, clip, size and caret.
+            let [mine, theirs] = frames
+                .each_ref()
+                .map(|frame| frame.editable.as_ref().unwrap());
+            assert_eq!(mine.origin, theirs.origin, "{case}");
+            assert_eq!(mine.clip, theirs.clip, "{case}");
+            assert_eq!(mine.layout.size(), theirs.layout.size(), "{case}");
+            // The shared field's right padding is the editor's scroll
+            // margin less the renderer's caret, so that caret is the width
+            // the style counts on; a long value really scrolls.
+            let cursor =
+                crate::workspace_render::renderer_cursor(mine.snapshot.display_selection.focus);
+            let caret = mine.layout.caret(cursor).unwrap();
+            assert_eq!(caret.width, crate::workspace_render::CARET_WIDTH, "{case}");
+            if stored == long {
+                assert!(mine.origin[0] < mine.clip.x, "{case}: {:?}", mine.origin);
+            }
+            // The same quads, where they are and their colours: the row's
+            // fill, the text, the selection, the caret and the underline.
+            assert_eq!(
+                coverage(&frames[0].scene),
+                coverage(&frames[1].scene),
+                "{case}"
+            );
+            assert!(field_drawn(&frames[1].scene), "{case}");
+        }
+    }
 }

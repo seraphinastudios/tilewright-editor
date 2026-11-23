@@ -91,14 +91,14 @@ ports nothing further.
 ## Shared UI field
 
 The opt-in shared string field uses `tilewright-ui` and
-`tilewright-ui-render` **0.1.1** from crates.io (MIT, Seraphina Studios),
+`tilewright-ui-render` **0.1.2** from crates.io (MIT, Seraphina Studios),
 archive SHA-256
-`5bc80cb023e2ba71bc94690093c391591fa227a3395e76364fd464306cd35a80` and
-`700085081500887b505a6d18b416ef43a19e424a0cdebc4a219a50fb6810b7b2`, which
+`cd88fecce4bfc40d0e1e25a84eaf10e40c52e1bdab7613013d90f90afd9f6e9e` and
+`11e9909a8245db81e79cd8096c8da5f2f85a24257489e6fcd5ab307e9314ec72`, which
 match the crates.io index and the `SHA256SUMS` of the
-[v0.2.0 release](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.2.0)
-(the source release that carries crate version 0.1.1), source revision
-`9a7e2174ec8a25369bf8ffcb615a8a58a3f605ea`. They are
+[v0.3.0 release](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.3.0)
+(the source release that carries crate version 0.1.2), source revision
+`f1f4f2d0fbeab0d513c8ce7f133d61028da86e8f`. They are
 dependencies, not reused source: nothing of them is copied into this
 repository. Their text editing was itself adapted from this repository's
 `text_input.rs` (their own `PROVENANCE.md` records it). They pin renderer
