@@ -33,7 +33,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Sculpt: F raise or lower, 1 or 8 step | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Sculpt: F raise, lower or flatten, 1 or 8 step (not for flatten) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -229,62 +229,78 @@ struct FillPreview {
 }
 
 /// What a running sculpt stroke's release would do, from the engine's own
-/// plan ([`tilewright_editor_ui::sculpt::plan`] through
+/// plan ([`tilewright_editor_ui::sculpt::plan`] or
+/// [`tilewright_editor_ui::sculpt::flatten_plan`] through
 /// `Session::stroke_changes`) on the committed World.
 struct SculptPreview {
-    /// The stroke's signed amount.
-    amount: i32,
+    /// The stroke's signed amount, or its flatten target.
+    goal: SculptGoal,
     /// How many cells the stroke covers.
     covered: usize,
     /// The cells the release changes, or the engine's refusal.
     plan: std::result::Result<SculptCounts, String>,
 }
 
+/// What a sculpt stroke records: a raise or lower's signed amount, or a
+/// flatten's target, sampled at the press.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SculptGoal {
+    Amount(i32),
+    Target(i32),
+}
+
 /// The covered cells of a sculpt stroke the engine would not refuse: those
-/// it changes, those at or beyond the end of the range the amount moves
-/// toward, and those in chunks that do not exist (both left out).
+/// it changes, those it leaves out where they are (at or beyond the end of
+/// the range the amount moves toward, or already at the flatten target),
+/// and those in chunks that do not exist (left out too).
 struct SculptCounts {
     changes: Vec<[i64; 2]>,
     at_end: usize,
     missing: usize,
+    /// The changes whose tiles this view does not draw, so no mark shows
+    /// them (a height far outside the range); Accept writes them too.
+    undrawn: Vec<[i64; 2]>,
 }
 
 impl SculptPreview {
-    /// "Raising" or "Lowering".
-    fn verb(&self) -> &'static str {
-        if self.amount > 0 {
-            "Raising"
-        } else {
-            "Lowering"
-        }
-    }
-
     /// The status line: what the release would change and leave out, or
     /// the engine's refusal in its own words.
     fn status(&self) -> String {
-        let head = format!(
-            "{} {} {} by {}",
-            self.verb(),
-            self.covered,
-            if self.covered == 1 { "cell" } else { "cells" },
-            self.amount.unsigned_abs()
-        );
-        match &self.plan {
-            Err(reason) => format!("{head} refused: {reason}"),
-            Ok(counts) => {
-                let end = if self.amount > 0 {
+        let cells = if self.covered == 1 { "cell" } else { "cells" };
+        let (head, end) = match self.goal {
+            SculptGoal::Amount(amount) => (
+                format!(
+                    "{} {} {cells} by {}",
+                    if amount > 0 { "Raising" } else { "Lowering" },
+                    self.covered,
+                    amount.unsigned_abs()
+                ),
+                if amount > 0 {
                     "at or above the top"
                 } else {
                     "at or below the bottom"
-                };
+                },
+            ),
+            SculptGoal::Target(target) => (
+                format!("Flattening {} {cells} to {target}", self.covered),
+                "already there",
+            ),
+        };
+        match &self.plan {
+            Err(reason) => format!("{head} refused: {reason}"),
+            Ok(counts) => {
                 let left: Vec<String> = [(counts.at_end, end), (counts.missing, "without a chunk")]
                     .into_iter()
                     .filter(|(count, _)| *count > 0)
                     .map(|(count, what)| format!(", {count} {what}"))
                     .collect();
                 let left = left.concat();
+                let undrawn = match counts.undrawn.len() {
+                    0 => String::new(),
+                    count => format!(", {count} not drawn at this view"),
+                };
                 format!(
-                    "{head}, {} to change{left}; release to review.",
+                    "{head}, {} to change{undrawn}{left}; release to review.",
                     counts.changes.len()
                 )
             }
@@ -637,15 +653,36 @@ fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
 pub(crate) const UNDRAWABLE_CHANGE: &str =
     "Change refused: it cannot be drawn at this view, so it was cancelled.";
 
-/// The notice for a change [`UNDRAWABLE_CHANGE`] refused: what to do, which
-/// for a height adjustment is to adjust less steeply, and the renderer's own
-/// `reason`.
-pub(crate) fn undrawable_notice(heights: bool, reason: &str) -> String {
-    let advice = if heights {
-        "Zoom out, or raise or lower by less."
-    } else {
-        "Zoom out or pan and try again."
-    };
+/// What to do after [`UNDRAWABLE_CHANGE`] refused `action`: for a height
+/// adjustment, adjust less steeply; for a flatten, flatten to a height
+/// nearer the tiles around it; for any other edit (or none known), zoom
+/// out or pan.
+pub(crate) fn undrawable_advice(action: Option<&Action>) -> &'static str {
+    match action {
+        Some(Action::AdjustHeights { .. }) => "Zoom out, or raise or lower by less.",
+        Some(Action::FlattenHeights { .. }) => {
+            "Zoom out, or flatten to a height nearer the tiles around it."
+        }
+        _ => "Zoom out or pan and try again.",
+    }
+}
+
+/// What to do after [`UNDRAWABLE_CHANGE`] refused a proposal step of
+/// `action`: the person cannot change a recorded height step's amount or
+/// target, so for either height kind only zooming out is advice they can
+/// follow; any other step gets [`undrawable_advice`]'s.
+pub(crate) fn undrawable_step_advice(action: Option<&Action>) -> &'static str {
+    match action {
+        Some(Action::AdjustHeights { .. } | Action::FlattenHeights { .. }) => {
+            "Zoom out and prepare the step again."
+        }
+        _ => undrawable_advice(action),
+    }
+}
+
+/// The notice for a change [`UNDRAWABLE_CHANGE`] refused: what to do
+/// ([`undrawable_advice`]) and the renderer's own `reason`.
+pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
     format!("{UNDRAWABLE_CHANGE} {advice} Renderer: {reason}")
 }
 
@@ -794,9 +831,9 @@ impl Application {
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
-        let heights = matches!(action, Action::AdjustHeights { .. });
+        let advice = undrawable_advice(Some(&action));
         let paused_cancel = self.blocked.is_some() && self.session.history().pending().is_some();
-        let result = self.funnel(accept, false, heights, |app| {
+        let result = self.funnel(accept, false, advice, |app| {
             app.session
                 .dispatch(action, &mut app.recovery)
                 .map_err(|error| error.to_string())
@@ -823,7 +860,7 @@ impl Application {
         &mut self,
         accept: bool,
         prepare: bool,
-        heights: bool,
+        advice: &str,
         dispatch: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
         let records = self.recovery.records().len();
@@ -866,7 +903,7 @@ impl Application {
                 // or art changed on disk in between; `rebuild` has paused
                 // editing with that reason, and the funnel returns it.
                 if refreshed.is_ok() {
-                    let notice = undrawable_notice(heights, &reason);
+                    let notice = undrawable_notice(advice, &reason);
                     result = Err(notice.clone());
                     self.notice = Some(notice);
                 }
@@ -1163,9 +1200,34 @@ impl Application {
             self.session.generation(),
             self.session.history().document().revision(),
         );
-        self.tools
-            .begin_seeded_stroke(&inspected, key, pending, seed)
-            .map_err(|error| error.to_string())?;
+        // A flatten stroke samples its target once, here at the press,
+        // from the committed World under the pressed tile; the stroke and
+        // its action keep it however the drag goes on.
+        if self.tools.mode() == ToolMode::Sculpt
+            && self.tools.sculpt_tool() == SculptTool::Flatten
+            && !pending
+        {
+            let SelectionKey::Cell {
+                plane, layer, x, y, ..
+            } = key
+            else {
+                return Err("select a cell in sculpt mode first".into());
+            };
+            let target = tilewright_editor_ui::sculpt::flatten_target(
+                self.session.history().document().world(),
+                self.session.catalog(),
+                plane,
+                *layer,
+                [*x, *y],
+            )?;
+            self.tools
+                .begin_flatten_stroke(&inspected, key, pending, target)
+                .map_err(|error| error.to_string())?;
+        } else {
+            self.tools
+                .begin_seeded_stroke(&inspected, key, pending, seed)
+                .map_err(|error| error.to_string())?;
+        }
         match self.prepared.mask(self.view.frame_revision, true) {
             Ok(mask) => {
                 self.stroke_mask = Some(mask);
@@ -1379,8 +1441,10 @@ impl Application {
     /// preview marks exactly these) and those it leaves out, or its refusal.
     fn sculpt_preview(&self) -> Option<SculptPreview> {
         let stroke = self.tools.stroke()?;
-        let StrokeTarget::Heights { amount } = *stroke.target() else {
-            return None;
+        let goal = match *stroke.target() {
+            StrokeTarget::Heights { amount } => SculptGoal::Amount(amount),
+            StrokeTarget::Flatten { target } => SculptGoal::Target(target),
+            _ => return None,
         };
         let plan = self
             .session
@@ -1397,13 +1461,14 @@ impl Application {
                 });
                 SculptCounts {
                     at_end: stroke.len() - changes.len() - missing,
+                    undrawn: crate::workspace_render::undrawn_cells(&self.prepared, &changes),
                     changes,
                     missing,
                 }
             })
             .map_err(|error| error.message().to_owned());
         Some(SculptPreview {
-            amount,
+            goal,
             covered: stroke.len(),
             plan,
         })
@@ -1774,6 +1839,7 @@ impl Application {
                 match tool {
                     SculptTool::Raise => "Raise: drag lifts each cell once",
                     SculptTool::Lower => "Lower: drag sinks each cell once",
+                    SculptTool::Flatten => "Flatten: drag levels to the start tile",
                 }
                 .into(),
                 Some(Control::SculptTool(tool)),
@@ -1781,11 +1847,13 @@ impl Application {
                 self.tools.sculpt_tool() == tool,
             ));
         }
+        // Flatten sets one height: the steps are dimmed and do nothing.
+        let stepped = self.tools.sculpt_tool().stepped();
         for step in tools::SCULPT_STEPS {
             rows.push((
                 format!("Step {step}  {step}"),
                 Some(Control::SculptStep(step)),
-                true,
+                stepped,
                 self.tools.sculpt_step() == step,
             ));
         }
@@ -3407,14 +3475,22 @@ impl Application {
                 width: ui.sidebar_width(),
                 height: TEXT_ROW_HEIGHT,
             },
-            format!(
-                "Sculpt: {} by {}  F",
-                match tool {
-                    SculptTool::Raise => "Raise",
-                    SculptTool::Lower => "Lower",
-                },
-                self.tools.sculpt_step()
-            ),
+            match (tool, self.sculpt_preview().map(|preview| preview.goal)) {
+                // The target exists once a stroke has sampled it.
+                (SculptTool::Flatten, Some(SculptGoal::Target(target))) => {
+                    format!("Sculpt: Flatten to {target}  F")
+                }
+                (SculptTool::Flatten, _) => "Sculpt: Flatten  F".to_owned(),
+                _ => format!(
+                    "Sculpt: {} by {}  F",
+                    if tool == SculptTool::Lower {
+                        "Lower"
+                    } else {
+                        "Raise"
+                    },
+                    self.tools.sculpt_step()
+                ),
+            },
             Some(Control::SculptTool(tool.next())),
             true,
             // Always on screen, so it carries the active style even when
@@ -3600,6 +3676,7 @@ impl Application {
                 }
                 // Said by `sculpt_preview` above.
                 StrokeTarget::Heights { amount } => format!("by {amount}"),
+                StrokeTarget::Flatten { target } => format!("to {target}"),
             };
             return format!(
                 "Painting {} cells {target}, {changes} to change; release to review.{}{}",
@@ -3723,6 +3800,12 @@ impl Application {
                         anchors::short(anchor)
                     ),
                 };
+            }
+            SessionPhase::Ready
+                if self.tools.mode() == ToolMode::Sculpt
+                    && self.tools.sculpt_tool() == SculptTool::Flatten =>
+            {
+                "Ready. Drag to flatten heights to the start tile's height."
             }
             SessionPhase::Ready if self.tools.mode() == ToolMode::Sculpt => {
                 return format!(
@@ -4349,14 +4432,21 @@ impl Application {
     /// be refused.
     fn sculpt_frame(&self) -> Option<serde_json::Value> {
         let preview = self.sculpt_preview()?;
+        // Raise and lower keep their shape; a flatten names its target in
+        // place of the amount, and its cells already there in place of
+        // those at the end.
+        let (goal, value, kept) = match preview.goal {
+            SculptGoal::Amount(amount) => ("amount", amount, "at_end"),
+            SculptGoal::Target(target) => ("target", target, "at_target"),
+        };
         let mut record = serde_json::json!({
-            "amount": preview.amount,
+            goal: value,
             "cells": preview.covered,
         });
         match &preview.plan {
             Ok(counts) => {
                 record["changes"] = counts.changes.len().into();
-                record["at_end"] = counts.at_end.into();
+                record[kept] = counts.at_end.into();
                 record["missing"] = counts.missing.into();
                 record["first"] = counts
                     .changes
@@ -4365,6 +4455,14 @@ impl Application {
                     .copied()
                     .collect::<Vec<_>>()
                     .into();
+                // Only when some change has no tile drawn, so every other
+                // record keeps its shape.
+                if !counts.undrawn.is_empty() {
+                    record["undrawn"] = serde_json::json!({
+                        "count": counts.undrawn.len(),
+                        "first": counts.undrawn.iter().take(8).copied().collect::<Vec<_>>(),
+                    });
+                }
             }
             Err(reason) => record["refused"] = terminal_field(reason).into(),
         }
@@ -6050,6 +6148,12 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         Keycode::F if app.tools.mode() == ToolMode::Sculpt => {
             app.control(Control::SculptTool(app.tools.sculpt_tool().next()))
         }
+        // Flatten sets one height: the step keys do nothing for it.
+        Keycode::_1 | Keycode::_8
+            if app.tools.mode() == ToolMode::Sculpt && !app.tools.sculpt_tool().stepped() =>
+        {
+            Ok(())
+        }
         Keycode::_1 if app.tools.mode() == ToolMode::Sculpt => app.control(Control::SculptStep(1)),
         Keycode::_8 if app.tools.mode() == ToolMode::Sculpt => app.control(Control::SculptStep(8)),
         Keycode::Slash | Keycode::KpDivide if app.tools.mode() == ToolMode::Place => {
@@ -6214,7 +6318,7 @@ fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     let (Some(stroke), Some(changes)) = (app.tools.stroke(), stroke_changes(app)) else {
         return Vec::new();
     };
-    if let StrokeTarget::Heights { .. } = stroke.target() {
+    if let StrokeTarget::Heights { .. } | StrokeTarget::Flatten { .. } = stroke.target() {
         return crate::workspace_render::sculpt_overlay(
             &app.prepared,
             &changes.into_iter().collect(),
@@ -6476,7 +6580,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         app.tools
             .stroke()
             .map(tilewright_editor_ui::brush::Stroke::target),
-        Some(StrokeTarget::Heights { .. })
+        Some(StrokeTarget::Heights { .. } | StrokeTarget::Flatten { .. })
     ) {
         person.append(&mut stroke);
     }

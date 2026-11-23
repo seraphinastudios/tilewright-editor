@@ -79,7 +79,7 @@ descriptor it reports back with `Session::set_recovery_descriptor`.
 Every edit action names its target by uid, plane, layer, grid and plane
 coordinates, never by the frame selection: `Move`, `SetField`, `Remove`
 and `SetPortal` by uid; `Paint`, `PaintStroke`, `FillTerrain`,
-`ScatterTerrain`, `AdjustHeights`, `PaintZones` and `Place` by plane tile; zone and anchor actions by plane and id. `Select` and
+`ScatterTerrain`, `AdjustHeights`, `FlattenHeights`, `PaintZones` and `Place` by plane tile; zone and anchor actions by plane and id. `Select` and
 `ClearSelection` only change what the desktop app highlights; an accepted
 placement selects the new object.
 
@@ -228,7 +228,8 @@ prepared, the engine (`tilewright_editor_ui::sculpt`), in this order:
      amount (`h + amount < min` for a raise, `> max` for a lower): the whole
      action is refused with target.unsupported, and the message names the
      cell, its height and the amount it needs, or, when that is more than
-     1,024, says this tool cannot bring the cell in;
+     1,024, says this tool cannot bring the cell in (a
+     [flatten](#flatten) can);
    - otherwise: `clamp(h + amount, min, max)`. A cell beyond the other end
      thus moves into the range by at most the amount, never further and
      never away from it;
@@ -258,6 +259,50 @@ step's words count them, and the desktop's
 [Sculpt mode](OFFLINE-PROTOTYPE.md#sculpt-mode) marks them while a stroke is
 dragged (`Session::stroke_changes`) and releases the stroke as one
 `AdjustHeights` by its signed step.
+
+## Flatten
+
+`FlattenHeights { plane, layer, cells, target, expected }` records a
+flatten as it was meant: the covered cells and the height to set them to,
+not the heights it writes. The target is recorded; the engine never
+samples it (the desktop reads it from the tile under the pointer when a
+stroke starts). It needs the catalog's `editing.heights` range, and the
+range must hold the target. When it is prepared, the engine
+(`tilewright_editor_ui::sculpt::flatten_plan`), in this order:
+
+1. checks the stroke rule (input.budget, input.invalid, as for a raise)
+   and the target (at most 1,024 either way: input.budget);
+2. refuses without the range, and for a target the range does not hold
+   (grant.missing, with a message naming the target and the range; both
+   before the view), and for a cell outside the active view
+   (scope.outside_view);
+3. leaves out cells of chunks that do not exist, as a raise does, and
+   cells already at the target;
+4. sets every other cell to the target, wherever it was, inside the range
+   or outside it by any distance: the target is in the range, so the
+   result is too. This is how a tile more than 1,024 outside the range,
+   which no raise or lower can move, is brought back;
+5. refuses with target.unsupported a target that would stack past 32 bits
+   on its layer, as a raise does;
+6. refuses with change.none when no cell is left, and the message counts
+   the covered cells already at the target and those in chunks that do not
+   exist.
+
+The result is one `terrain.set` on the `height` grid in which each cell
+expects its committed height, as for a raise (World creates a missing
+height grid, and removes it when every height of the chunk returns to 0;
+undo restores it). There is no bound on how far one cell moves: the target
+and the range are bounded, and nothing subtracts heights. No refusal code
+is new. This rule is part of what a recorded `flatten_heights` step means
+and is frozen for that kind ([ADR 0007](../decisions/0007-flatten-heights.md)).
+Under any range that still holds the target, the same world gives the
+same transaction; under one that does not, a proposal step is refused with
+the engine's grant.missing. `flatten_plan` answers which cells a flatten
+would change, from the same code; a proposal step's words count them,
+and the desktop's [Sculpt mode](OFFLINE-PROTOTYPE.md#sculpt-mode) Flatten
+tool marks them while a stroke is dragged and releases the stroke as one
+`FlattenHeights` to the height it read under the press
+(`sculpt::flatten_target`, on the committed World).
 
 ## Refusal codes
 

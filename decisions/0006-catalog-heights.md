@@ -71,8 +71,9 @@ them.
   refuses an edit whose result cannot be drawn at its current view: the
   change is cancelled, whatever the action, and the notice gives the
   renderer's reason and what to do (for a height adjustment: zoom out, or
-  raise or lower by less; for any other edit: zoom out or pan and try
-  again), and editing continues instead of pausing.
+  raise or lower by less; for a flatten, ADR 0007: zoom out, or flatten
+  to a height nearer the tiles around it; for any other edit: zoom out or
+  pan and try again), and editing continues instead of pausing.
 - **One range per catalog.** The grant applies to the active view's plane
   and spatial layer, as `editing.zones.paint` does. Heights are one grid
   per chunk, not a ground grid, so the per-grid shape of `editing.terrain`
@@ -104,7 +105,9 @@ them.
     message names the cell, its height and the amount it needs. When that
     is more than 1,024, the most one action can move, the message says
     instead that this tool cannot bring the cell in and that it should be
-    left out of the stroke.
+    left out of the stroke, or flattened to a height in the range
+    (`flatten_heights`, [ADR 0007](0007-flatten-heights.md), which can
+    bring back any cell).
 
   So the tool never writes outside the range, never moves a cell by more
   than the amount and never moves one away from the range, and it can bring

@@ -249,6 +249,7 @@
                     "fill_terrain",
                     "scatter_terrain",
                     "adjust_heights",
+                    "flatten_heights",
                     "paint_zones",
                     "remove",
                     "place",
@@ -639,6 +640,61 @@
                     "layer",
                     "cells",
                     "amount",
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "flatten_heights"
+                    },
+                    "plane": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "layer": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    },
+                    "cells": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      "minItems": 1,
+                      "maxItems": 4096,
+                      "uniqueItems": true,
+                      "description": "Cells [x, y], distinct and in increasing order of x, then y."
+                    },
+                    "target": {
+                      "type": "integer",
+                      "minimum": -1024,
+                      "maximum": 1024,
+                      "description": "The height to flatten each cell to. Needs the catalog's editing.heights range (the catalog tool reports it as heights), and target must lie in it. Each cell becomes target, wherever it was, also a cell outside the range, which is how one is brought back into it. Cells already at target, and cells of map chunks that do not exist, are left out."
+                    },
+                    "expected": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The sandbox revision the action was made for: state.revision."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "plane",
+                    "layer",
+                    "cells",
+                    "target",
                     "expected"
                   ],
                   "additionalProperties": false

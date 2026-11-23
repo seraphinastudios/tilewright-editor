@@ -81,6 +81,7 @@ hold no NUL.
 | `fill_terrain` | `plane`, `layer`, `grid`, `x`, `y`, `proto`, `contiguous` (`true` or `false`) |
 | `scatter_terrain` | `plane`, `layer`, `grid`, `cells` (as for `paint_stroke`), `palette` (a catalog palette's name), `seed` (an integer from 0 to 4,294,967,295) |
 | `adjust_heights` | `plane`, `layer`, `cells` (as for `paint_stroke`), `amount` (an integer from -1,024 to 1,024, not 0) |
+| `flatten_heights` | `plane`, `layer`, `cells` (as for `paint_stroke`), `target` (an integer from -1,024 to 1,024) |
 | `paint_zones` | `plane`, `layer`, `cells` (as for `paint_stroke`), `zone` (string or `null`) |
 | `remove` | `uid` |
 | `place` | `plane`, `layer`, `x`, `y`, `proto` |
@@ -141,6 +142,18 @@ refused with `proposal.step_refused` and the engine's grant.missing. An
 amount of 0, past 1,024 or not an integer is `proposal.invalid` when the
 proposal is read. An editor from before `adjust_heights` refuses a whole
 proposal that holds one with `proposal.invalid`, as for `fill_terrain`.
+
+A `flatten_heights` step records the cells and the target height, not the
+heights before: the engine reads each covered cell's height from the
+world and the range from the catalog each time the step is prepared
+([docs/ENGINE.md](ENGINE.md#flatten)). The target is never sampled again.
+Under any range that still holds the target, the same world gives the same
+transaction, so the step applies even though the catalog differs. Under a
+range that no longer holds the target, or a catalog without a range, it is
+refused with `proposal.step_refused` and the engine's grant.missing. A
+target past 1,024 either way or not an integer is `proposal.invalid` when
+the proposal is read. An editor from before `flatten_heights` (1.59.0 and
+earlier) refuses a whole proposal that holds one with `proposal.invalid`.
 
 ### What a reader requires and what the writer emits
 
