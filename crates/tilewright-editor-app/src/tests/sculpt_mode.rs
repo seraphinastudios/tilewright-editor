@@ -672,3 +672,58 @@ fn the_persons_own_sculpt_edit_between_proposal_steps_is_allowed() {
     route(app, &key(Keycode::Z)).unwrap();
     assert_ne!(state(app), State::Moved { resume: None });
 }
+
+#[test]
+fn the_guides_hand_test_reads_as_written() {
+    // docs/OFFLINE-PROTOTYPE.md, "Sculpt mode": the sample with only the
+    // range added.
+    let (_temporary, mut app) = zone_application(|root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["heights"] = json!({"min": -8, "max": 8});
+        });
+    });
+    route(&mut app, &key(Keycode::U)).unwrap();
+    let texts = sidebar_texts(&mut app);
+    assert!(texts.contains(&"Sculpt: Raise by 1  F".to_owned()));
+    assert!(texts.contains(&"Granted heights -8 to 8".to_owned()));
+    assert_eq!(app.status_label(), "Ready. Drag to raise heights by 1.");
+    route(&mut app, &key(Keycode::_8)).unwrap();
+    acknowledge_ui(&mut app);
+    drag(&mut app, [1, 1], &[[3, 1]]);
+    assert_eq!(marked(&mut app).len(), 3);
+    assert_eq!(
+        app.status_label(),
+        "Raising 3 cells by 8, 3 to change; release to review."
+    );
+    release(&mut app, [3, 1]).unwrap();
+    assert!(sidebar_texts(&mut app).contains(&"Heights 0 to 8".to_owned()));
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Return)).unwrap();
+    app.action(Action::Select {
+        generation: app.view.frame_revision,
+        key: SelectionKey::Cell {
+            plane: "main".into(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 2,
+            y: 1,
+        },
+    })
+    .unwrap();
+    assert!(sidebar_texts(&mut app).contains(&"Height: 8".to_owned()));
+    acknowledge_ui(&mut app);
+    drag(&mut app, [2, 1], &[[4, 1]]);
+    assert_eq!(
+        app.status_label(),
+        "Raising 3 cells by 8, 1 to change, 2 at or above the top; release to review."
+    );
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    assert!(app.tools.stroke().is_none());
+    route(&mut app, &key(Keycode::Z)).unwrap();
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Return)).unwrap();
+    assert_eq!(
+        [height(&app, 1, 1), height(&app, 2, 1), height(&app, 3, 1)],
+        [0, 0, 0]
+    );
+}
