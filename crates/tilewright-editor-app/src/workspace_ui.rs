@@ -29,6 +29,13 @@ pub enum Control {
     ZoneOverlay,
     /// Show or hide the height tint, in every mode.
     HeightOverlay,
+    /// Sculpt mode: raise and lower heights with the brush; offered only
+    /// when the catalog grants `editing.heights`.
+    Sculpt,
+    /// Sculpt mode: what a drag does, raise or lower.
+    SculptTool(tilewright_editor_ui::tools::SculptTool),
+    /// Sculpt mode: how far one stroke raises or lowers (1 or 8).
+    SculptStep(u16),
     /// A row of the zone palette: paint this zone, or the default zone.
     ZonePalette(tilewright_editor_ui::tools::ZoneChoice),
     /// Edit the chosen zone's display name in the text draft.
