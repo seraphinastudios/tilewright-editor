@@ -15,7 +15,9 @@ use super::proposal::edit_json;
 use super::zones::{key, route, sidebar_texts, zone_application};
 use super::{BRUSH_WINDOW, acknowledge_ui, cell_pixel};
 use crate::prototype::Application;
-use crate::workspace_render::{SCULPT_MARK, SCULPT_MARK_OUTLINE, STROKE_PREVIEW_TINT};
+use crate::workspace_render::{
+    SCULPT_MARK, SCULPT_MARK_DARK, SCULPT_MARK_LIGHT, STROKE_PREVIEW_TINT,
+};
 use crate::workspace_ui::Control;
 use sdl3::keyboard::Keycode;
 use serde_json::json;
@@ -51,6 +53,14 @@ fn ramped(root: &Path) {
 fn isometric(root: &Path) {
     edit_json(root, "profile/profile.jsonc", |profile| {
         profile["projection"] = json!({"kind": "isometric", "tile_width": 32, "tile_height": 16});
+    });
+}
+
+/// Isometric with 64 x 32 diamonds, so the sample's 32 x 32 art does not
+/// overhang them and every tile's mark shows.
+fn wide_isometric(root: &Path) {
+    edit_json(root, "profile/profile.jsonc", |profile| {
+        profile["projection"] = json!({"kind": "isometric", "tile_width": 64, "tile_height": 32});
     });
 }
 
@@ -188,6 +198,7 @@ fn the_mode_shows_its_controls_and_keys_choose_the_tool_and_step() {
             .active
     };
     assert!(active(&mut app, "Sculpt heights  U"));
+    assert!(active(&mut app, "Sculpt: Raise by 1  F"));
     assert!(active(&mut app, "Raise: drag lifts each cell once"));
     assert!(active(&mut app, "Step 1  1"));
     assert_eq!(app.status_label(), "Ready. Drag to raise heights by 1.");
@@ -258,6 +269,11 @@ fn raise_previews_and_applies(prepare: impl FnOnce(&Path)) {
     assert_eq!(preview, engine(&app));
     assert_eq!(preview.len(), 15, "every covered cell moves");
     assert_eq!(
+        marks(&mut app).len(),
+        3 * preview.len(),
+        "three quads a tile"
+    );
+    assert_eq!(
         app.status_label(),
         "Raising 15 cells by 8, 15 to change; release to review."
     );
@@ -314,7 +330,7 @@ fn a_top_down_raise_previews_exactly_what_accept_applies() {
 
 #[test]
 fn an_isometric_raise_previews_exactly_what_accept_applies() {
-    raise_previews_and_applies(isometric);
+    raise_previews_and_applies(wide_isometric);
 }
 
 #[test]
@@ -333,24 +349,37 @@ fn a_lower_stroke_is_one_adjustment_by_the_negative_step() {
     assert_eq!(height(&app, 6, 3), 0);
 }
 
+/// CIE L* of a gamma-encoded sRGB colour.
+fn lightness([r, g, b, _]: [f32; 4]) -> f64 {
+    let linear = |c: f32| {
+        let c = f64::from(c);
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let y = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+    if y > 216.0 / 24_389.0 {
+        116.0 * y.cbrt() - 16.0
+    } else {
+        y * 24_389.0 / 27.0
+    }
+}
+
+/// The least lightness difference, in CIE L*, between the ring of a mark
+/// (its better-contrasting line) and any height band.
+const RING_CONTRAST: f64 = 40.0;
+
 #[test]
-fn the_marks_are_centre_marks_no_band_tint_or_highlight_looks_like() {
-    let (_temporary, mut app) = sculpt_application(|root| heights(root, -64, 64, |x, y| x - y));
-    drag(&mut app, [2, 2], &[]);
-    let overlay = marks(&mut app);
-    // An outline and a mark per marked tile, in that order.
-    assert!(!overlay.is_empty());
-    let colours: BTreeSet<[u32; 4]> = overlay
-        .iter()
-        .map(|quad| quad.color.map(f32::to_bits))
-        .collect();
-    assert_eq!(
-        colours,
-        [SCULPT_MARK, SCULPT_MARK_OUTLINE]
-            .iter()
-            .map(|colour| colour.map(f32::to_bits))
-            .collect()
-    );
+fn the_ring_differs_from_every_band_in_lightness_and_the_mark_in_hue() {
+    for band in tilewright_editor_ui::heights::RAMP {
+        let band = [band[0], band[1], band[2], 1.0];
+        let contrast = (lightness(SCULPT_MARK_DARK) - lightness(band))
+            .abs()
+            .max((lightness(SCULPT_MARK_LIGHT) - lightness(band)).abs());
+        assert!(contrast >= RING_CONTRAST, "{band:?}: {contrast}");
+    }
     let others: Vec<[f32; 3]> = tilewright_editor_ui::heights::RAMP
         .iter()
         .chain(tilewright_editor_ui::zones::TINTS.iter())
@@ -371,7 +400,33 @@ fn the_marks_are_centre_marks_no_band_tint_or_highlight_looks_like() {
             .sqrt();
         assert!(distance > 0.3, "{other:?}");
     }
-    // Each mark sits inside its tile, half its size, about its centre.
+}
+
+/// Bent ground: heights that differ between neighbours, so isometric tiles
+/// split into several parts.
+fn bent(root: &Path) {
+    heights(root, -64, 64, |x, y| (x * 7 + y * 13) % 5 * 3 - y + x);
+}
+
+/// Every marked tile has three flat quads, the dark ring, the light ring
+/// and the mark, in that order, above every World quad; the mark is half
+/// the tile's bounds about their centre and each ring encloses the next.
+fn marks_are_ringed_centre_marks_above_the_world(prepare: impl FnOnce(&Path)) {
+    let (_temporary, mut app) = sculpt_application(prepare);
+    drag(&mut app, [3, 2], &[[4, 3]]);
+    let overlay = marks(&mut app);
+    let tiles = marked(&mut app);
+    assert_eq!(tiles, engine(&app));
+    assert_eq!(overlay.len(), 3 * tiles.len());
+    let top = app
+        .prepared
+        .scene
+        .quads()
+        .iter()
+        .filter(|quad| quad.layer == tilewright_scene::Layer::World)
+        .map(|quad| (quad.depth, quad.painter_order))
+        .max()
+        .unwrap();
     let bounds = |quads: &[&tilewright_scene::Quad]| {
         let points = || quads.iter().flat_map(|quad| quad.positions);
         [
@@ -381,18 +436,21 @@ fn the_marks_are_centre_marks_no_band_tint_or_highlight_looks_like() {
             points().map(|p| p[1]).fold(f32::MIN, f32::max),
         ]
     };
-    for tile in marked(&mut app) {
-        let of = |colour: [f32; 4]| -> Vec<&tilewright_scene::Quad> {
-            overlay
-                .iter()
-                .filter(|quad| {
-                    quad.color == colour
-                        && matches!(
-                            app.prepared.cell_picks.get(&quad.semantic_id),
-                            Some(SelectionKey::Cell { x, y, .. }) if [*x, *y] == tile
-                        )
-                })
-                .collect()
+    let mut parts = 0;
+    for (index, triple) in overlay.chunks(3).enumerate() {
+        let colours: Vec<[f32; 4]> = triple.iter().map(|quad| quad.color).collect();
+        assert_eq!(
+            colours,
+            [SCULPT_MARK_DARK, SCULPT_MARK_LIGHT, SCULPT_MARK],
+            "{index}"
+        );
+        for quad in triple {
+            assert!((quad.depth, quad.painter_order) > top, "{index}");
+            assert!(!quad.pickable);
+        }
+        let tile = match app.prepared.cell_picks.get(&triple[2].semantic_id) {
+            Some(SelectionKey::Cell { x, y, .. }) => [*x, *y],
+            _ => panic!("a mark of no cell"),
         };
         let cell: Vec<&tilewright_scene::Quad> = app
             .prepared
@@ -406,15 +464,33 @@ fn the_marks_are_centre_marks_no_band_tint_or_highlight_looks_like() {
                 )
             })
             .collect();
+        parts = parts.max(cell.len());
         let [cl, ct, cr, cb] = bounds(&cell);
-        let [ml, mt, mr, mb] = bounds(&of(SCULPT_MARK));
-        let [ol, ot, or, ob] = bounds(&of(SCULPT_MARK_OUTLINE));
+        let [dl, dt, dr, db] = bounds(&[&triple[0]]);
+        let [ll, lt, lr, lb] = bounds(&[&triple[1]]);
+        let [ml, mt, mr, mb] = bounds(&[&triple[2]]);
         assert!((mr - ml - (cr - cl) / 2.0).abs() < 0.01, "{tile:?}");
         assert!((mb - mt - (cb - ct) / 2.0).abs() < 0.01, "{tile:?}");
         assert!(((ml + mr) - (cl + cr)).abs() < 0.01, "{tile:?}");
-        assert!(ol < ml && or > mr && ot < mt && ob > mb, "{tile:?}");
-        assert!(ol > cl && or < cr, "{tile:?}");
+        assert!(((mt + mb) - (ct + cb)).abs() < 0.01, "{tile:?}");
+        assert!(ll < ml && lr > mr && lt < mt && lb > mb, "{tile:?}");
+        assert!(dl < ll && dr > lr && dt < lt && db > lb, "{tile:?}");
+        assert!(dl > cl && dr < cr, "{tile:?}");
     }
+    assert!(parts >= 1);
+}
+
+#[test]
+fn top_down_marks_are_ringed_centre_marks_above_the_world() {
+    marks_are_ringed_centre_marks_above_the_world(bent);
+}
+
+#[test]
+fn bent_isometric_marks_are_one_ringed_mark_per_tile_above_the_world() {
+    marks_are_ringed_centre_marks_above_the_world(|root| {
+        bent(root);
+        wide_isometric(root);
+    });
 }
 
 #[test]
@@ -676,54 +752,234 @@ fn the_persons_own_sculpt_edit_between_proposal_steps_is_allowed() {
 #[test]
 fn the_guides_hand_test_reads_as_written() {
     // docs/OFFLINE-PROTOTYPE.md, "Sculpt mode": the sample with only the
-    // range added.
+    // range added, so every height is 0.
     let (_temporary, mut app) = zone_application(|root| {
         edit_json(root, "preview.jsonc", |catalog| {
             catalog["editing"]["heights"] = json!({"min": -8, "max": 8});
         });
     });
+    // 1.
     route(&mut app, &key(Keycode::U)).unwrap();
     let texts = sidebar_texts(&mut app);
     assert!(texts.contains(&"Sculpt: Raise by 1  F".to_owned()));
     assert!(texts.contains(&"Granted heights -8 to 8".to_owned()));
+    // The flat sample has no tint until the first Accept.
+    assert!(texts.contains(&"Heights: all 0, no tint".to_owned()));
     assert_eq!(app.status_label(), "Ready. Drag to raise heights by 1.");
     route(&mut app, &key(Keycode::_8)).unwrap();
     acknowledge_ui(&mut app);
+    // 2.
     drag(&mut app, [1, 1], &[[3, 1]]);
-    assert_eq!(marked(&mut app).len(), 3);
+    assert_eq!(marked(&mut app), BTreeSet::from([[1, 1], [2, 1], [3, 1]]));
     assert_eq!(
         app.status_label(),
         "Raising 3 cells by 8, 3 to change; release to review."
     );
     release(&mut app, [3, 1]).unwrap();
-    assert!(sidebar_texts(&mut app).contains(&"Heights 0 to 8".to_owned()));
+    assert!(
+        app.review_lines(620).join(" ").contains("\"height\""),
+        "the review shows the new height rows"
+    );
     acknowledge_ui(&mut app);
     route(&mut app, &key(Keycode::Return)).unwrap();
-    app.action(Action::Select {
-        generation: app.view.frame_revision,
-        key: SelectionKey::Cell {
-            plane: "main".into(),
-            layer: 0,
-            grid: "floor".into(),
-            x: 2,
-            y: 1,
-        },
-    })
-    .unwrap();
-    assert!(sidebar_texts(&mut app).contains(&"Height: 8".to_owned()));
+    assert!(app.session.history().pending().is_none());
+    let texts = sidebar_texts(&mut app);
+    assert!(texts.contains(&"Heights 0 to 8".to_owned()), "{texts:?}");
+    // The press selected (1, 1), where the drag began.
+    assert!(texts.contains(&"Cell 1,1 / floor".to_owned()), "{texts:?}");
+    assert!(texts.contains(&"Height: 8".to_owned()), "{texts:?}");
+    // 3.
     acknowledge_ui(&mut app);
     drag(&mut app, [2, 1], &[[4, 1]]);
+    assert_eq!(marked(&mut app), BTreeSet::from([[4, 1]]));
     assert_eq!(
         app.status_label(),
         "Raising 3 cells by 8, 1 to change, 2 at or above the top; release to review."
     );
     route(&mut app, &key(Keycode::Escape)).unwrap();
-    assert!(app.tools.stroke().is_none());
-    route(&mut app, &key(Keycode::Z)).unwrap();
+    release(&mut app, [4, 1]).unwrap();
+    assert!(app.session.history().pending().is_none());
+    // 4.
+    route(&mut app, &key(Keycode::F)).unwrap();
+    assert!(sidebar_texts(&mut app).contains(&"Sculpt: Lower by 8  F".to_owned()));
     acknowledge_ui(&mut app);
-    route(&mut app, &key(Keycode::Return)).unwrap();
+    drag(&mut app, [1, 1], &[]);
+    release(&mut app, [1, 1]).unwrap();
+    assert!(app.session.history().pending().is_some());
+    assert_eq!(height(&app, 1, 1), 0);
+    assert_eq!(height(&app, 2, 1), 8);
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(height(&app, 1, 1), 8);
+    assert!(app.tools.heights_visible());
+    route(&mut app, &key(Keycode::T)).unwrap();
+    assert!(!app.tools.heights_visible(), "it was off before U");
+}
+
+#[test]
+fn keys_during_a_drag_change_nothing_and_the_amount_is_fixed_at_the_press() {
+    let (_temporary, mut app) = sculpt_application(|root| heights(root, -64, 64, |_, _| 0));
+    app.tools.set_brush(Brush::default());
+    drag(&mut app, [2, 2], &[]);
+    for pressed in [
+        Keycode::F,
+        Keycode::_8,
+        Keycode::_1,
+        Keycode::U,
+        Keycode::T,
+        Keycode::H,
+    ] {
+        route(&mut app, &key(pressed)).unwrap();
+        assert!(app.tools.stroke().is_some(), "{pressed:?} ended the stroke");
+    }
+    assert_eq!(app.tools.mode(), ToolMode::Sculpt);
+    assert_eq!(app.tools.sculpt_amount(), 1);
+    assert!(app.tools.heights_visible());
+    // Changed behind the stroke's back, the tool and step do not reach it.
+    app.tools.set_sculpt_tool(SculptTool::Lower);
+    app.tools.set_sculpt_step(8).unwrap();
     assert_eq!(
-        [height(&app, 1, 1), height(&app, 2, 1), height(&app, 3, 1)],
-        [0, 0, 0]
+        app.status_label(),
+        "Raising 1 cell by 1, 1 to change; release to review."
     );
+    release(&mut app, [2, 2]).unwrap();
+    assert_eq!(height(&app, 2, 2), 1);
+}
+
+#[test]
+fn a_draft_opened_in_sculpt_mode_takes_the_sculpt_keys_as_text() {
+    use super::zone_manage::type_text;
+    let (_temporary, mut app) = zone_application(ramped);
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    route(&mut app, &key(Keycode::U)).unwrap();
+    assert_eq!(app.tools.mode(), ToolMode::Sculpt);
+    app.control(Control::Field("label".into())).unwrap();
+    let before = app.tools.draft_text().unwrap().to_owned();
+    for (pressed, text) in [
+        (Keycode::U, "u"),
+        (Keycode::F, "f"),
+        (Keycode::_1, "1"),
+        (Keycode::_8, "8"),
+    ] {
+        route(&mut app, &key(pressed)).unwrap();
+        acknowledge_ui(&mut app);
+        type_text(&mut app, text);
+    }
+    assert_eq!(app.tools.draft_text().unwrap(), format!("{before}uf18"));
+    assert_eq!(app.tools.mode(), ToolMode::Sculpt);
+    assert_eq!(app.tools.sculpt_amount(), 1);
+}
+
+/// A world pixel of every cell the exact cell mask shows outside the
+/// panels, from one frame.
+fn cell_pixels(app: &mut Application) -> std::collections::BTreeMap<[i64; 2], [f32; 2]> {
+    app.refresh_ui();
+    let frame = app.frame(true).unwrap();
+    let ids: std::collections::BTreeMap<u32, [i64; 2]> = app
+        .prepared
+        .cell_picks
+        .iter()
+        .filter_map(|(id, key)| match key {
+            SelectionKey::Cell { x, y, .. } => Some((id.0, [*x, *y])),
+            SelectionKey::Object { .. } => None,
+        })
+        .collect();
+    let width = usize::try_from(frame.width).unwrap();
+    let mut pixels = std::collections::BTreeMap::new();
+    for (index, sample) in frame.semantic_ids.iter().enumerate() {
+        let (px, py) = (
+            u32::try_from(index % width).unwrap(),
+            u32::try_from(index / width).unwrap(),
+        );
+        if let Some(cell) = ids.get(sample)
+            && app.ui.hit(px, py) == crate::workspace_ui::Hit::World(px, py)
+        {
+            #[allow(clippy::cast_precision_loss)]
+            pixels
+                .entry(*cell)
+                .or_insert([px as f32 + 0.5, py as f32 + 0.5]);
+        }
+    }
+    pixels
+}
+
+#[test]
+fn a_large_stroke_on_bent_ground_keeps_the_tint_zones_and_marks() {
+    // #89's benchmark view: 64 x 64 tiles over four chunks of bent
+    // isometric 64 x 32 ground at zoom 0.25, zones shown.
+    let (_temporary, mut app) = zone_application(|root| {
+        for (from, to) in [("0_0", [0, 1]), ("-1_0", [-1, 1])] {
+            let path = |name: &str| root.join(format!("planes/main/layers/0/{name}.jsonc"));
+            let mut chunk: serde_json::Value =
+                serde_json::from_slice(&fs::read(path(from)).unwrap()).unwrap();
+            chunk["chunk"] = json!(to);
+            chunk.as_object_mut().unwrap().remove("objects");
+            let name = format!("{}_{}", to[0], to[1]);
+            fs::write(path(&name), serde_json::to_vec_pretty(&chunk).unwrap()).unwrap();
+        }
+        wide_isometric(root);
+        heights(root, -1000, 1000, |x, y| {
+            (x * 7 + y * 13) % 5 * 6 - 3 * y + x
+        });
+        let rows: Vec<Vec<i64>> = (0..32_i64)
+            .map(|y| {
+                (0..32_i64)
+                    .map(|x| (x * 7 + y * 13) % 5 * 6 - 3 * y + x)
+                    .collect()
+            })
+            .collect();
+        edit_json(root, "planes/main/layers/0/-1_0.jsonc", |chunk| {
+            chunk["terrain"]["height"] = json!({ "rows": rows });
+        });
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["view"]["bounds"] = json!([-32, 0, 64, 64]);
+        });
+    });
+    app.view.camera.zoom = 0.25;
+    app.rebuild().unwrap();
+    route(&mut app, &key(Keycode::U)).unwrap();
+    route(&mut app, &key(Keycode::O)).unwrap();
+    app.tools.set_brush(Brush::default());
+    acknowledge_ui(&mut app);
+    let pixels = cell_pixels(&mut app);
+    let cells: Vec<[i64; 2]> = pixels.keys().copied().collect();
+    let start = pixels[&cells[0]];
+    crate::prototype::native_pointer(&mut app, start, BRUSH_WINDOW, BRUSH_WINDOW).unwrap();
+    for cell in &cells[1..] {
+        crate::prototype::native_stroke_motion(
+            &mut app,
+            pixels[cell],
+            true,
+            BRUSH_WINDOW,
+            BRUSH_WINDOW,
+        )
+        .unwrap();
+        if app.tools.stroke().unwrap().len() >= 3400 {
+            break;
+        }
+    }
+    let covered = app.tools.stroke().unwrap().len();
+    assert!(covered >= 3400, "{covered}");
+    let presentation = crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert!(!app.preview_omitted, "overlays dropped at {covered} cells");
+    let marks = marks(&mut app);
+    assert_eq!(marks.len(), 3 * engine(&app).len());
+    assert!(!crate::prototype::height_overlay(&app).is_empty());
+    assert!(!crate::prototype::zone_overlay(&app).is_empty());
+    assert!(!app.status_label().contains("Too many cells"));
+    // Past the budget everything the person shows is left out, and the
+    // sculpt status says so.
+    app.frame_limits.maximum_quads = presentation.scene.quads().len() - 1;
+    crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert!(app.preview_omitted);
+    let status = app.status_label();
+    assert!(
+        status.starts_with("Raising ")
+            && status.ends_with("; release to review. Too many cells to preview."),
+        "{status}"
+    );
+    app.frame_limits = tilewright_scene::SceneLimits::default();
+    route(&mut app, &key(Keycode::Escape)).unwrap();
 }

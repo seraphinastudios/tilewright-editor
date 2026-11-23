@@ -251,80 +251,119 @@ pub fn stroke_overlay(prepared: &PreparedPreview, cells: &BTreeSet<SelectionKey>
 }
 
 /// The mark of a cell a running sculpt stroke would change: a magenta
-/// copy of the cell's shape at half its size about its centre, outlined in
-/// [`SCULPT_MARK_OUTLINE`], so the cell's own height band still shows
-/// around it. No height band (violet through teal and green to pale
-/// yellow, filling the whole tile), no zone tint (translucent, the whole
-/// tile), the proposal highlight (darker, the whole tile) or a badge (in a
-/// corner) looks like it.
+/// copy of the cell's flat shape at half its size about its centre, ringed
+/// first in [`SCULPT_MARK_LIGHT`] and then in [`SCULPT_MARK_DARK`], so the
+/// cell's own height band still shows around it and the ring differs from
+/// every band in lightness, not only in hue (tested). No height band
+/// (violet through teal and green to pale yellow, filling the whole tile),
+/// no zone tint (translucent, the whole tile), the proposal highlight
+/// (darker, the whole tile) or a badge (in a corner) looks like it.
 pub const SCULPT_MARK: [f32; 4] = [0.93, 0.16, 0.62, 1.0];
-pub const SCULPT_MARK_OUTLINE: [f32; 4] = BADGE_DARK;
-/// A sculpt mark is its cell scaled by this much about the cell's centre.
+/// The ring's inner, light line and its outer, dark one.
+pub const SCULPT_MARK_LIGHT: [f32; 4] = BADGE_LIGHT;
+pub const SCULPT_MARK_DARK: [f32; 4] = BADGE_DARK;
+/// A sculpt mark is its cell's bounds scaled by this much about their
+/// centre.
 pub const SCULPT_MARK_SCALE: f32 = 0.5;
+/// Width of each line of the ring, in scene pixels.
+pub const SCULPT_RING: f32 = 1.5;
 
-/// The live preview of a sculpt stroke: on every tile of `cells`, a
-/// [`SCULPT_MARK`] (the tile's exact cell quads scaled by
-/// [`SCULPT_MARK_SCALE`] about the centre of their bounds) over a copy
-/// grown by [`BADGE_OUTLINE`] in [`SCULPT_MARK_OUTLINE`]. Both take the
-/// tile's own place in the World's draw order, like [`stroke_overlay`]'s
-/// copies, so objects and nearer tiles cover the mark as they cover the
-/// terrain; the outline comes first, so it draws under the mark. Nothing
-/// when the cell slots are unavailable.
+/// The live preview of a sculpt stroke: on every tile of `cells`, three
+/// flat quads made from the union bounds of the tile's exact cell quads
+/// (however many parts bent ground splits it into): the dark ring, the
+/// light ring, then the [`SCULPT_MARK`]. Each is the tile's cell art on
+/// those bounds scaled by [`SCULPT_MARK_SCALE`] about their centre, the
+/// rings grown by twice [`SCULPT_RING`] and by it. They take the badges'
+/// place after the last World quad, above every tile and object, so no
+/// object, nearer tile or later part of the same tile covers the ring; they
+/// draw in that order, the mark last. Unpickable; they need no cell slots.
 pub fn sculpt_overlay(
     prepared: &PreparedPreview,
     cells: &BTreeSet<[i64; 2]>,
     shape: CellShape,
 ) -> Vec<Quad> {
-    let mut tiles: BTreeMap<[i64; 2], Vec<Quad>> = BTreeMap::new();
-    for (at, quad) in world_ordered_cells(prepared, |key| match key {
-        SelectionKey::Cell { x, y, .. } if cells.contains(&[*x, *y]) => Some(SCULPT_MARK),
-        _ => None,
-    }) {
-        if let SelectionKey::Cell { x, y, .. } = at {
+    let (depth, painter_order) = above_world(prepared);
+    let mut tiles: BTreeMap<[i64; 2], Vec<&Quad>> = BTreeMap::new();
+    for quad in prepared.cell_scene.quads() {
+        if let Some(SelectionKey::Cell { x, y, .. }) = prepared.cell_picks.get(&quad.semantic_id)
+            && cells.contains(&[*x, *y])
+        {
             tiles.entry([*x, *y]).or_default().push(quad);
         }
     }
     let mut marks = Vec::new();
-    for quads in tiles.into_values() {
-        let mark = scaled_about_centre(&quads, SCULPT_MARK_SCALE);
-        marks.extend(
-            grow(&mark, BADGE_OUTLINE, shape)
-                .into_iter()
-                .map(|quad| Quad {
-                    color: SCULPT_MARK_OUTLINE,
-                    ..quad
-                }),
-        );
-        marks.extend(mark);
+    for parts in tiles.into_values() {
+        let Some(mark) = flat_mark(&parts, depth, painter_order) else {
+            continue;
+        };
+        for (width, color) in [
+            (2.0 * SCULPT_RING, SCULPT_MARK_DARK),
+            (SCULPT_RING, SCULPT_MARK_LIGHT),
+        ] {
+            marks.extend(
+                grow(&[mark], width, shape)
+                    .into_iter()
+                    .map(|quad| Quad { color, ..quad }),
+            );
+        }
+        marks.push(mark);
     }
     marks
 }
 
-/// `quads`, the parts of one cell, scaled by `factor` about the centre of
-/// their union bounds.
-fn scaled_about_centre(quads: &[Quad], factor: f32) -> Vec<Quad> {
-    let points = || quads.iter().flat_map(|quad| quad.positions);
+/// One flat quad over `parts`, the quads of one cell: the cell art (the
+/// first part's texture, sampled whole) on the union bounds of the parts
+/// scaled by [`SCULPT_MARK_SCALE`] about their centre, in [`SCULPT_MARK`]
+/// at `depth` and `painter_order`.
+fn flat_mark(parts: &[&Quad], depth: i16, painter_order: u32) -> Option<Quad> {
+    let first = parts.first()?;
+    let points = || parts.iter().flat_map(|quad| quad.positions);
     let (Some(left), Some(right), Some(top), Some(bottom)) = (
         points().map(|p| p[0]).reduce(f32::min),
         points().map(|p| p[0]).reduce(f32::max),
         points().map(|p| p[1]).reduce(f32::min),
         points().map(|p| p[1]).reduce(f32::max),
     ) else {
-        return Vec::new();
+        return None;
     };
     let centre = [f32::midpoint(left, right), f32::midpoint(top, bottom)];
-    quads
+    let half = [
+        (right - left) / 2.0 * SCULPT_MARK_SCALE,
+        (bottom - top) / 2.0 * SCULPT_MARK_SCALE,
+    ];
+    let [near_x, far_x] = [centre[0] - half[0], centre[0] + half[0]];
+    let [near_y, far_y] = [centre[1] - half[1], centre[1] + half[1]];
+    Some(Quad {
+        part: 0,
+        positions: [
+            [near_x, near_y],
+            [far_x, near_y],
+            [far_x, far_y],
+            [near_x, far_y],
+        ],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        color: SCULPT_MARK,
+        grayscale: 0.0,
+        glow: None,
+        pickable: false,
+        layer: Layer::World,
+        depth,
+        painter_order,
+        ..**first
+    })
+}
+
+/// The place in the prepared World scene's draw order after its last World
+/// quad: where badges and sculpt marks draw, above every tile and object.
+fn above_world(prepared: &PreparedPreview) -> (i16, u32) {
+    prepared
+        .scene
+        .quads()
         .iter()
-        .map(|quad| Quad {
-            positions: quad.positions.map(|p| {
-                [
-                    centre[0] + factor * (p[0] - centre[0]),
-                    centre[1] + factor * (p[1] - centre[1]),
-                ]
-            }),
-            ..*quad
-        })
-        .collect()
+        .filter(|quad| quad.layer == Layer::World)
+        .map(|quad| (quad.depth, quad.painter_order))
+        .max()
+        .map_or((0, 0), |(depth, order)| (depth, order.saturating_add(1)))
 }
 
 /// Unpickable copies of the prepared cell quads of every cell `tint` gives
@@ -334,17 +373,6 @@ fn world_ordered_copies(
     prepared: &PreparedPreview,
     tint: impl Fn(&SelectionKey) -> Option<[f32; 4]>,
 ) -> Vec<Quad> {
-    world_ordered_cells(prepared, tint)
-        .into_iter()
-        .map(|(_, quad)| quad)
-        .collect()
-}
-
-/// [`world_ordered_copies`], each with the cell it copies.
-fn world_ordered_cells(
-    prepared: &PreparedPreview,
-    tint: impl Fn(&SelectionKey) -> Option<[f32; 4]>,
-) -> Vec<(&SelectionKey, Quad)> {
     let Some(slots) = prepared.cell_slots() else {
         return Vec::new();
     };
@@ -353,26 +381,22 @@ fn world_ordered_cells(
         .quads()
         .iter()
         .filter_map(|quad| {
-            let key = prepared.cell_picks.get(&quad.semantic_id)?;
-            let color = tint(key)?;
+            let color = tint(prepared.cell_picks.get(&quad.semantic_id)?)?;
             let (depth, painter_order) = slots
                 .get(&quad.semantic_id)
                 .copied()
                 .flatten()
                 .unwrap_or((quad.depth.saturating_sub(1), 0));
-            Some((
-                key,
-                Quad {
-                    color,
-                    grayscale: 0.0,
-                    glow: None,
-                    pickable: false,
-                    layer: Layer::World,
-                    depth,
-                    painter_order,
-                    ..*quad
-                },
-            ))
+            Some(Quad {
+                color,
+                grayscale: 0.0,
+                glow: None,
+                pickable: false,
+                layer: Layer::World,
+                depth,
+                painter_order,
+                ..*quad
+            })
         })
         .collect()
 }
@@ -420,14 +444,7 @@ pub fn badge_overlay(
     portals: &BTreeSet<[i64; 2]>,
     shape: CellShape,
 ) -> Vec<Quad> {
-    let (depth, painter_order) = prepared
-        .scene
-        .quads()
-        .iter()
-        .filter(|quad| quad.layer == Layer::World)
-        .map(|quad| (quad.depth, quad.painter_order))
-        .max()
-        .map_or((0, 0), |(depth, order)| (depth, order.saturating_add(1)));
+    let (depth, painter_order) = above_world(prepared);
     let mut badges = Vec::new();
     for (tiles, corner, color, outline) in [
         (anchors, Corner::First, BADGE_LIGHT, BADGE_DARK),

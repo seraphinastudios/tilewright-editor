@@ -558,11 +558,19 @@ status line reads "Ready. Drag to raise heights by 8." Later pull requests
 add flatten and smooth to the tool list.
 
 While dragging, before the release, each cell the release would change
-carries a mark: a magenta copy of the cell's shape at half its size about
-its centre, outlined in dark navy, so the cell's own height band still shows
-around it. No height band (which fills the whole tile, violet to pale
-yellow), zone tint, proposal highlight (darker, the whole tile) or badge (in
-a corner) looks like it. The marked cells are the engine's own answer
+carries a mark: a magenta copy of the cell's flat shape at half its size
+about its centre, ringed by a light line inside a dark navy one, so the
+cell's own height band still shows around it. The ring is at least 40 CIE L*
+lighter or darker than every height band (tested), so the mark separates
+from the band by lightness, not by hue alone. No height band (which fills
+the whole tile, violet to pale yellow), zone tint, proposal highlight
+(darker, the whole tile) or badge (in a corner) looks like it. Marks draw
+where badges do, above all World content, so no object, nearer tile or tall
+art hides one; a mark can cover the middle of an object on its tile while
+the stroke runs. Each marked tile costs three quads however bent its ground,
+so a stroke over most of a large bent view keeps the tint, the zones and the
+marks; when the overlays would still pass the scene limits they are left
+out together and the status line ends "Too many cells to preview." The marked cells are the engine's own answer
 (`tilewright_editor_ui::sculpt::plan` on the committed World), the cells
 Accept writes. The status line says what the release would do: "Raising 37
 cells by 8, 35 to change, 2 at or above the top; release to review." Cells
@@ -586,7 +594,10 @@ any other edit of theirs. A frame captured while a sculpt stroke runs has a
 `refused` with the engine's message.
 
 The scripted demonstration has no sculpt step: the neutral sample grants no
-height range, and it stays that way. Hand test on a copy:
+height range, and it stays that way. Hand test on a copy (every height of the
+sample is 0, so the tint shows nothing, "Heights: all 0, no tint", until the
+first Accept; for the look of the marks over many bands, give the copy
+heights as in the [Heights](#heights) hand test):
 
 1. Copy `crates/tilewright-editor-testkit/fixtures/prototype-neutral` to a
    directory of your own. In the copy's `preview.jsonc`, add this line inside
@@ -597,19 +608,23 @@ height range, and it stays that way. Hand test on a copy:
    "heights": {"min": -8, "max": 8}
    ```
 
-   Then provision the copy with `tools/provision-prototype.py --world <copy>`
-   as above. (Its heights are all 0, so H alone shows no tint.)
-2. Press U: the sidebar shows "Sculpt: Raise by 1  F" and "Granted heights -8
-   to 8", and the status line "Ready. Drag to raise heights by 1." Press 8,
-   then drag from tile (1, 1) to (3, 1) with the 1x1 brush: three cells are
-   marked and the status line reads "Raising 3 cells by 8, 3 to change;
-   release to review."
-3. Release: the review shows one `terrain.set` on the `height` grid, the tint
-   shows the three raised tiles lightest ("Heights 0 to 8"). Press Enter;
-   click tile (2, 1): the inspector reads "Height: 8".
-4. Drag from (2, 1) to (4, 1): the status line reads "Raising 3 cells by 8,
-   1 to change, 2 at or above the top; release to review." Press Esc to
-   abandon the stroke, then Z and Enter: the heights are 0 again.
+   Provision the copy with `tools/provision-prototype.py --world <copy>` as
+   above, and press U: the pinned row reads "Sculpt: Raise by 1  F" and the
+   status line "Ready. Drag to raise heights by 1." Press 8.
+2. Drag from tile (1, 1) to (3, 1) with the 1x1 brush and keep the button
+   down: three magenta marks with dark and light rims appear, and the status
+   line reads "Raising 3 cells by 8, 3 to change; release to review."
+   Release: the review shows the chunk's new `height` rows. Press Enter: the
+   three tiles turn the lightest band ("Heights 0 to 8"), and the inspector,
+   on (1, 1) where the drag began, reads "Height: 8".
+3. Drag from (2, 1) to (4, 1) and hold: only (4, 1) is marked, and the status
+   line reads "Raising 3 cells by 8, 1 to change, 2 at or above the top;
+   release to review." Press Esc while holding, then release: nothing is
+   pending.
+4. Press F (the pinned row reads "Sculpt: Lower by 8  F"), then click tile
+   (1, 1): a click is a one-cell stroke, and the review shows its height
+   going from 8 to 0. Press Esc to cancel it. Press T: the tint goes off
+   again, as it was before U.
 
 ### Zones
 

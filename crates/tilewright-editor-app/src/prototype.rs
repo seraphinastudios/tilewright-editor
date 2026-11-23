@@ -3379,7 +3379,9 @@ impl Application {
             ),
             Some(Control::SculptTool(tool.next())),
             true,
-            false,
+            // Always on screen, so it carries the active style even when
+            // the "Sculpt heights" row has scrolled away.
+            true,
         );
         y + TEXT_ROW_HEIGHT + ROW_GAP
     }
@@ -3538,12 +3540,9 @@ impl Application {
                 } else {
                     ""
                 },
-                if preview.plan.is_err() {
-                    ""
-                } else if self.preview_omitted {
+                // The marks need no cell slots.
+                if preview.plan.is_ok() && self.preview_omitted {
                     " Too many cells to preview."
-                } else if self.prepared.cell_slots().is_none() {
-                    " Preview unavailable for this view."
                 } else {
                     ""
                 }
@@ -6075,8 +6074,9 @@ fn stroke_changes(app: &Application) -> Option<Vec<[i64; 2]>> {
 /// default), and [`zone_overlay`] leaves those cells out, so the preview
 /// replaces their resting tint rather than stacking on it. A sculpt stroke
 /// marks the cells its release would change with
-/// [`crate::workspace_render::sculpt_overlay`]'s centre marks, which no
-/// height band, zone tint or highlight looks like.
+/// [`crate::workspace_render::sculpt_overlay`]'s ringed centre marks, above
+/// all World content, which no height band, zone tint or highlight looks
+/// like.
 fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     if app.tools.stroke().is_none() {
         return fill_overlay(app);
