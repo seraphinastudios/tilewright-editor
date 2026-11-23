@@ -68,6 +68,8 @@ pub mod limits {
     /// The largest `amount` of a height adjustment either way: the
     /// engine's own bound. 0 is not an amount.
     pub const HEIGHT_AMOUNT: i32 = tilewright_editor_ui::sculpt::MAXIMUM_AMOUNT;
+    /// The largest flatten `target` either way: the engine's own bound.
+    pub const HEIGHT_TARGET: i32 = tilewright_editor_ui::sculpt::MAXIMUM_TARGET;
     /// Most bytes of a field value, encoded, and its deepest nesting: the
     /// engine's own field budget.
     pub const FIELD_VALUE_BYTES: usize = 64 << 10;

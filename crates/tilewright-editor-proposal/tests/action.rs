@@ -126,6 +126,29 @@ fn every_edit_kind_round_trips_exactly_with_edge_values() {
             amount: limits::HEIGHT_AMOUNT,
             expected: [0; 32],
         },
+        Action::FlattenHeights {
+            plane: odd.clone(),
+            layer: i32::MIN,
+            cells: vec![[-MAX, MAX]],
+            target: -limits::HEIGHT_TARGET,
+            expected: [0xff; 32],
+        },
+        Action::FlattenHeights {
+            plane: "p".into(),
+            layer: i32::MAX,
+            cells: (0..i64::try_from(limits::CELLS).unwrap())
+                .map(|x| [x, x])
+                .collect(),
+            target: limits::HEIGHT_TARGET,
+            expected: [0; 32],
+        },
+        Action::FlattenHeights {
+            plane: "p".into(),
+            layer: 0,
+            cells: vec![[0, 0]],
+            target: 0,
+            expected: [0; 32],
+        },
         Action::PaintZones {
             plane: "p".into(),
             layer: 0,
@@ -242,6 +265,13 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         amount,
         expected: revision,
     };
+    let flattened = |target: i32| Action::FlattenHeights {
+        plane: "p".into(),
+        layer: 0,
+        cells: vec![[0, 0]],
+        target,
+        expected: revision,
+    };
     let mut deep = json!(1);
     for _ in 0..=limits::FIELD_VALUE_DEPTH {
         deep = json!([deep]);
@@ -286,6 +316,10 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         (raised(1025), RefusalCode::ProposalInvalid),
         (raised(-1025), RefusalCode::ProposalInvalid),
         (raised(i32::MIN), RefusalCode::ProposalInvalid),
+        (flattened(1025), RefusalCode::ProposalInvalid),
+        (flattened(-1025), RefusalCode::ProposalInvalid),
+        (flattened(i32::MAX), RefusalCode::ProposalInvalid),
+        (flattened(i32::MIN), RefusalCode::ProposalInvalid),
         (field(json!(u64::MAX)), RefusalCode::ProposalInvalid),
         (
             field(json!({"a": ["nul \u{0}"]})),
@@ -420,6 +454,8 @@ fn reading_refuses_every_other_form() {
     assert_eq!(scatter["kind"], "scatter_terrain");
     let heights = encode_action(&edit(18, [3; 32])).unwrap();
     assert_eq!(heights["kind"], "adjust_heights");
+    let flatten = encode_action(&edit(19, [3; 32])).unwrap();
+    assert_eq!(flatten["kind"], "flatten_heights");
     let with = |base: &Value, key: &str, value: Value| {
         let mut changed = base.clone();
         changed[key] = value;
@@ -513,6 +549,23 @@ fn reading_refuses_every_other_form() {
         with(&heights, "cells", json!([])),
         with(&heights, "cells", json!([[0, 0], [0, 0]])),
         with(&heights, "kind", json!("raise_terrain")),
+        with(&flatten, "target", json!(1025)),
+        with(&flatten, "target", json!(-1025)),
+        with(&flatten, "target", json!(4_294_967_296_i64)),
+        with(&flatten, "target", json!(-2.0)),
+        with(&flatten, "target", json!("-2")),
+        with(&flatten, "target", json!(null)),
+        with(
+            &flatten,
+            "target",
+            json!({"kind": "anchor", "plane": "main", "anchor": "a"}),
+        ),
+        without(&flatten, "target"),
+        with(&flatten, "amount", json!(1)),
+        with(&flatten, "grid", json!("height")),
+        with(&flatten, "cells", json!([])),
+        with(&flatten, "cells", json!([[1, 0], [0, 0]])),
+        with(&flatten, "kind", json!("flatten")),
         "[]".into(),
         "\"move\"".into(),
     ];

@@ -345,6 +345,27 @@ pub fn sculpt_overlay(
     marks
 }
 
+/// The cells of `cells` that have no quad in the prepared cell scene, in
+/// their order: tiles this view does not draw (a stored height so far from
+/// the others that the tile is left out of the scene), which
+/// [`sculpt_overlay`] therefore cannot mark.
+pub fn undrawn_cells(prepared: &PreparedPreview, cells: &[[i64; 2]]) -> Vec<[i64; 2]> {
+    let drawn: BTreeSet<[i64; 2]> = prepared
+        .cell_scene
+        .quads()
+        .iter()
+        .filter_map(|quad| match prepared.cell_picks.get(&quad.semantic_id) {
+            Some(SelectionKey::Cell { x, y, .. }) => Some([*x, *y]),
+            _ => None,
+        })
+        .collect();
+    cells
+        .iter()
+        .copied()
+        .filter(|cell| !drawn.contains(cell))
+        .collect()
+}
+
 /// One flat quad over `parts`, the quads of one cell: the cell art (the
 /// first part's texture, sampled whole) on the union bounds of the parts
 /// scaled by [`SCULPT_MARK_SCALE`] about their centre, in [`SCULPT_MARK`]

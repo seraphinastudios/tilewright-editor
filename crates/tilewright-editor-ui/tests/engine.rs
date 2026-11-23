@@ -117,6 +117,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         Action::FillTerrain { .. } => Some("FillTerrain"),
         Action::ScatterTerrain { .. } => Some("ScatterTerrain"),
         Action::AdjustHeights { .. } => Some("AdjustHeights"),
+        Action::FlattenHeights { .. } => Some("FlattenHeights"),
         Action::PaintZones { .. } => Some("PaintZones"),
         Action::Remove { .. } => Some("Remove"),
         Action::Place { .. } => Some("Place"),
@@ -137,7 +138,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         | Action::Reopen => None,
     }
 }
-const EDIT_KINDS: [&str; 18] = [
+const EDIT_KINDS: [&str; 19] = [
     "Move",
     "SetField",
     "Paint",
@@ -145,6 +146,7 @@ const EDIT_KINDS: [&str; 18] = [
     "FillTerrain",
     "ScatterTerrain",
     "AdjustHeights",
+    "FlattenHeights",
     "PaintZones",
     "Remove",
     "Place",
@@ -217,6 +219,13 @@ fn edits(expected: [u8; 32]) -> Vec<Action> {
             layer: 0,
             cells: vec![[0, 0], [1, 0]],
             amount: 8,
+            expected,
+        },
+        Action::FlattenHeights {
+            plane: main(),
+            layer: 0,
+            cells: vec![[0, 0], [1, 0]],
+            target: -3,
             expected,
         },
         Action::PaintZones {
@@ -856,6 +865,16 @@ fn granted_refusals(expected: [u8; 32]) -> Vec<(Action, RefusalCode)> {
                 layer: 0,
                 cells: vec![[0, 100]],
                 amount: -1,
+                expected,
+            },
+            RefusalCode::ScopeOutsideView,
+        ),
+        (
+            Action::FlattenHeights {
+                plane: main_plane(),
+                layer: 0,
+                cells: vec![[0, 100]],
+                target: 2,
                 expected,
             },
             RefusalCode::ScopeOutsideView,

@@ -1,10 +1,10 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! A proposal's height step (`adjust_heights`): its words, which count the
-//! cells the engine's own plan would change in the person's world, and its
-//! map highlight, the step's cells. There is no sculpt mode in the desktop
-//! yet; only recorded steps are shown.
+//! A proposal's height steps (`adjust_heights`, `flatten_heights`): their
+//! words, which count the cells the engine's own plan would change in the
+//! person's world, their map highlight, the step's cells, and the advice
+//! when their result cannot be drawn.
 use super::proposal::{edit_json, person_application};
 use crate::prototype::proposal_view::{Highlight, action_words};
 use serde_json::json;
@@ -87,6 +87,60 @@ fn a_height_step_under_a_catalog_without_the_range_says_so() {
     );
 }
 
+#[test]
+fn a_flatten_step_is_said_and_highlighted_by_its_cells() {
+    let (_person, app) = person_application(hills);
+    let expected = super::proposal::revision(&app.session);
+    let flatten = |cells: Vec<[i64; 2]>, target: i32| Action::FlattenHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells,
+        target,
+        expected,
+    };
+    let words = |action: &Action| action_words(action, app.session.world(), app.session.catalog());
+    // (0, 0) and (1, 0) are at 4, the rest at 0.
+    assert_eq!(
+        words(&flatten(vec![[0, 0], [1, 0], [2, 0]], 4)),
+        "Flatten 3 cells to 4, 1 to change (on main/0)"
+    );
+    assert_eq!(
+        words(&flatten(vec![[0, 0], [1, 0], [2, 0]], -2)),
+        "Flatten 3 cells to -2, 3 to change (on main/0)"
+    );
+    assert_eq!(
+        words(&flatten(vec![[2, 0]], 0)),
+        "Flatten 1 cell to 0, none to change (on main/0)"
+    );
+    // Outside the range -4 to 4: this catalog does not grant the target.
+    assert_eq!(
+        words(&flatten(vec![[2, 0]], 5)),
+        "Flatten 1 cell to 5, not granted by this catalog (on main/0)"
+    );
+    // The engine would refuse for another reason: no count.
+    assert_eq!(
+        words(&flatten(vec![[1, 1], [900, 1]], 2)),
+        "Flatten 2 cells to 2, some outside the view (on main/0)"
+    );
+    let highlight = Highlight::of(0, &flatten(vec![[0, 0], [3, 2]], 2), &app.session);
+    let tiles: Vec<(&str, [i64; 2])> = highlight
+        .tiles
+        .iter()
+        .map(|tile| (tile.role.key(), tile.at))
+        .collect();
+    assert_eq!(tiles, [("cell", [0, 0]), ("cell", [3, 2])]);
+    // Without the range at all.
+    let (_plain, app) = person_application(|_| {});
+    assert_eq!(
+        action_words(
+            &flatten(vec![[0, 0], [1, 0]], 0),
+            app.session.world(),
+            app.session.catalog()
+        ),
+        "Flatten 2 cells to 0, not granted by this catalog (on main/0)"
+    );
+}
+
 /// The neutral sample made isometric (32 × 16 diamond, its 32 × 32 art
 /// unchanged), with the range -512 to 512 and, around tile (2, 2), the
 /// reviewer's worst pattern for tall art half built: the "low" tiles at
@@ -163,6 +217,41 @@ fn a_change_that_cannot_be_drawn_at_this_zoom_is_cancelled_not_blocking() {
 }
 
 #[test]
+fn a_flatten_that_cannot_be_drawn_at_this_zoom_says_to_flatten_nearer() {
+    let (_person, mut app) = person_application(steep);
+    // The high tiles of the half-built pattern flattened to 512, beside
+    // the low ones at -512.
+    let high: Vec<[i64; 2]> = (1..4_i64)
+        .flat_map(|x| (1..4_i64).map(move |y| [x, y]))
+        .filter(|&[x, y]| {
+            STEEP_HIGH[usize::try_from(y - 1).unwrap()][usize::try_from(x - 1).unwrap()] == 1
+        })
+        .collect();
+    let flatten = |app: &crate::prototype::Application| Action::FlattenHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells: high.clone(),
+        target: 512,
+        expected: super::proposal::revision(&app.session),
+    };
+    app.view.camera.zoom = 8.0;
+    app.rebuild().unwrap();
+    let error = app.action(flatten(&app)).unwrap_err();
+    let notice = format!(
+        "{} Zoom out, or flatten to a height nearer the tiles around it. Renderer: invalid world view",
+        crate::prototype::UNDRAWABLE_CHANGE
+    );
+    assert_eq!(error, notice);
+    assert_eq!(app.notice.as_deref(), Some(notice.as_str()));
+    assert!(app.session.history().pending().is_none());
+    assert!(app.blocked.is_none());
+    app.view.camera.zoom = 1.0;
+    app.rebuild().unwrap();
+    app.action(flatten(&app)).unwrap();
+    assert!(app.session.history().pending().is_some());
+}
+
+#[test]
 fn another_change_that_cannot_be_drawn_gets_no_height_advice() {
     // Grass painted onto the empty tile (6, 4), whose ground then bends
     // over the reviewer's ±512 pattern: a Paint, not a height change.
@@ -210,4 +299,77 @@ fn another_change_that_cannot_be_drawn_gets_no_height_advice() {
     assert_eq!(app.status_label(), "Input not applied. Details below.");
     assert!(app.session.history().pending().is_none());
     assert!(app.blocked.is_none());
+}
+
+/// A proposal of one `action(revision)` recorded on a copy of the steep
+/// world, prepared in the person's steep copy at zoom 8: cancelled with
+/// advice the person can follow, which for a height step is only to zoom
+/// out (its amount or target is the agent's).
+fn an_undrawable_height_step_says_only_to_zoom_out(action: impl FnOnce([u8; 32]) -> Action) {
+    use super::proposal::{AGENT, RECEIPT, accept, open_session, revision, scratch};
+    let agent = tempfile::tempdir_in(scratch()).unwrap();
+    let world = agent.path().join("world");
+    super::copy_private(
+        &tilewright_editor_testkit::fixture_world("prototype-neutral"),
+        &world,
+    );
+    steep(&world);
+    let mut session = open_session(&world, AGENT);
+    let step = action(revision(&session));
+    accept(&mut session, step);
+    let proposal = tilewright_editor_proposal::Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
+    let (_person, mut app) = person_application(steep);
+    app.view.camera.zoom = 8.0;
+    app.rebuild().unwrap();
+    let name = proposal.file_name();
+    app.open_proposal(Some((proposal, name))).unwrap();
+    super::acknowledge_ui(&mut app);
+    let error = app.prepare_proposal_step().unwrap_err();
+    assert_eq!(
+        error,
+        format!(
+            "{} Zoom out and prepare the step again. Renderer: invalid world view",
+            crate::prototype::UNDRAWABLE_CHANGE
+        )
+    );
+    assert!(app.session.history().pending().is_none());
+    assert!(app.blocked.is_none());
+}
+
+/// The high tiles of the half-built steep pattern.
+fn steep_high() -> Vec<[i64; 2]> {
+    (1..4_i64)
+        .flat_map(|x| (1..4_i64).map(move |y| [x, y]))
+        .filter(|&[x, y]| {
+            STEEP_HIGH[usize::try_from(y - 1).unwrap()][usize::try_from(x - 1).unwrap()] == 1
+        })
+        .collect()
+}
+
+#[test]
+fn an_undrawable_raise_step_says_only_to_zoom_out() {
+    an_undrawable_height_step_says_only_to_zoom_out(|expected| Action::AdjustHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells: steep_high(),
+        amount: 512,
+        expected,
+    });
+}
+
+#[test]
+fn an_undrawable_flatten_step_says_only_to_zoom_out() {
+    an_undrawable_height_step_says_only_to_zoom_out(|expected| Action::FlattenHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells: steep_high(),
+        target: 512,
+        expected,
+    });
 }

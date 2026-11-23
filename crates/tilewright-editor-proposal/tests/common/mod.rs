@@ -113,7 +113,7 @@ pub fn revision(session: &Session) -> [u8; 32] {
 /// The edit actions of every kind, in an order in which each applies
 /// after the ones before it on the neutral fixture; the fill twice, once
 /// as a fill and once as a replace.
-pub const KINDS: usize = 19;
+pub const KINDS: usize = 20;
 #[allow(clippy::too_many_lines)]
 pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
     let main = || String::from("main");
@@ -250,11 +250,19 @@ pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
             expected,
         },
         // Raise the view's top two rows, which have no height grid yet.
-        _ => Action::AdjustHeights {
+        18 => Action::AdjustHeights {
             plane: main(),
             layer: 0,
             cells: (0..8).flat_map(|x| (0..2).map(move |y| [x, y])).collect(),
             amount: 5,
+            expected,
+        },
+        // Flatten the view's top three rows to -2.
+        _ => Action::FlattenHeights {
+            plane: main(),
+            layer: 0,
+            cells: (0..8).flat_map(|x| (0..3).map(move |y| [x, y])).collect(),
+            target: -2,
             expected,
         },
     }

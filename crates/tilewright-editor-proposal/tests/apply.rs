@@ -1054,14 +1054,14 @@ fn a_scatter_step_with_another_seed_diverges() {
     assert!(person.history().pending().is_none());
 }
 
-/// A proposal of one height adjustment (the last kind) at the base of the
+/// A proposal of one height adjustment at the base of the
 /// fixture with generated heights.
 fn heights_proposal() -> (tempfile::TempDir, Proposal) {
     let agent_world = world(generated_heights);
     let mut session = sandbox(agent_world.path());
     let mut records = Records::default();
     let expected = revision(&session);
-    accept(&mut session, edit(KINDS - 1, expected), &mut records);
+    accept(&mut session, edit(18, expected), &mut records);
     let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
     (agent_world, proposal)
 }
@@ -1200,6 +1200,132 @@ fn a_forged_height_step_is_invalid_refused_or_diverged() {
     });
     for (forged, code, engine) in [
         (&forged_amount, RefusalCode::ProposalStepDiverged, None),
+        (
+            &forged_cells,
+            RefusalCode::ProposalStepRefused,
+            Some(RefusalCode::ScopeOutsideView),
+        ),
+    ] {
+        let mut person = open(root.path(), PERSON);
+        let (mut progress, _) = Progress::begin(forged, &person).unwrap();
+        let error = progress
+            .prepare_step(forged, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(error.code(), code, "{error}");
+        assert_eq!(error.engine_code(), engine);
+        assert!(person.history().pending().is_none());
+    }
+}
+
+/// A proposal of one flatten to -2 (the last kind) at the base of the
+/// fixture with generated heights.
+fn flatten_proposal() -> (tempfile::TempDir, Proposal) {
+    let agent_world = world(generated_heights);
+    let mut session = sandbox(agent_world.path());
+    let mut records = Records::default();
+    let expected = revision(&session);
+    accept(&mut session, edit(KINDS - 1, expected), &mut records);
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
+    (agent_world, proposal)
+}
+
+/// The person's copy of the fixture with generated heights and the range
+/// `range` (none for `None`).
+fn ranged(range: Option<&Value>) -> tempfile::TempDir {
+    world(|root| {
+        generated_heights(root);
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            let editing = catalog["editing"].as_object_mut().unwrap();
+            match range {
+                Some(range) => editing.insert("heights".into(), range.clone()),
+                None => editing.remove("heights"),
+            };
+        });
+    })
+}
+
+#[test]
+fn a_flatten_step_replays_while_the_range_holds_its_target() {
+    let (_agent, proposal) = flatten_proposal();
+    let action = &body(proposal.bytes())["steps"][0]["action"];
+    assert_eq!(action["kind"], "flatten_heights");
+    assert_eq!(action["target"], -2);
+    let mut records = Records::default();
+    // The same range, and other ranges that still hold -2 (the catalog
+    // differs, the transaction is equal): applied.
+    for range in [
+        json!({"min": -8, "max": 8}),
+        json!({"min": -2, "max": 0}),
+        json!({"min": -1024, "max": 1024}),
+    ] {
+        let copy = ranged(Some(&range));
+        let mut person = open(copy.path(), PERSON);
+        let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+        progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_or_else(|error| panic!("{range}: {error}"));
+        person.dispatch(Action::Accept, &mut records).unwrap();
+        assert_eq!(person.history().document().revision(), proposal.result());
+    }
+    // A range that no longer holds -2, or none: refused with the engine's
+    // grant.missing, nothing pending, the world untouched.
+    for range in [
+        Some(json!({"min": -1, "max": 8})),
+        Some(json!({"min": -8, "max": -3})),
+        None,
+    ] {
+        let copy = ranged(range.as_ref());
+        let mut person = open(copy.path(), PERSON);
+        let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+        let untouched = Untouched::of(&person, copy.path());
+        let error = progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(error.code(), RefusalCode::ProposalStepRefused, "{range:?}");
+        assert_eq!(error.engine_code(), Some(RefusalCode::GrantMissing));
+        untouched.check(&person, copy.path(), "out of range");
+    }
+}
+
+#[test]
+fn a_forged_flatten_step_is_invalid_refused_or_diverged() {
+    let (_agent, proposal) = flatten_proposal();
+    let root = world(generated_heights);
+    let mut records = Records::default();
+    // Targets the reader refuses: past the bound, not an integer.
+    for target in [
+        json!(1025),
+        json!(-1025),
+        json!(-2.5),
+        json!(-2.0),
+        json!("-2"),
+        json!(null),
+    ] {
+        let mut body = body(proposal.bytes());
+        body["steps"][0]["action"]["target"] = target.clone();
+        fix_digests(&mut body);
+        let error = Proposal::decode(&document(&body)).unwrap_err();
+        assert_eq!(error.code(), RefusalCode::ProposalInvalid, "{target}");
+    }
+    // Another target in the range: another transaction.
+    let forged_target = forged(&proposal, |body| {
+        body["steps"][0]["action"]["target"] = json!(3);
+    });
+    // A target in the hard bound but outside the range: the engine refuses.
+    let forged_range = forged(&proposal, |body| {
+        body["steps"][0]["action"]["target"] = json!(1000);
+    });
+    // Cells outside the view: the engine refuses.
+    let forged_cells = forged(&proposal, |body| {
+        body["steps"][0]["action"]["cells"] = json!([[0, 0], [8, 0]]);
+    });
+    for (forged, code, engine) in [
+        (&forged_target, RefusalCode::ProposalStepDiverged, None),
+        (
+            &forged_range,
+            RefusalCode::ProposalStepRefused,
+            Some(RefusalCode::GrantMissing),
+        ),
         (
             &forged_cells,
             RefusalCode::ProposalStepRefused,

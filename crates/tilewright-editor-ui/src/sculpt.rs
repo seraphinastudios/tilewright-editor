@@ -3,7 +3,8 @@
 
 //! Sculpting. Raise and lower: the heights an
 //! [`Action::AdjustHeights`](crate::Action::AdjustHeights) writes into the
-//! cells it covers.
+//! cells it covers; flatten ([`flatten_plan`]): an
+//! [`Action::FlattenHeights`](crate::Action::FlattenHeights)'s.
 //!
 //! The rule is part of what a recorded `adjust_heights` step means, so it
 //! is fixed here for that action kind (`docs/ENGINE.md`, "Raise and
@@ -19,7 +20,7 @@
 //! applies once per stroke: a stroke's cells are a set, so a cell is
 //! changed once however often the brush passed over it.
 use tilewright_editor_preview::{HeightGrant, PreviewCatalog};
-use tilewright_source::World;
+use tilewright_source::{Plane, World};
 
 use crate::session::refusal::refuse;
 use crate::{RefusalCode, SessionError};
@@ -127,27 +128,8 @@ pub fn plan(
 ) -> Result<Vec<HeightChange>, SessionError> {
     crate::session::stroke_cells(cells)?;
     check_amount(amount)?;
-    let grant = catalog.editing().heights.ok_or_else(|| {
-        refuse(
-            RefusalCode::GrantMissing,
-            "height editing refused: the catalog does not grant editing.heights",
-        )
-    })?;
-    if !cells
-        .iter()
-        .all(|&[x, y]| catalog.tile_in_active_view(plane, layer, x, y))
-    {
-        return Err(refuse(
-            RefusalCode::ScopeOutsideView,
-            "height editing is limited to the active view",
-        ));
-    }
-    let found = world
-        .planes()
-        .get(plane)
-        .ok_or_else(|| refuse(RefusalCode::TargetUnknown, "unknown plane"))?;
-    // The layer's stacked base, as the preview adds it (i64: exact).
-    let base = i64::from(layer) * i64::from(world.profile().layer_height.unwrap_or(0));
+    let grant = granted(catalog)?;
+    let (found, base) = located(world, catalog, plane, layer, cells)?;
     let (mut at_end, mut missing) = (0usize, 0usize);
     let mut changes = Vec::new();
     for &[x, y] in cells {
@@ -167,7 +149,7 @@ pub fn plan(
                 let (low, high) = (grant.min, grant.max);
                 let message = if needed > u64::from(MAXIMUM_AMOUNT.unsigned_abs()) {
                     format!(
-                        "cell ({x}, {y}) has height {before}, {side} the granted range {low} to {high}: it is {needed} from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"
+                        "cell ({x}, {y}) has height {before}, {side} the granted range {low} to {high}: it is {needed} from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke, or flatten it to a height in the range"
                     )
                 } else {
                     format!(
@@ -177,14 +159,7 @@ pub fn plan(
                 return Err(refuse(RefusalCode::TargetUnsupported, &message));
             }
             Adjusted::To(after) => {
-                if i32::try_from(base + i64::from(after)).is_err() {
-                    return Err(refuse(
-                        RefusalCode::TargetUnsupported,
-                        &format!(
-                            "cell ({x}, {y}): height {after} on layer {layer} would stack past the 32-bit range the preview draws"
-                        ),
-                    ));
-                }
+                stacks(base, after, [x, y], layer)?;
                 changes.push(([x, y], before, after));
             }
         }
@@ -205,9 +180,197 @@ pub fn plan(
     Ok(changes)
 }
 
+/// The catalog's `editing.heights` range.
+///
+/// # Errors
+/// [`RefusalCode::GrantMissing`] without it.
+fn granted(catalog: &PreviewCatalog) -> Result<HeightGrant, SessionError> {
+    catalog.editing().heights.ok_or_else(|| {
+        refuse(
+            RefusalCode::GrantMissing,
+            "height editing refused: the catalog does not grant editing.heights",
+        )
+    })
+}
+
+/// The plane of a height edit whose `cells` all lie in the active view,
+/// and its `layer`'s stacked base as the preview adds it (`layer ×
+/// layer_height`, in 64 bits: exact).
+///
+/// # Errors
+/// [`RefusalCode::ScopeOutsideView`] for a cell outside the active view,
+/// [`RefusalCode::TargetUnknown`] for an unknown plane.
+fn located<'w>(
+    world: &'w World,
+    catalog: &PreviewCatalog,
+    plane: &str,
+    layer: i32,
+    cells: &[[i64; 2]],
+) -> Result<(&'w Plane, i64), SessionError> {
+    if !cells
+        .iter()
+        .all(|&[x, y]| catalog.tile_in_active_view(plane, layer, x, y))
+    {
+        return Err(refuse(
+            RefusalCode::ScopeOutsideView,
+            "height editing is limited to the active view",
+        ));
+    }
+    let found = world
+        .planes()
+        .get(plane)
+        .ok_or_else(|| refuse(RefusalCode::TargetUnknown, "unknown plane"))?;
+    let base = i64::from(layer) * i64::from(world.profile().layer_height.unwrap_or(0));
+    Ok((found, base))
+}
+
+/// Refuses a new height `after` of cell `[x, y]` that would stack past
+/// the 32-bit range on `layer` (`base + after`, as the preview draws it).
+fn stacks(base: i64, after: i32, [x, y]: [i64; 2], layer: i32) -> Result<(), SessionError> {
+    if i32::try_from(base + i64::from(after)).is_err() {
+        return Err(refuse(
+            RefusalCode::TargetUnsupported,
+            &format!(
+                "cell ({x}, {y}): height {after} on layer {layer} would stack past the 32-bit range the preview draws"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// The largest target height a flatten names, either way. Part of the
+/// `flatten_heights` wire form (proposals and the MCP schema), so it is its
+/// own constant; it equals the catalog's
+/// [`tilewright_editor_preview::MAXIMUM_HEIGHT`], so every granted height
+/// is a target and no target lies past the hard bound of any range.
+pub const MAXIMUM_TARGET: i32 = 1024;
+
+/// The target's sanity rule: at most [`MAXIMUM_TARGET`] either way.
+///
+/// # Errors
+/// [`RefusalCode::InputBudget`] past the bound.
+pub fn check_target(target: i32) -> Result<(), SessionError> {
+    if target.unsigned_abs() > MAXIMUM_TARGET.unsigned_abs() {
+        return Err(refuse(
+            RefusalCode::InputBudget,
+            "a flatten target is a height from -1024 to 1024",
+        ));
+    }
+    Ok(())
+}
+
+/// What a flatten to `target` does to one cell of height `height`
+/// (frozen for `flatten_heights`, see `docs/ENGINE.md`): `None`, left
+/// out, when it is already at the target; otherwise its new height, the
+/// target, wherever the cell was, inside the range or outside it.
+#[must_use]
+pub fn flattened(height: i32, target: i32) -> Option<i32> {
+    (height != target).then_some(target)
+}
+
+/// The target a desktop Flatten stroke pressed on plane tile `[x, y]` of
+/// `layer` records: that tile's height in `world`, which the caller passes
+/// as the committed World, sampled once at the press. Refused, with words
+/// for the person, without `editing.heights`, on a tile whose chunk does
+/// not exist (there is no height to sample), and on a tile whose height is
+/// outside the granted range: a flatten to it would be refused, and
+/// clamping it into the range would flatten to a height nobody pointed at.
+///
+/// # Errors
+/// The refusal's words.
+pub fn flatten_target(
+    world: &World,
+    catalog: &PreviewCatalog,
+    plane: &str,
+    layer: i32,
+    [x, y]: [i64; 2],
+) -> Result<i32, String> {
+    let grant = granted(catalog).map_err(|error| error.message().to_owned())?;
+    let height = world
+        .planes()
+        .get(plane)
+        .and_then(|found| crate::heights::cell_height(found, layer, x, y))
+        .ok_or_else(|| {
+            format!("Flatten needs a starting tile with ground: tile ({x}, {y}) has no map chunk.")
+        })?;
+    if !grant.contains(height) {
+        return Err(format!(
+            "Flatten refused: this tile's height {height} is outside the granted range {} to {}; start on a tile inside it.",
+            grant.min, grant.max
+        ));
+    }
+    Ok(height)
+}
+
+/// The cells of flatten `cells` to `target` that its `terrain.set` on the
+/// `height` grid changes in `world` under `catalog`, each with its height
+/// before and after (`target`), in stroke order: what dispatching an
+/// [`Action::FlattenHeights`](crate::Action::FlattenHeights) prepares, and
+/// what a proposal step's words and the desktop's live preview count.
+/// Cells of chunks that do not exist and cells already at `target` are
+/// left out ([`flattened`]). A cell outside the granted range is set to
+/// the target like any other: the target is in the range, so the result
+/// is too.
+///
+/// # Errors
+/// In this order: the stroke rule (input codes); the target past its
+/// bound ([`check_target`]); [`RefusalCode::GrantMissing`] without
+/// `editing.heights`, or with a range that does not hold `target`;
+/// [`RefusalCode::ScopeOutsideView`] for a cell outside the active view;
+/// [`RefusalCode::TargetUnsupported`] when the target would stack past
+/// the 32-bit range on this layer; [`RefusalCode::ChangeNone`] when no
+/// cell would change, saying how many were already at the target and how
+/// many in chunks that do not exist.
+pub fn flatten_plan(
+    world: &World,
+    catalog: &PreviewCatalog,
+    plane: &str,
+    layer: i32,
+    cells: &[[i64; 2]],
+    target: i32,
+) -> Result<Vec<HeightChange>, SessionError> {
+    crate::session::stroke_cells(cells)?;
+    check_target(target)?;
+    let grant = granted(catalog)?;
+    if !grant.contains(target) {
+        let (low, high) = (grant.min, grant.max);
+        return Err(refuse(
+            RefusalCode::GrantMissing,
+            &format!("flatten target {target} is outside the granted height range {low} to {high}"),
+        ));
+    }
+    let (found, base) = located(world, catalog, plane, layer, cells)?;
+    let (mut there, mut missing) = (0usize, 0usize);
+    let mut changes = Vec::new();
+    for &[x, y] in cells {
+        let Some(before) = crate::heights::cell_height(found, layer, x, y) else {
+            missing += 1;
+            continue;
+        };
+        match flattened(before, target) {
+            None => there += 1,
+            Some(after) => {
+                stacks(base, after, [x, y], layer)?;
+                changes.push(([x, y], before, after));
+            }
+        }
+    }
+    if changes.is_empty() {
+        return Err(refuse(
+            RefusalCode::ChangeNone,
+            &format!(
+                "flatten changes no cell: {there} covered cells already at the target {target}, {missing} in map chunks that do not exist (painting terrain there creates them)"
+            ),
+        ));
+    }
+    Ok(changes)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Adjusted, MAXIMUM_AMOUNT, adjusted, check_amount};
+    use super::{
+        Adjusted, MAXIMUM_AMOUNT, MAXIMUM_TARGET, adjusted, check_amount, check_target, flattened,
+    };
     use crate::RefusalCode;
     use tilewright_editor_preview::HeightGrant;
 
@@ -281,6 +444,33 @@ mod tests {
                 check_amount(amount).unwrap_err().code(),
                 RefusalCode::InputBudget,
                 "{amount}"
+            );
+        }
+    }
+
+    #[test]
+    fn flattening_sets_the_target_and_leaves_cells_at_it_out() {
+        assert_eq!(flattened(0, 8), Some(8));
+        assert_eq!(flattened(8, 8), None);
+        assert_eq!(flattened(-8, 8), Some(8));
+        assert_eq!(flattened(9, 8), Some(8));
+        // Far outside any range, at the integer extremes: set to the target.
+        assert_eq!(flattened(i32::MAX, -1024), Some(-1024));
+        assert_eq!(flattened(i32::MIN, 1024), Some(1024));
+        assert_eq!(flattened(i32::MIN, i32::MIN), None);
+    }
+
+    #[test]
+    fn the_target_is_at_most_the_hard_bound_either_way() {
+        assert_eq!(MAXIMUM_TARGET, tilewright_editor_preview::MAXIMUM_HEIGHT);
+        for target in [0, 1, -1, 1024, -1024] {
+            assert!(check_target(target).is_ok(), "{target}");
+        }
+        for target in [1025, -1025, i32::MAX, i32::MIN] {
+            assert_eq!(
+                check_target(target).unwrap_err().code(),
+                RefusalCode::InputBudget,
+                "{target}"
             );
         }
     }

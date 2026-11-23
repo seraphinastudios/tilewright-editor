@@ -2201,6 +2201,9 @@ mod sculpt_mode;
 #[path = "shared_field.rs"]
 mod shared_string_field;
 
+#[path = "flatten_mode.rs"]
+mod flatten_mode;
+
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]
