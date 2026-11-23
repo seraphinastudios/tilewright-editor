@@ -4,6 +4,7 @@
 //! Local input only; every edit leaves this module as a Session action.
 use crate::brush::{Brush, Stroke, StrokeTarget};
 use crate::field_input::{FieldImplementation, FieldInput, SharedInput};
+use crate::road::{MAXIMUM_ROAD_POINTS, Road};
 use crate::text_input::{TextInputSnapshot, TextRevision, TextSelection};
 use crate::{
     Action, SelectionKey,
@@ -127,14 +128,18 @@ pub enum TerrainRule {
     /// Click: every cell of the view that holds the cell's terrain
     /// ([`Action::FillTerrain`] without `contiguous`).
     Replace,
+    /// Click tiles one after another; finishing the line paints or
+    /// scatters the brush along it as one stroke ([`crate::road`]).
+    Road,
 }
 impl TerrainRule {
-    pub const ALL: [Self; 3] = [Self::Brush, Self::Fill, Self::Replace];
+    pub const ALL: [Self; 4] = [Self::Brush, Self::Fill, Self::Replace, Self::Road];
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Brush => "brush",
             Self::Fill => "fill",
             Self::Replace => "replace",
+            Self::Road => "road",
         }
     }
     /// The next rule in [`TerrainRule::ALL`], after the last the first.
@@ -143,7 +148,8 @@ impl TerrainRule {
         match self {
             Self::Brush => Self::Fill,
             Self::Fill => Self::Replace,
-            Self::Replace => Self::Brush,
+            Self::Replace => Self::Road,
+            Self::Road => Self::Brush,
         }
     }
 }
@@ -301,6 +307,10 @@ pub struct ToolState {
     scatter: Option<String>,
     /// What a press does in Terrain mode; kept across modes like the brush.
     terrain_rule: TerrainRule,
+    /// The road being drawn with the Road rule. A rebuilt frame keeps it
+    /// (its points are tiles, not pixels); a mode or rule change, or a
+    /// terrain or palette of another grid, ends it.
+    road: Option<Road>,
     zone: Option<ZoneChoice>,
     /// Whether the zone overlay shows outside Zone mode.
     show_zones: bool,
@@ -377,6 +387,7 @@ impl ToolState {
     /// tint back as it was before, whatever H did in between.
     pub fn set_mode(&mut self, mode: ToolMode) {
         self.cancel();
+        self.road = None;
         self.parent_choices = None;
         if mode != ToolMode::Place {
             self.filter.clear();
@@ -430,15 +441,25 @@ impl ToolState {
         self.terrain_rule
     }
     /// Choose what a press does in Terrain mode. A running stroke ends: it
-    /// was begun under the other rule.
+    /// was begun under the other rule. So does a road, when the rule
+    /// changes.
     pub fn set_terrain_rule(&mut self, rule: TerrainRule) {
         self.stroke = None;
+        if rule != self.terrain_rule {
+            self.road = None;
+        }
         self.terrain_rule = rule;
     }
     /// Whether a press in the view fills or replaces rather than paints:
     /// Terrain mode with the Fill or Replace rule.
     pub fn filling(&self) -> bool {
-        self.mode == ToolMode::Terrain && self.terrain_rule != TerrainRule::Brush
+        self.mode == ToolMode::Terrain
+            && matches!(self.terrain_rule, TerrainRule::Fill | TerrainRule::Replace)
+    }
+    /// Whether a click in the view adds a road point: Terrain mode with the
+    /// Road rule.
+    pub fn drawing_road(&self) -> bool {
+        self.mode == ToolMode::Terrain && self.terrain_rule == TerrainRule::Road
     }
     pub fn zone_choice(&self) -> Option<&ZoneChoice> {
         self.zone.as_ref()
@@ -1178,6 +1199,7 @@ impl ToolState {
             prototype: prototype.into(),
         });
         self.scatter = None;
+        self.retire_road_of_other_grid(grid);
         Ok(())
     }
     /// The catalog palette the brush scatters, when one is chosen.
@@ -1192,11 +1214,12 @@ impl ToolState {
         catalog: &PreviewCatalog,
         name: &str,
     ) -> Result<(), ToolError> {
-        if !catalog.editing().palettes.contains_key(name) {
+        let Some(palette) = catalog.editing().palettes.get(name) else {
             return Err(ToolError("The catalog has no palette of this name"));
-        }
+        };
         self.scatter = Some(name.to_owned());
         self.terrain = None;
+        self.retire_road_of_other_grid(&palette.grid);
         Ok(())
     }
     pub fn placement_choice(&self) -> Option<&str> {
@@ -1743,6 +1766,9 @@ impl ToolState {
                 "The Fill and Replace rules click; they do not drag",
             ));
         }
+        if self.drawing_road() {
+            return Err(ToolError("The Road rule clicks points; it does not drag"));
+        }
         if self.scatter.is_some() {
             return self.begin_scatter_stroke(inspector, cell, pending, seed);
         }
@@ -2020,6 +2046,160 @@ impl ToolState {
     /// Abandon a running stroke without preparing anything.
     pub fn cancel_stroke(&mut self) -> bool {
         self.stroke.take().is_some()
+    }
+}
+
+impl ToolState {
+    /// The road being drawn with the Road rule, if any.
+    pub fn road(&self) -> Option<&Road> {
+        self.road.as_ref()
+    }
+    /// Add plane tile `cell` of the active view as the road's next point,
+    /// beginning a road with it when none is drawn. Needs Terrain mode with
+    /// the Road rule, no pending change, and a chosen terrain or palette of
+    /// the tile's grid, refused as a brush press is without one. Returns
+    /// whether a point was added: a click on the last point adds none.
+    pub fn add_road_point(
+        &mut self,
+        catalog: &PreviewCatalog,
+        cell: &SelectionKey,
+        pending: bool,
+    ) -> Result<bool, ToolError> {
+        available(pending)?;
+        if !self.drawing_road() {
+            return Err(ToolError("Road points need Terrain mode's Road rule"));
+        }
+        let SelectionKey::Cell {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+        } = cell
+        else {
+            return Err(ToolError("Road points are tiles of the view"));
+        };
+        if !catalog.tile_in_active_view(plane, *layer, *x, *y) {
+            return Err(ToolError("Road points are tiles of the view"));
+        }
+        self.check_road_grid(catalog, grid)?;
+        let Some(road) = &mut self.road else {
+            self.road = Some(Road::begin(plane.clone(), *layer, grid.clone(), [*x, *y]));
+            return Ok(true);
+        };
+        if road.plane() != plane || road.layer() != *layer || road.grid() != grid {
+            return Err(ToolError(
+                "Road points must be tiles of the road's own grid",
+            ));
+        }
+        if road.points().len() >= MAXIMUM_ROAD_POINTS && road.points().last() != Some(&[*x, *y]) {
+            return Err(ToolError("A road has at most 256 points"));
+        }
+        Ok(road.push([*x, *y]))
+    }
+    /// The checks a brush press makes of the chosen terrain or palette,
+    /// for grid `grid`.
+    fn check_road_grid(&self, catalog: &PreviewCatalog, grid: &str) -> Result<(), ToolError> {
+        if let Some(name) = &self.scatter {
+            return match catalog.editing().palettes.get(name) {
+                Some(palette) if palette.grid == grid => Ok(()),
+                _ => Err(ToolError("The palette is unavailable for this grid")),
+            };
+        }
+        let choice = self
+            .terrain
+            .as_ref()
+            .ok_or(ToolError("Choose an explicit terrain palette value"))?;
+        if choice.grid != grid || !terrain_palette(catalog).contains(choice) {
+            return Err(ToolError("Terrain choice is unavailable for this grid"));
+        }
+        Ok(())
+    }
+    /// Whether the road scatters but has no seed yet: the caller draws one
+    /// from the session's random source and gives it to [`Self::seed_road`].
+    pub fn road_needs_seed(&self) -> bool {
+        self.scatter.is_some() && self.road.as_ref().is_some_and(|road| road.seed().is_none())
+    }
+    /// Give the road its scatter seed; a road keeps the first one it gets.
+    pub fn seed_road(&mut self, seed: u32) {
+        if let Some(road) = &mut self.road {
+            road.set_seed(seed);
+        }
+    }
+    /// The road's corridor as a stroke with the current brush and the
+    /// chosen terrain or palette, made for committed revision `expected`
+    /// and frame `generation`: what the preview shows and what finishing
+    /// prepares, from the same points by the same code. `None` without a
+    /// road; the refusal of a brush press without a usable choice.
+    pub fn road_stroke(
+        &self,
+        catalog: &PreviewCatalog,
+        expected: [u8; 32],
+        generation: u64,
+    ) -> Option<Result<Stroke, ToolError>> {
+        let road = self.road.as_ref()?;
+        let target =
+            self.check_road_grid(catalog, road.grid())
+                .and_then(|()| match &self.scatter {
+                    Some(palette) => Ok(StrokeTarget::Scatter {
+                        palette: palette.clone(),
+                        seed: road
+                            .seed()
+                            .ok_or(ToolError("The road's scatter seed could not be drawn"))?,
+                    }),
+                    None => Ok(StrokeTarget::Terrain(
+                        self.terrain
+                            .as_ref()
+                            .map(|choice| choice.prototype.clone())
+                            .unwrap_or_default(),
+                    )),
+                });
+        let (_, _, bounds) = catalog.view();
+        Some(target.map(|target| road.stroke(target, self.brush, expected, generation, bounds)))
+    }
+    /// The one paint or scatter action finishing the road prepares: the
+    /// action of [`Self::road_stroke`]. A road needs two points. The road
+    /// stays; the caller ends it once the action is prepared.
+    pub fn road_action(
+        &self,
+        catalog: &PreviewCatalog,
+        expected: [u8; 32],
+        generation: u64,
+        pending: bool,
+    ) -> Result<Action, ToolError> {
+        available(pending)?;
+        let stroke = self
+            .road_stroke(catalog, expected, generation)
+            .ok_or(ToolError("No road is being drawn"))??;
+        if self
+            .road
+            .as_ref()
+            .is_some_and(|road| road.points().len() < 2)
+        {
+            return Err(ToolError(
+                "A road needs two points: click the next one, or Esc to drop it",
+            ));
+        }
+        stroke.into_action()
+    }
+    /// Take away the road's last point. Returns whether a road is left: the
+    /// last point taken away ends it.
+    pub fn pop_road_point(&mut self) -> bool {
+        if self.road.as_mut().is_some_and(|road| !road.pop()) {
+            self.road = None;
+        }
+        self.road.is_some()
+    }
+    /// End the road without preparing anything; whether one was drawn.
+    pub fn drop_road(&mut self) -> bool {
+        self.road.take().is_some()
+    }
+    /// A terrain or palette of another grid ends the road: its points are
+    /// tiles of its own grid's cell mask.
+    fn retire_road_of_other_grid(&mut self, grid: &str) {
+        if self.road.as_ref().is_some_and(|road| road.grid() != grid) {
+            self.road = None;
+        }
     }
 }
 

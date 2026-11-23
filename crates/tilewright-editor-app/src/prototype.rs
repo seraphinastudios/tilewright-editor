@@ -33,7 +33,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -43,6 +43,15 @@ const HEIGHTS_AND_OVERLAY_UNAVAILABLE: &str =
 /// The desktop's indication while the catalog contains project art.
 const PROJECT_ART_LABEL: &str = "Project art loaded";
 const STROKE_INTERRUPTED: &str = "Brush stroke ended before release; nothing was prepared.";
+/// The Road rule's words: Esc dropped the road; a mode, rule or grid change
+/// ended it; a key that edits or reviews was refused while it is drawn; a
+/// click that hit no tile of the view.
+const ROAD_DROPPED: &str = "Road dropped; nothing was prepared.";
+const ROAD_ENDED: &str =
+    "Road dropped: the mode, the rule or the grid changed; nothing was prepared.";
+const ROAD_IN_PROGRESS: &str = "A road is being drawn: Enter reviews it, Esc drops it. Undo, redo, delete, reopen and proposal steps wait until then.";
+const ROAD_OFF_VIEW: &str =
+    "Road points are tiles of the view: no tile under the pointer, so no point was added.";
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -112,6 +121,9 @@ const DEMO_FILL: [[i64; 2]; 2] = [[1, 1], [5, 1]];
 /// Press and drag cells of the scripted scatter stroke: with a 3x3 brush it
 /// covers most of the neutral sample's grass columns, `x` 0 to 3.
 const DEMO_SCATTER: [[i64; 2]; 2] = [[1, 1], [2, 4]];
+/// The points of the scripted road, clicked in this order with a one-cell
+/// brush: across the grass columns and down beside the sand.
+const DEMO_ROAD: [[i64; 2]; 3] = [[0, 1], [3, 1], [3, 5]];
 
 /// Press and drag cells of the scripted zone stroke: down open meadow onto
 /// the neutral sample's path row.
@@ -313,6 +325,17 @@ impl SculptPreview {
             }
         }
     }
+}
+
+/// What finishing the road would prepare now: its points, the corridor as
+/// the stroke the release of a drag through them would be (or why there is
+/// none), and the cells the engine's plan for that stroke changes (or its
+/// refusal). Computed from the same stroke [`ToolState::road_action`]
+/// finishes, so the preview is what Enter prepares.
+struct RoadPreview {
+    points: Vec<[i64; 2]>,
+    stroke: std::result::Result<tilewright_editor_ui::brush::Stroke, String>,
+    changes: std::result::Result<Vec<[i64; 2]>, String>,
 }
 
 /// The pointer over the map in Terrain mode: where it is, and with the Fill
@@ -1445,6 +1468,172 @@ impl Application {
             )
             .map_err(|error| error.to_string())?;
         self.action(action)
+    }
+
+    /// A click with the Road rule: the tile under the pointer in the exact
+    /// cell mask becomes the road's next point (the first one begins it).
+    /// Nothing is selected or prepared. A click that hits no tile adds
+    /// nothing and says so; it never picks a nearby tile. A road that
+    /// scatters gets its seed from the session's random source here, once.
+    fn road_click(&mut self, x: u32, y: u32) -> Result<()> {
+        self.refuse_while_paused()?;
+        loader::revalidate(
+            self.session.history().document().source(),
+            self.session.catalog(),
+            self.session.resources(),
+            PreviewLimits::default(),
+        )
+        .map_err(|error| error.to_string())?;
+        let cell = self
+            .prepared
+            .pick(self.view.frame_revision, x, y, true)
+            .map_err(|error| error.to_string())?
+            .ok_or(ROAD_OFF_VIEW)?;
+        self.tools
+            .add_road_point(self.session.catalog(), &cell, !self.session.can_prepare())
+            .map_err(|error| error.to_string())?;
+        self.seed_road()?;
+        self.notice = None;
+        self.presented_generation = None;
+        Ok(())
+    }
+
+    /// Draw the road's scatter seed when it scatters and has none yet.
+    fn seed_road(&mut self) -> Result<()> {
+        if self.tools.road_needs_seed() {
+            let seed = self
+                .session
+                .draw_seed()
+                .map_err(|error| error.to_string())?;
+            self.tools.seed_road(seed);
+        }
+        Ok(())
+    }
+
+    /// Enter with a road: its one paint or scatter action, dispatched as
+    /// every edit is, so it goes to Review. Only a prepared change ends the
+    /// road; a refusal (nothing to change, a pause, one point) keeps it, so
+    /// the person can extend it, shorten it or drop it.
+    fn finish_road(&mut self) -> Result<()> {
+        self.refuse_while_paused()?;
+        let action = self
+            .tools
+            .road_action(
+                self.session.catalog(),
+                self.session.history().document().revision(),
+                self.view.frame_revision,
+                !self.session.can_prepare(),
+            )
+            .map_err(|error| error.to_string())?;
+        self.action(action)?;
+        self.tools.drop_road();
+        Ok(())
+    }
+
+    /// What finishing the road would prepare now, or `None` without one.
+    fn road_preview(&self) -> Option<RoadPreview> {
+        let road = self.tools.road()?;
+        let stroke = self
+            .tools
+            .road_stroke(
+                self.session.catalog(),
+                self.session.history().document().revision(),
+                self.view.frame_revision,
+            )?
+            .map_err(|error| error.to_string());
+        let changes = match &stroke {
+            Ok(stroke) => self
+                .session
+                .stroke_changes(stroke)
+                .map_err(|error| error.message().to_owned()),
+            Err(reason) => Err(reason.clone()),
+        };
+        Some(RoadPreview {
+            points: road.points().to_vec(),
+            stroke,
+            changes,
+        })
+    }
+
+    /// The status line while a road is drawn.
+    fn road_status(&self) -> Option<String> {
+        let preview = self.road_preview()?;
+        let count = preview.points.len();
+        let points = if count == 1 {
+            "1 point".to_owned()
+        } else {
+            format!("{count} points")
+        };
+        let head = match &preview.stroke {
+            Ok(stroke) => format!(
+                "Road {}: {points}, {} {}",
+                road_target_words(stroke.target()),
+                stroke.len(),
+                if stroke.len() == 1 { "cell" } else { "cells" }
+            ),
+            Err(_) => format!("Road: {points}"),
+        };
+        let keys = if count < 2 {
+            "click the next point, Backspace removes it, Esc drops it."
+        } else {
+            "Enter to review, Backspace removes a point, Esc drops it."
+        };
+        Some(match &preview.changes {
+            Ok(cells) => format!(
+                "{head}, {} to change; {keys}{}{}",
+                cells.len(),
+                if preview
+                    .stroke
+                    .as_ref()
+                    .is_ok_and(tilewright_editor_ui::brush::Stroke::capped)
+                {
+                    " Brush limit reached."
+                } else {
+                    ""
+                },
+                if self.preview_omitted {
+                    " Too many cells to preview."
+                } else if self.prepared.cell_slots().is_none() {
+                    " Preview unavailable for this view."
+                } else {
+                    ""
+                }
+            ),
+            Err(reason) => format!("{head}; Enter prepares nothing: {reason}"),
+        })
+    }
+
+    /// The frame evidence's `road` member while a road is drawn: its
+    /// points, the brush, what it covers and changes, or the refusal.
+    fn road_frame(&self) -> Option<serde_json::Value> {
+        let preview = self.road_preview()?;
+        let brush = self.tools.brush();
+        let mut record = serde_json::json!({
+            "points": preview.points,
+            "brush": {"shape": brush.shape.as_str(), "width": brush.diameter()},
+        });
+        if let Ok(stroke) = &preview.stroke {
+            match stroke.target() {
+                StrokeTarget::Scatter { palette, seed } => {
+                    record["palette"] = terminal_field(palette).into();
+                    record["seed"] = (*seed).into();
+                }
+                StrokeTarget::Terrain(proto) => record["proto"] = terminal_field(proto).into(),
+                _ => {}
+            }
+            record["cells"] = stroke.len().into();
+            if stroke.capped() {
+                record["capped"] = true.into();
+            }
+        }
+        match &preview.changes {
+            Ok(cells) => {
+                record["changes"] = cells.len().into();
+                record["first"] = cells.iter().take(8).copied().collect::<Vec<_>>().into();
+            }
+            Err(reason) => record["refused"] = terminal_field(reason).into(),
+        }
+        Some(record)
     }
 
     /// What the running stroke's release would do, when it is a sculpt
@@ -2726,6 +2915,7 @@ impl Application {
                     TerrainRule::Brush => "Brush: drag paints",
                     TerrainRule::Fill => "Fill: click fills the joined area",
                     TerrainRule::Replace => "Replace: click, every match in view",
+                    TerrainRule::Road => "Road: click points, Enter reviews",
                 }
                 .into(),
                 Some(Control::TerrainRule(rule)),
@@ -3462,6 +3652,7 @@ impl Application {
             TerrainRule::Brush => "Brush",
             TerrainRule::Fill => "Fill",
             TerrainRule::Replace => "Replace",
+            TerrainRule::Road => "Road",
         };
         ui.widget(
             Rect {
@@ -3721,6 +3912,9 @@ impl Application {
             Some(ViewNote::Resumed) => return VIEW_RESUMED.into(),
             None => {}
         }
+        if let Some(status) = self.road_status() {
+            return status;
+        }
         if let Some(status) = self.fill_status() {
             return status;
         }
@@ -3829,6 +4023,9 @@ impl Application {
             {
                 "Ready. Drag to smooth heights toward their neighbours."
             }
+            SessionPhase::Ready if self.tools.drawing_road() => {
+                "Ready. Click tiles to draw a road; Enter reviews it."
+            }
             SessionPhase::Ready if self.tools.mode() == ToolMode::Sculpt => {
                 return format!(
                     "Ready. Drag to {} heights by {}.",
@@ -3864,6 +4061,13 @@ impl Application {
         }) = self.sculpt_preview()
         {
             details.push(format!("Release prepares nothing: {reason}"));
+        }
+        if let Some(RoadPreview {
+            changes: Err(reason),
+            ..
+        }) = self.road_preview()
+        {
+            details.push(format!("Enter prepares nothing: {reason}"));
         }
         let status = self.session.status();
         if status.phase == SessionPhase::Blocked {
@@ -3903,6 +4107,9 @@ impl Application {
         self.tools
             .choose_scatter(self.session.catalog(), name)
             .map_err(|error| error.to_string())?;
+        // A road drawn with a terrain keeps its points and gets its one
+        // seed now.
+        self.seed_road()?;
         let grid = self.session.catalog().editing().palettes[name].grid.clone();
         if self.view.grid.as_deref() != Some(grid.as_str()) {
             self.view.grid = Some(grid);
@@ -3911,10 +4118,35 @@ impl Application {
         Ok(())
     }
 
+    /// A sidebar, toolbar or key control. While a road is drawn, those that
+    /// edit or review otherwise (undo, redo, delete, a proposal step) are
+    /// refused; one that ends the road (a mode, a rule, a terrain or
+    /// palette of another grid) says so.
     fn control(&mut self, control: Control) -> Result<()> {
         self.presented_generation = None;
         self.notice = None;
         self.view_note = None;
+        let road = self.tools.road().is_some();
+        if road
+            && matches!(
+                control,
+                Control::Undo
+                    | Control::Redo
+                    | Control::Delete
+                    | Control::ProposalPrepare
+                    | Control::ProposalContinue
+            )
+        {
+            return Err(ROAD_IN_PROGRESS.into());
+        }
+        let result = self.apply_control(control);
+        if road && self.tools.road().is_none() {
+            self.notice = Some(ROAD_ENDED.into());
+        }
+        result
+    }
+
+    fn apply_control(&mut self, control: Control) -> Result<()> {
         match control {
             Control::Select
             | Control::Move
@@ -4385,6 +4617,10 @@ impl Application {
         if let (Some(preview), Some(record)) = (self.fill_frame(), frame_record.as_object_mut()) {
             record.insert("fill_preview".into(), preview);
         }
+        // Only while a road is drawn, so other frames are unchanged.
+        if let (Some(road), Some(record)) = (self.road_frame(), frame_record.as_object_mut()) {
+            record.insert("road".into(), road);
+        }
         // Only while a sculpt stroke runs, so other frames are unchanged.
         if let (Some(preview), Some(record)) = (self.sculpt_frame(), frame_record.as_object_mut()) {
             record.insert("sculpt_preview".into(), preview);
@@ -4740,6 +4976,56 @@ impl Application {
         Ok(())
     }
 
+    /// Terrain mode's Road rule: choose the last terrain of the palette (the
+    /// sample's sand), click the road's points with a one-cell brush,
+    /// capture the preview, press Enter to review it, capture, accept and
+    /// capture the result; the rule and the brush are restored.
+    fn road_demo(&mut self) -> Result<()> {
+        self.control(Control::Terrain)?;
+        let last = tools::terrain_palette(self.session.catalog())
+            .last()
+            .cloned()
+            .ok_or("empty demo terrain palette")?;
+        self.control(Control::Palette {
+            grid: last.grid,
+            prototype: last.prototype,
+        })?;
+        self.control(Control::TerrainRule(TerrainRule::Road))?;
+        let brush = self.tools.brush();
+        self.tools
+            .set_brush(tilewright_editor_ui::brush::Brush::default());
+        let frame = self.frame(true)?;
+        let pixels = DEMO_ROAD
+            .iter()
+            .map(|&cell| {
+                self.prepared
+                    .cell_picks
+                    .iter()
+                    .find_map(|(id, key)| match key {
+                        SelectionKey::Cell { x, y, .. } if [*x, *y] == cell => {
+                            pixel_for(&frame, *id)
+                        }
+                        _ => None,
+                    })
+                    .ok_or("demonstration road point is not in the cell mask")
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let result = (|| {
+            for (x, y) in pixels {
+                self.road_click(x, y)?;
+            }
+            self.capture("road-preview")?;
+            self.finish_road()?;
+            self.capture("road")?;
+            self.action(Action::Accept)?;
+            self.capture("road-built")
+        })();
+        self.tools.drop_road();
+        self.tools.set_brush(brush);
+        self.tools.set_terrain_rule(TerrainRule::Brush);
+        result
+    }
+
     /// Zone mode: capture the overlay and legend, then paint the last zone
     /// of the palette down a column with a one-cell brush through the
     /// ordinary press, drag and release, capturing the live preview
@@ -5067,14 +5353,15 @@ impl Application {
             13 if grants_portals(self.session.catalog().editing()) => self.portal_demo()?,
             14 if !self.session.catalog().editing().terrain.is_empty() => self.fill_demo()?,
             15 if !self.session.catalog().editing().palettes.is_empty() => self.scatter_demo()?,
-            16 => return Ok(true),
+            16 if !self.session.catalog().editing().terrain.is_empty() => self.road_demo()?,
+            17 => return Ok(true),
             _ => {}
         }
         Ok(false)
     }
 
     fn demo_all(&mut self) -> Result<()> {
-        for step in 0..17 {
+        for step in 0..18 {
             if self.demo_step(step)? {
                 break;
             }
@@ -5406,6 +5693,7 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
         || (step == 13 && !grants_portals(editing))
         || (step == 14 && editing.terrain.is_empty())
         || (step == 15 && editing.palettes.is_empty())
+        || (step == 16 && editing.terrain.is_empty())
     {
         None
     } else {
@@ -5426,6 +5714,7 @@ fn demo_phase_label(app: &Application, step: usize) -> Option<&'static str> {
             "portals",
             "fill",
             "scatter",
+            "road",
         ]
         .get(step)
         .copied()
@@ -6015,7 +6304,9 @@ fn native_pointer_selection(
         Hit::World(x, y) if app.tools.portal_picking() => app.pick_portal_target(x, y),
         Hit::World(x, y) => {
             app.tools.cancel();
-            if app.tools.filling() {
+            if app.tools.drawing_road() {
+                app.road_click(x, y)
+            } else if app.tools.filling() {
                 app.fill_at(x, y)
             } else if matches!(
                 app.tools.mode(),
@@ -6132,6 +6423,13 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         }
         return Ok(());
     }
+    // A road being drawn owns Enter, Backspace and Esc before the global
+    // keys, and fences the keys that edit or review otherwise.
+    if app.tools.road().is_some()
+        && let Some(result) = road_key(app, key)
+    {
+        return result;
+    }
     // Esc ends an open portal step, then clears a palette filter, before
     // it cancels a pending edit.
     if key == Keycode::Escape && app.tools.retire_portal() {
@@ -6198,6 +6496,33 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         | Keycode::Minus => view_key(app, key),
         _ => Ok(()),
     }
+}
+
+/// The keys a road being drawn takes: Enter finishes it into one pending
+/// change for Review (a second Enter, on the next displayed frame, accepts
+/// as usual), Backspace takes away its last point, Esc drops it (and does
+/// nothing else). Undo, redo, reopen, delete and the proposal key are
+/// refused. `None` for every other key: the brush keys, F, the mode keys,
+/// the overlays, pans and zooms keep their meaning.
+fn road_key(app: &mut Application, key: Keycode) -> Option<Result<()>> {
+    Some(match key {
+        Keycode::Return | Keycode::KpEnter => app.finish_road(),
+        Keycode::Backspace => {
+            app.tools.pop_road_point();
+            app.notice = None;
+            app.presented_generation = None;
+            Ok(())
+        }
+        Keycode::Escape => {
+            app.tools.drop_road();
+            app.notice = Some(ROAD_DROPPED.into());
+            app.presented_generation = None;
+            Ok(())
+        }
+        Keycode::Z | Keycode::Y | Keycode::R | Keycode::Delete => Err(ROAD_IN_PROGRESS.into()),
+        Keycode::G if app.proposal.is_some() => Err(ROAD_IN_PROGRESS.into()),
+        _ => return None,
+    })
 }
 
 /// A pan (WASD) or zoom (+/-) key: one step through [`Application::change_view`].
@@ -6309,6 +6634,16 @@ fn native_present(
     }
 }
 
+/// What a road lays, for its status line: `of sand`, or `from palette
+/// speckle (seed 7)`.
+fn road_target_words(target: &StrokeTarget) -> String {
+    match target {
+        StrokeTarget::Scatter { palette, seed } => format!("from palette {palette} (seed {seed})"),
+        StrokeTarget::Terrain(proto) => format!("of {proto}"),
+        _ => String::new(),
+    }
+}
+
 /// The cells a running stroke's release would change, from the same
 /// Session computation that prepares the release, when the stroke belongs
 /// to the current frame. `None` without a stroke, or when the release would
@@ -6336,6 +6671,9 @@ fn stroke_changes(app: &Application) -> Option<Vec<[i64; 2]>> {
 /// all World content, which no height band, zone tint or highlight looks
 /// like.
 fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    if app.tools.road().is_some() {
+        return road_overlay(app);
+    }
     if app.tools.stroke().is_none() {
         return fill_overlay(app);
     }
@@ -6387,6 +6725,57 @@ fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     crate::workspace_render::stroke_overlay(&app.prepared, &cells)
 }
 
+/// The cells finishing the road would change, when its preview belongs to
+/// the current frame; `None` when Enter would prepare nothing.
+fn road_changes(app: &Application) -> Option<(RoadPreview, Vec<[i64; 2]>)> {
+    if app.prepared.frame_revision != app.view.frame_revision {
+        return None;
+    }
+    let preview = app.road_preview()?;
+    let changes = preview.changes.as_ref().ok()?.clone();
+    Some((preview, changes))
+}
+
+/// The road's preview: the cells finishing it would change, marked like a
+/// terrain stroke's through the same overlay (a scatter road marks the
+/// cells whose drawn value differs, with the seed it records).
+fn road_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    let Some((preview, changes)) = road_changes(app) else {
+        return Vec::new();
+    };
+    let Ok(stroke) = &preview.stroke else {
+        return Vec::new();
+    };
+    let cells = changes
+        .into_iter()
+        .map(|[x, y]| SelectionKey::Cell {
+            plane: stroke.plane().into(),
+            layer: stroke.layer(),
+            grid: stroke.grid().into(),
+            x,
+            y,
+        })
+        .collect();
+    crate::workspace_render::stroke_overlay(&app.prepared, &cells)
+}
+
+/// The road's points, each marked above all World content
+/// ([`crate::workspace_render::road_point_overlay`]), whether or not
+/// finishing it would change anything.
+fn road_point_marks(app: &Application) -> Vec<tilewright_scene::Quad> {
+    let Some(road) = app.tools.road() else {
+        return Vec::new();
+    };
+    if app.prepared.frame_revision != app.view.frame_revision {
+        return Vec::new();
+    }
+    crate::workspace_render::road_point_overlay(
+        &app.prepared,
+        &road.points().iter().copied().collect(),
+        cell_shape(app),
+    )
+}
+
 /// The hover preview of a fill or replace: the cells a click would change,
 /// marked like a terrain stroke's, through the same overlay.
 fn fill_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
@@ -6415,6 +6804,11 @@ fn fill_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
 /// The cells the person's own preview marks: a running stroke's, or the
 /// hovered fill's.
 fn previewed_cells(app: &Application) -> std::collections::BTreeSet<[i64; 2]> {
+    if app.tools.road().is_some() {
+        return road_changes(app)
+            .map(|(_, cells)| cells.into_iter().collect())
+            .unwrap_or_default();
+    }
     match app.tools.stroke() {
         Some(_) => stroke_changes(app)
             .unwrap_or_default()
@@ -6615,6 +7009,8 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     ) {
         person.append(&mut stroke);
     }
+    // Road points, like sculpt marks, take the slot above the World.
+    person.extend(road_point_marks(app));
     person.extend(badge_overlay(app));
     let mut overlay = person.clone();
     overlay.extend(proposal_overlay(app));
