@@ -282,3 +282,17 @@ fn only_string_fields_use_the_shared_field() {
     tools.begin_move(&view, false).unwrap();
     assert!(tools.shared_draft().is_none());
 }
+
+#[test]
+fn the_frame_records_name_the_pinned_shared_field() {
+    // A pin move has to rename the field in the frame records too.
+    let manifest = include_str!("../../../Cargo.toml");
+    let version = FieldImplementation::SHARED_NAME
+        .strip_prefix("tilewright-ui ")
+        .unwrap();
+    assert!(
+        manifest.contains(&format!("\ntilewright-ui = \"={version}\"\n")),
+        "{}",
+        FieldImplementation::SHARED_NAME
+    );
+}

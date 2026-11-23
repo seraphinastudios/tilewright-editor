@@ -190,8 +190,8 @@ press; the sixth press does nothing, and the seventh moves on. At the field's 20
 are a fraction of a pixel apart, and `tilewright-ui-render` 0.1.0 counts the
 step between them as a move. The fix is planned for `tilewright-ui-render`
 0.1.1. If the shared field cannot be drawn (a structural refusal from its
-renderer), editing pauses with the draft kept; Esc, which discards the draft,
-or zooming recovers.
+renderer), editing pauses with the draft kept. Esc, which discards the draft,
+recovers; if the cause is the frame budget, zooming in also does.
 
 What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints

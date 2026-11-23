@@ -504,3 +504,31 @@ fn the_frame_leaves_room_for_the_shared_field_before_the_highlight() {
     assert_eq!(highlight(&again.scene), highlight(&full.scene));
     assert!(shared > 0);
 }
+
+#[test]
+fn the_field_follows_its_row_when_the_frame_is_laid_out_again() {
+    let mut twin = super::proposal::twin(1, |_| {}, |_| {}, None);
+    super::proposal::open(&mut twin);
+    let app = &mut twin.app;
+    app.share_string_field().unwrap();
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    // Laid out as if the highlight had been left out, its note above the
+    // field; the frame then has room for the highlight, so it is laid out
+    // again without the note and the field's row moves up.
+    app.highlight_omitted = true;
+    app.refresh_ui();
+    let before = app.ui.shared_field.unwrap();
+    let presentation = crate::prototype::workspace_presentation(app).unwrap();
+    assert!(!app.highlight_omitted);
+    let row = app.ui.shared_field.unwrap();
+    assert!(row.y < before.y, "the row moved: {before:?} -> {row:?}");
+    let clip = presentation.editable.unwrap().clip;
+    #[allow(clippy::cast_precision_loss)]
+    let (top, bottom) = (row.y as f32, (row.y + row.height) as f32);
+    assert!(
+        clip.y >= top && clip.y + clip.height <= bottom,
+        "the field is drawn in its new row {row:?}, not at {clip:?}"
+    );
+}

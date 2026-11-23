@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 SCRIPT = Path(__file__).with_name('provision-prototype.py')
@@ -190,6 +191,16 @@ class ProposalOptionTests(unittest.TestCase):
             self.assertEqual(command[:2], ['/editor', 'prototype'])
             self.assertEqual('--shared-string-field' in command, given)
             self.assertEqual(command.count('--shared-string-field'), int(given))
+
+    def test_the_receipt_and_the_frame_records_name_the_pinned_shared_field(self):
+        root = Path(__file__).resolve().parents[1]
+        pin = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']['dependencies']['tilewright-ui']
+        self.assertTrue(pin.startswith('='), pin)
+        name = f'tilewright-ui {pin[1:]}'
+        self.assertEqual(provision.SHARED_STRING_FIELD, name)
+        # The editor's frame records use `FieldImplementation::SHARED_NAME`.
+        source = (root / 'crates/tilewright-editor-ui/src/field_input.rs').read_text()
+        self.assertIn(f'pub const SHARED_NAME: &\'static str = "{name}";', source)
 
     def test_bad_proposals_and_actors_are_refused_before_anything_is_created(self):
         with tempfile.TemporaryDirectory() as temporary:

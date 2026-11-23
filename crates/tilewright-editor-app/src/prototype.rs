@@ -6522,8 +6522,12 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         app.preview_omitted = omitted;
         app.highlight_omitted = highlight;
         app.refresh_ui();
-        // The row may have moved with the new layout; its size has not.
+        // The new layout may move the row, show it or hide it: prepare the
+        // field and its reservation again.
         field = prepare_shared_field(app)?;
+        let reserved = field
+            .as_ref()
+            .map_or(0, crate::shared_field::PreparedField::quads);
         (presentation, omitted, highlight) = compose(app, reserved)?;
         app.preview_omitted = omitted;
         app.highlight_omitted = highlight;
