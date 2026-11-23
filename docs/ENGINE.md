@@ -254,7 +254,10 @@ then prepares another transaction; a proposal step is then reported as
 diverged and not applied. When no cell reaches either end the heights, and
 the transaction, are the same. `tilewright_editor_ui::sculpt::plan` answers
 which cells an adjustment would change, from the same code; a proposal
-step's words count them.
+step's words count them, and the desktop's
+[Sculpt mode](OFFLINE-PROTOTYPE.md#sculpt-mode) marks them while a stroke is
+dragged (`Session::stroke_changes`) and releases the stroke as one
+`AdjustHeights` by its signed step.
 
 ## Refusal codes
 
