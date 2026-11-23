@@ -178,7 +178,7 @@ class ProposalOptionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = json.loads((root / 'session' / 'provision.json').read_text())
             # Named as the editor's frame records name it.
-            self.assertEqual(receipt['string_field'], 'tilewright-ui 0.1.0')
+            self.assertEqual(receipt['string_field'], 'tilewright-ui 0.1.1')
             self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope',
                                                'string_field'])
 
