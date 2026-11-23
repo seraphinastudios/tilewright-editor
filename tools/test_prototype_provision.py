@@ -169,6 +169,16 @@ class ProposalOptionTests(unittest.TestCase):
             self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope'])
             self.assertEqual(sorted(receipt['roots']), ['evidence', 'recovery', 'session', 'world'])
 
+    def test_the_shared_string_field_switch_is_recorded_only_when_given(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
+            root = self.persistent_root(temporary)
+            result = self.run_helper(root, '--shared-string-field')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads((root / 'session' / 'provision.json').read_text())
+            self.assertEqual(receipt['string_field'], 'tilewright-ui')
+            self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope',
+                                               'string_field'])
+
     def test_bad_proposals_and_actors_are_refused_before_anything_is_created(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

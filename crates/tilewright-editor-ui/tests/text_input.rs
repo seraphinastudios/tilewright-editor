@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: MIT
 
 use tilewright_editor_ui::{
+    field_input::{FieldImplementation, FieldInput},
     inspector::MAX_INPUT_BYTES,
-    text_input::{TextAffinity, TextCursor, TextInput, TextSelection, scalar_selection_bytes},
+    text_input::{TextAffinity, TextCursor, TextSelection, scalar_selection_bytes},
 };
 
-fn select(input: &mut TextInput, anchor: usize, focus: usize) {
+fn select(input: &mut FieldInput, anchor: usize, focus: usize) {
     input
         .set_selection(
             TextSelection {
@@ -18,10 +19,11 @@ fn select(input: &mut TextInput, anchor: usize, focus: usize) {
         .unwrap();
 }
 
-#[test]
-fn editing_preserves_exact_utf8_and_replaces_grapheme_selection_in_middle() {
+fn editing_preserves_exact_utf8_and_replaces_grapheme_selection_in_middle(
+    implementation: FieldImplementation,
+) {
     let original = "é e\u{301} العربية 123 עברית क्\u{200d}ष 👨‍👩‍👧‍👦 🇺🇳";
-    let mut input = TextInput::new(original.into()).unwrap();
+    let mut input = FieldInput::new(original.into(), implementation).unwrap();
     assert_eq!(input.text(), original);
     input.select_all().unwrap();
     assert_eq!(input.text(), original, "select-all must not delete input");
@@ -34,24 +36,24 @@ fn editing_preserves_exact_utf8_and_replaces_grapheme_selection_in_middle() {
     assert_eq!(input.text(), "Aעברית青B");
 }
 
-#[test]
-fn both_deletions_remove_whole_extended_graphemes() {
+fn both_deletions_remove_whole_extended_graphemes(implementation: FieldImplementation) {
     for grapheme in ["e\u{301}", "👨‍👩‍👧‍👦", "🇺🇳", "क्ष", "👍🏽", "שׁ"]
     {
-        let mut input = TextInput::new(format!("A{grapheme}B")).unwrap();
+        let mut input = FieldInput::new(format!("A{grapheme}B"), implementation).unwrap();
         select(&mut input, 1 + grapheme.len(), 1 + grapheme.len());
         input.backspace().unwrap();
         assert_eq!(input.text(), "AB", "backspace split {grapheme}");
-        let mut input = TextInput::new(format!("A{grapheme}B")).unwrap();
+        let mut input = FieldInput::new(format!("A{grapheme}B"), implementation).unwrap();
         select(&mut input, 1, 1);
         input.delete().unwrap();
         assert_eq!(input.text(), "AB", "delete split {grapheme}");
     }
 }
 
-#[test]
-fn selection_validates_utf8_graphemes_affinity_and_display_revision_atomically() {
-    let mut input = TextInput::new("Ae\u{301}🙂B".into()).unwrap();
+fn selection_validates_utf8_graphemes_affinity_and_display_revision_atomically(
+    implementation: FieldImplementation,
+) {
+    let mut input = FieldInput::new("Ae\u{301}🙂B".into(), implementation).unwrap();
     for byte in [2, 3, 5, 6, 7, 10, usize::MAX] {
         let before = input.clone();
         let cursor = TextCursor::new(byte);
@@ -87,9 +89,10 @@ fn selection_validates_utf8_graphemes_affinity_and_display_revision_atomically()
     assert_eq!(input.text(), "Ae\u{301}中B");
 }
 
-#[test]
-fn budget_is_replacement_aware_and_rejection_preserves_composition_and_selection() {
-    let mut input = TextInput::new("a".repeat(MAX_INPUT_BYTES)).unwrap();
+fn budget_is_replacement_aware_and_rejection_preserves_composition_and_selection(
+    implementation: FieldImplementation,
+) {
+    let mut input = FieldInput::new("a".repeat(MAX_INPUT_BYTES), implementation).unwrap();
     let before = input.clone();
     assert!(input.input("é").is_err());
     assert_eq!(input, before);
@@ -108,9 +111,10 @@ fn budget_is_replacement_aware_and_rejection_preserves_composition_and_selection
     assert_eq!(input.text().len(), MAX_INPUT_BYTES);
 }
 
-#[test]
-fn ime_is_a_virtual_splice_then_one_commit_over_original_selection() {
-    let mut input = TextInput::new("AoldZ".into()).unwrap();
+fn ime_is_a_virtual_splice_then_one_commit_over_original_selection(
+    implementation: FieldImplementation,
+) {
+    let mut input = FieldInput::new("AoldZ".into(), implementation).unwrap();
     select(&mut input, 4, 1);
     let selection = input.selection();
     input.update_preedit("é🙂青", 1, 1).unwrap();
@@ -151,12 +155,13 @@ fn ime_is_a_virtual_splice_then_one_commit_over_original_selection() {
     assert_eq!(input.text(), "AעבריתZ");
 }
 
-#[test]
-fn ime_offsets_are_scalars_and_bad_updates_do_not_mutate_any_state() {
+fn ime_offsets_are_scalars_and_bad_updates_do_not_mutate_any_state(
+    implementation: FieldImplementation,
+) {
     assert_eq!(scalar_selection_bytes("é🙂青", 1, 1).unwrap(), Some(2..6));
     assert_eq!(scalar_selection_bytes("é🙂青", 3, 0).unwrap(), Some(9..9));
     assert_eq!(scalar_selection_bytes("é🙂青", -1, -1).unwrap(), None);
-    let mut input = TextInput::new("e\u{301}".into()).unwrap();
+    let mut input = FieldInput::new("e\u{301}".into(), implementation).unwrap();
     input.update_preedit("🙂", 1, 0).unwrap();
     let before = input.clone();
     for (start, length) in [
@@ -176,9 +181,10 @@ fn ime_offsets_are_scalars_and_bad_updates_do_not_mutate_any_state() {
     assert_eq!(input.text(), "e\u{301}");
 }
 
-#[test]
-fn grapheme_joins_keep_caret_valid_without_rewriting_raw_input() {
-    let mut input = TextInput::new("eX".into()).unwrap();
+fn grapheme_joins_keep_caret_valid_without_rewriting_raw_input(
+    implementation: FieldImplementation,
+) {
+    let mut input = FieldInput::new("eX".into(), implementation).unwrap();
     select(&mut input, 1, 1);
     input.input("\u{301}").unwrap();
     assert_eq!(input.text(), "e\u{301}X");
@@ -196,10 +202,11 @@ fn grapheme_joins_keep_caret_valid_without_rewriting_raw_input() {
     assert!(input.text().starts_with("\u{2067}עברית\u{2069}\u{200d}"));
 }
 
-#[test]
-fn new_line_and_paragraph_separators_are_rejected_like_controls() {
+fn new_line_and_paragraph_separators_are_rejected_like_controls(
+    implementation: FieldImplementation,
+) {
     for separator in ["\u{2028}", "\u{2029}"] {
-        let mut input = TextInput::new("AZ".into()).unwrap();
+        let mut input = FieldInput::new("AZ".into(), implementation).unwrap();
         select(&mut input, 1, 1);
         let before = input.clone();
         // Typed or pasted text arrives through `input`; IME through preedit.
@@ -221,10 +228,11 @@ fn new_line_and_paragraph_separators_are_rejected_like_controls() {
     }
 }
 
-#[test]
-fn loaded_line_and_paragraph_separators_are_kept_until_the_user_removes_them() {
+fn loaded_line_and_paragraph_separators_are_kept_until_the_user_removes_them(
+    implementation: FieldImplementation,
+) {
     let loaded = "A\u{2028}B\u{2029}C";
-    let mut input = TextInput::new(loaded.into()).unwrap();
+    let mut input = FieldInput::new(loaded.into(), implementation).unwrap();
     assert_eq!(input.text(), loaded);
     // Shown as markers on one line; the draft keeps the real characters.
     assert_eq!(input.snapshot().display_text, "A\u{23ce}B\u{b6}C");
@@ -241,3 +249,16 @@ fn loaded_line_and_paragraph_separators_are_kept_until_the_user_removes_them() {
     input.input(" ").unwrap();
     assert_eq!(input.text(), "<AB C");
 }
+
+// Each case runs against the editor's own field and the shared field.
+tilewright_editor_ui::both_fields!(
+    editing_preserves_exact_utf8_and_replaces_grapheme_selection_in_middle,
+    both_deletions_remove_whole_extended_graphemes,
+    selection_validates_utf8_graphemes_affinity_and_display_revision_atomically,
+    budget_is_replacement_aware_and_rejection_preserves_composition_and_selection,
+    ime_is_a_virtual_splice_then_one_commit_over_original_selection,
+    ime_offsets_are_scalars_and_bad_updates_do_not_mutate_any_state,
+    grapheme_joins_keep_caret_valid_without_rewriting_raw_input,
+    new_line_and_paragraph_separators_are_rejected_like_controls,
+    loaded_line_and_paragraph_separators_are_kept_until_the_user_removes_them,
+);

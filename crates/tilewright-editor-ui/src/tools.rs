@@ -3,7 +3,8 @@
 
 //! Local input only; every edit leaves this module as a Session action.
 use crate::brush::{Brush, Stroke, StrokeTarget};
-use crate::text_input::{TextInput, TextInputSnapshot, TextRevision, TextSelection};
+use crate::field_input::{FieldImplementation, FieldInput, SharedInput};
+use crate::text_input::{TextInputSnapshot, TextRevision, TextSelection};
 use crate::{
     Action, SelectionKey,
     inspector::{
@@ -232,7 +233,7 @@ struct Draft {
     /// `None` for the palette filter.
     stamp: Option<SnapshotStamp>,
     kind: DraftKind,
-    input: TextInput,
+    input: FieldInput,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -264,6 +265,9 @@ pub struct ToolState {
     anchor: Option<String>,
     /// The open portal step of the selected object, if any.
     portal: Option<OpenPortalStep>,
+    /// What edits the inspector's string fields: the editor's own field
+    /// unless the shared field was switched on.
+    string_field: FieldImplementation,
 }
 
 /// The zones that may become the chosen zone's parent: the first
@@ -1157,7 +1161,12 @@ impl ToolState {
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        let input = TextInput::with_limit(text.clone(), identity, MAX_FILTER_BYTES);
+        let input = FieldInput::with_limit(
+            text.clone(),
+            identity,
+            MAX_FILTER_BYTES,
+            FieldImplementation::Editor,
+        );
         let input = match input {
             Ok(input) => input,
             Err(error) => {
@@ -1245,7 +1254,14 @@ impl ToolState {
         if text.len() > MAX_INPUT_BYTES {
             return Err(ToolError("Input exceeds byte budget"));
         }
-        let input = self.new_input(text)?;
+        // Only string fields may use the shared field; every other draft
+        // kind keeps the editor's own.
+        let implementation = if matches!(row.spec.field_type, FieldType::String { .. }) {
+            self.string_field
+        } else {
+            FieldImplementation::Editor
+        };
+        let input = self.new_input_with(text, MAX_INPUT_BYTES, implementation)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: Some(stamp),
@@ -1347,29 +1363,45 @@ impl ToolState {
         self.input_mut()?.cancel_preedit()
     }
 
-    fn input_mut(&mut self) -> Result<&mut TextInput, ToolError> {
+    /// Choose what edits the inspector's string fields from the next field
+    /// draft on. Other draft kinds always use the editor's own field.
+    pub fn set_string_field(&mut self, implementation: FieldImplementation) {
+        self.string_field = implementation;
+    }
+    pub fn string_field(&self) -> FieldImplementation {
+        self.string_field
+    }
+    /// The shared field's state while it edits the open draft.
+    pub fn shared_draft(&self) -> Option<&SharedInput> {
+        self.draft.as_ref().and_then(|draft| draft.input.shared())
+    }
+
+    fn input_mut(&mut self) -> Result<&mut FieldInput, ToolError> {
         self.draft
             .as_mut()
             .map(|draft| &mut draft.input)
             .ok_or(ToolError("No input draft"))
     }
 
-    fn new_limited_input(&mut self, text: String, limit: usize) -> Result<TextInput, ToolError> {
-        let identity = self
-            .next_draft
-            .checked_add(1)
-            .ok_or(ToolError("Draft identity exhausted"))?;
-        let input = TextInput::with_limit(text, identity, limit)?;
-        self.next_draft = identity;
-        Ok(input)
+    fn new_limited_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
+        self.new_input_with(text, limit, FieldImplementation::Editor)
     }
 
-    fn new_input(&mut self, text: String) -> Result<TextInput, ToolError> {
+    fn new_input(&mut self, text: String) -> Result<FieldInput, ToolError> {
+        self.new_input_with(text, MAX_INPUT_BYTES, FieldImplementation::Editor)
+    }
+
+    fn new_input_with(
+        &mut self,
+        text: String,
+        limit: usize,
+        implementation: FieldImplementation,
+    ) -> Result<FieldInput, ToolError> {
         let identity = self
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        let input = TextInput::with_identity(text, identity)?;
+        let input = FieldInput::with_limit(text, identity, limit, implementation)?;
         self.next_draft = identity;
         Ok(input)
     }

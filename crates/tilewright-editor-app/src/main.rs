@@ -9,6 +9,7 @@ mod native_input;
 mod prototype;
 mod render_command;
 mod sandbox_command;
+mod shared_field;
 mod viewport;
 mod workspace_render;
 mod workspace_ui;

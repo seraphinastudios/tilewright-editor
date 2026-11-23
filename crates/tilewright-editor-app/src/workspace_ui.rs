@@ -119,6 +119,9 @@ pub struct Widget {
     /// A 1 px frame of this colour around the swatch, for the badge legend
     /// rows, whose badges carry the same outline.
     pub swatch_outline: Option<[f32; 4]>,
+    /// The row the shared string field draws itself; the editor draws
+    /// nothing there.
+    pub shared: bool,
 }
 
 /// Hit rectangles use physical pixels; display rectangles retain logical units
@@ -134,6 +137,8 @@ pub struct WorkspaceUi {
     pub logical_sidebar: Rect,
     pub logical_review: Rect,
     pub widgets: Vec<Widget>,
+    /// The logical row reserved for the shared string field, when laid out.
+    pub shared_field: Option<Rect>,
     logical: (u32, u32),
 }
 
@@ -190,6 +195,7 @@ impl WorkspaceUi {
                 height: 0,
             },
             widgets: Vec::new(),
+            shared_field: None,
             logical,
         };
         ui.logical_viewport = Rect {
@@ -265,6 +271,7 @@ impl WorkspaceUi {
                 thumbnail: None,
                 swatch: None,
                 swatch_outline: None,
+                shared: false,
             });
         }
     }
@@ -288,6 +295,19 @@ impl WorkspaceUi {
             && let Some(widget) = self.widgets.last_mut()
         {
             widget.editable = Some(snapshot);
+        }
+    }
+
+    /// Reserve `bounds` for the shared string field: a click there edits
+    /// the draft, as on the editor's own field; the shared field draws it.
+    pub fn shared_editable(&mut self, bounds: Rect) {
+        let before = self.widgets.len();
+        self.widget(bounds, String::new(), Some(Control::EditDraft), true, false);
+        if self.widgets.len() > before
+            && let Some(widget) = self.widgets.last_mut()
+        {
+            widget.shared = true;
+            self.shared_field = Some(bounds);
         }
     }
 

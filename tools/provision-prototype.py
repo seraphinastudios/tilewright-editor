@@ -212,6 +212,8 @@ def main():
     parser.add_argument('--proposal', type=Path,
                         help='a proposal file (proposal-<digest>.json) to open; copied into the session')
     parser.add_argument('--actor', help='human:<name>, the actor of the changes this session accepts')
+    parser.add_argument('--shared-string-field', action='store_true',
+                        help="opt-in: the inspector's string field uses the shared tilewright-ui field")
     args = parser.parse_args()
     # Checked, and the proposal read, before anything is created.
     actor = None if args.actor is None else person_actor(args.actor)
@@ -272,6 +274,8 @@ def main():
                                    'sha256': hashlib.sha256(proposal[1]).hexdigest()}
         if actor is not None:
             receipt['actor'] = actor
+        if args.shared_string_field:
+            receipt['string_field'] = 'tilewright-ui'
         receipt_fd = os.open('provision.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=task_fd)
         with os.fdopen(receipt_fd, 'w') as stream:
@@ -302,6 +306,8 @@ def main():
                 command += ['--proposal-fd', str(children['proposal']), '--proposal-name', proposal[0]]
             if actor is not None:
                 command += ['--actor', actor]
+            if args.shared_string_field:
+                command.append('--shared-string-field')
             # subprocess closes every other descriptor (close_fds), so only
             # the standard streams and these directories reach the editor.
             result = subprocess.run(command, pass_fds=tuple(children.values()), check=False)

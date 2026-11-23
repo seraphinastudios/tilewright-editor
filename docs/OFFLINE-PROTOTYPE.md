@@ -149,6 +149,41 @@ input before world picking. The world remains full-window behind the panels;
 the editor does not translate or rasterize world geometry. Resize/camera/session changes
 invalidate earlier masks.
 
+### Shared string field
+
+`--shared-string-field` (given to `tools/provision-prototype.py`, which records
+`"string_field": "tilewright-ui"` in the receipt and passes the flag to the
+editor) switches the inspector's **string** fields to the shared text field
+of `tilewright-ui` 0.1.0, drawn by `tilewright-ui-render` with the editor's
+own text system and font pack. It is off by default; without it nothing
+changes, and the frame records and images of a session are byte-identical.
+With it, each frame record carries `"string_field": "tilewright-ui 0.1.0"` and
+the editor prints the same at start.
+
+Only string field drafts change hands. Numbers, booleans and references,
+coordinates, zone names, anchors, portal locations and the palette filter
+keep the editor's own field. A string draft behaves as above: the same
+refusals and messages, stored line breaks as the same markers (now drawn by
+the shared field), the same keys, clipboard and input method events, and
+Enter or Review hands the engine the same `SetField` with the shared field's
+committed text. The arrows step the caret with the shared field's own
+`step_caret`, which steps over a marker's zero-width space in one press. The
+field looks different: a taller row (52 px) with the shared field's own
+background, a 20 px composer font, its own selection and caret colours, and
+its own Apply button beside the text, which reviews as Review does.
+
+What only a person can check, in a real window with the switch on:
+
+- input method composition (for example Japanese or Chinese): the preedit
+  underline, the candidate window beside the caret, commit and Esc cancel;
+- dead keys and compose sequences (`´` then `e`);
+- paste of plain, long and multi-line text (multi-line paste is refused);
+- a long value: the tail and caret stay visible while typing and moving;
+- a stored value with line breaks: markers show, arrows cross them, Backspace
+  removes one;
+- right-to-left and mixed text (Hebrew or Arabic with digits): caret steps,
+  Home and End, Shift-selection and click placement.
+
 ### Terrain drag brush
 
 In Terrain mode, choose an explicit palette value, then press on a cell and

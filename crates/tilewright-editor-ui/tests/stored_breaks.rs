@@ -5,13 +5,14 @@
 //! never changed by being shown.
 use std::collections::BTreeSet;
 
+use tilewright_editor_ui::field_input::{FieldImplementation, FieldInput};
 use tilewright_editor_ui::text_input::{
-    CONTROL_MARKER, LINE_BREAK_MARKER, PARAGRAPH_MARKER, TAB_MARKER, TextCursor, TextInput,
-    TextSelection, mark_stored_breaks, stored_break_hint,
+    CONTROL_MARKER, LINE_BREAK_MARKER, PARAGRAPH_MARKER, TAB_MARKER, TextCursor, TextSelection,
+    mark_stored_breaks, stored_break_hint,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-fn caret(input: &mut TextInput, byte: usize) {
+fn caret(input: &mut FieldInput, byte: usize) {
     input
         .set_selection(
             TextSelection::caret(TextCursor::new(byte)),
@@ -43,8 +44,9 @@ const CLASSES: [(&str, char); 12] = [
     ("\u{7f}", CONTROL_MARKER),
 ];
 
-#[test]
-fn each_class_shows_one_marker_at_start_middle_end_and_side_by_side() {
+fn each_class_shows_one_marker_at_start_middle_end_and_side_by_side(
+    implementation: FieldImplementation,
+) {
     for (stored, marker) in CLASSES {
         for (value, shown) in [
             (format!("{stored}A"), format!("{marker}A")),
@@ -53,7 +55,7 @@ fn each_class_shows_one_marker_at_start_middle_end_and_side_by_side() {
             (format!("{stored}{stored}"), format!("{marker}{marker}")),
             (stored.to_owned(), marker.to_string()),
         ] {
-            let input = TextInput::new(value.clone()).unwrap();
+            let input = FieldInput::new(value.clone(), implementation).unwrap();
             let snapshot = input.snapshot();
             assert_eq!(snapshot.display_text, shown, "{value:?}");
             assert_eq!(
@@ -151,8 +153,8 @@ impl Seeded {
 /// Every committed boundary is shown and maps back exactly; the only extra
 /// display positions are inside marker units and map to the stored
 /// character's edge on the glyph's side; each glyph is its own grapheme.
-fn check_round_trip(value: &str) {
-    let input = TextInput::new(value.into()).unwrap();
+fn check_round_trip(value: &str, implementation: FieldImplementation) {
+    let input = FieldInput::new(value.into(), implementation).unwrap();
     let snapshot = input.snapshot();
     let display = boundaries(&snapshot.display_text);
     let committed = boundaries(value);
@@ -195,8 +197,7 @@ fn check_round_trip(value: &str) {
     }
 }
 
-#[test]
-fn display_boundaries_match_committed_boundaries_exactly() {
+fn display_boundaries_match_committed_boundaries_exactly(implementation: FieldImplementation) {
     // Every value of up to three pieces, then a seeded sample of longer ones.
     let mut values = vec![String::new()];
     let mut checked = 0;
@@ -206,7 +207,7 @@ fn display_boundaries_match_committed_boundaries_exactly() {
             .flat_map(|value| PARTS.iter().map(move |part| format!("{value}{part}")))
             .collect();
         for value in &values {
-            check_round_trip(value);
+            check_round_trip(value, implementation);
             checked += 1;
         }
     }
@@ -216,7 +217,7 @@ fn display_boundaries_match_committed_boundaries_exactly() {
         let value: String = (0..length)
             .map(|_| PARTS[random.below(PARTS.len())])
             .collect();
-        check_round_trip(&value);
+        check_round_trip(&value, implementation);
         checked += 1;
     }
     assert!(checked > 60_000);
@@ -246,10 +247,11 @@ fn expected_committed(
     }
 }
 
-#[test]
-fn positions_around_a_preedit_map_back_exactly_with_markers_on_either_side() {
+fn positions_around_a_preedit_map_back_exactly_with_markers_on_either_side(
+    implementation: FieldImplementation,
+) {
     // The reviewed case: four markers before a preedit at a caret.
-    let mut input = TextInput::new("\n\n\n\nbc".into()).unwrap();
+    let mut input = FieldInput::new("\n\n\n\nbc".into(), implementation).unwrap();
     caret(&mut input, 4);
     input.update_preedit("a", 1, 0).unwrap();
     let snapshot = input.snapshot();
@@ -268,7 +270,7 @@ fn positions_around_a_preedit_map_back_exactly_with_markers_on_either_side() {
         );
     }
     // A non-empty replaced selection, with markers before and after it.
-    let mut input = TextInput::new("x\ny\u{2029}z\tw".into()).unwrap();
+    let mut input = FieldInput::new("x\ny\u{2029}z\tw".into(), implementation).unwrap();
     input
         .set_selection(
             TextSelection {
@@ -308,7 +310,7 @@ fn positions_around_a_preedit_map_back_exactly_with_markers_on_either_side() {
         let committed: Vec<_> = boundaries(&value).into_iter().collect();
         let a = committed[random.below(committed.len())];
         let b = committed[random.below(committed.len())];
-        let mut input = TextInput::new(value.clone()).unwrap();
+        let mut input = FieldInput::new(value.clone(), implementation).unwrap();
         input
             .set_selection(
                 TextSelection {
@@ -363,15 +365,14 @@ fn a_guard_appears_only_beside_a_joining_neighbour() {
     assert_eq!(markers[0].glyph, 5..8);
 }
 
-#[test]
-fn backspace_and_delete_remove_exactly_one_stored_character() {
+fn backspace_and_delete_remove_exactly_one_stored_character(implementation: FieldImplementation) {
     for (stored, _) in CLASSES {
         let value = format!("Ab{stored}{stored}c");
         let first = 2;
         let second = first + stored.len();
         let expected = format!("Ab{stored}c");
         // Backspace after the second marker.
-        let mut input = TextInput::new(value.clone()).unwrap();
+        let mut input = FieldInput::new(value.clone(), implementation).unwrap();
         caret(&mut input, second + stored.len());
         input.backspace().unwrap();
         assert_eq!(input.text().as_bytes(), expected.as_bytes(), "{stored:?}");
@@ -380,7 +381,7 @@ fn backspace_and_delete_remove_exactly_one_stored_character() {
             TextSelection::caret(TextCursor::new(second))
         );
         // Delete before the first marker.
-        let mut input = TextInput::new(value.clone()).unwrap();
+        let mut input = FieldInput::new(value.clone(), implementation).unwrap();
         caret(&mut input, first);
         input.delete().unwrap();
         assert_eq!(input.text().as_bytes(), expected.as_bytes(), "{stored:?}");
@@ -390,10 +391,9 @@ fn backspace_and_delete_remove_exactly_one_stored_character() {
     }
 }
 
-#[test]
-fn a_selection_over_a_marker_covers_the_real_characters() {
+fn a_selection_over_a_marker_covers_the_real_characters(implementation: FieldImplementation) {
     let value = "A\r\nB\u{2028}C";
-    let mut input = TextInput::new(value.into()).unwrap();
+    let mut input = FieldInput::new(value.into(), implementation).unwrap();
     input
         .set_selection(
             TextSelection {
@@ -422,9 +422,8 @@ fn a_selection_over_a_marker_covers_the_real_characters() {
     );
 }
 
-#[test]
-fn composition_beside_a_marker_maps_both_ways() {
-    let mut input = TextInput::new("A\nB".into()).unwrap();
+fn composition_beside_a_marker_maps_both_ways(implementation: FieldImplementation) {
+    let mut input = FieldInput::new("A\nB".into(), implementation).unwrap();
     caret(&mut input, 2);
     input.update_preedit("\u{301}x", 2, 0).unwrap();
     let snapshot = input.snapshot();
@@ -459,9 +458,10 @@ fn composition_beside_a_marker_maps_both_ways() {
     assert!(input.snapshot().markers[0].display.len() > LINE_BREAK_MARKER.len_utf8());
 }
 
-#[test]
-fn typed_pasted_or_composed_breaks_and_controls_are_still_refused() {
-    let mut input = TextInput::new("A\nB".into()).unwrap();
+fn typed_pasted_or_composed_breaks_and_controls_are_still_refused(
+    implementation: FieldImplementation,
+) {
+    let mut input = FieldInput::new("A\nB".into(), implementation).unwrap();
     caret(&mut input, 1);
     let before = input.clone();
     for refused in [
@@ -496,3 +496,14 @@ fn the_hint_counts_breaks_and_controls_with_a_cr_lf_pair_once() {
         Some("Contains 1 line break and 2 control characters")
     );
 }
+
+// Each case runs against the editor's own field and the shared field.
+tilewright_editor_ui::both_fields!(
+    each_class_shows_one_marker_at_start_middle_end_and_side_by_side,
+    display_boundaries_match_committed_boundaries_exactly,
+    positions_around_a_preedit_map_back_exactly_with_markers_on_either_side,
+    backspace_and_delete_remove_exactly_one_stored_character,
+    a_selection_over_a_marker_covers_the_real_characters,
+    composition_beside_a_marker_maps_both_ways,
+    typed_pasted_or_composed_breaks_and_controls_are_still_refused,
+);
