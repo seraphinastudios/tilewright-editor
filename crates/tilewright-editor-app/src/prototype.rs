@@ -3930,9 +3930,10 @@ impl Application {
             return "Input not applied. Details below.".into();
         }
         match &self.view_note {
-            Some(ViewNote::Refused { status, .. }) => return (*status).into(),
+            Some(ViewNote::Refused { status, .. } | ViewNote::RoadDropped(status)) => {
+                return (*status).into();
+            }
             Some(ViewNote::Resumed) => return VIEW_RESUMED.into(),
-            Some(ViewNote::RoadDropped(status)) => return (*status).into(),
             None => {}
         }
         if let Some(status) = self.road_status() {
