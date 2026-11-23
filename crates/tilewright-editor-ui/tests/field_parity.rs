@@ -290,8 +290,10 @@ fn the_frame_records_name_the_pinned_shared_field() {
     let version = FieldImplementation::SHARED_NAME
         .strip_prefix("tilewright-ui ")
         .unwrap();
+    // Line by line: a Windows checkout may end lines with CR LF.
+    let pin = format!("tilewright-ui = \"={version}\"");
     assert!(
-        manifest.contains(&format!("\ntilewright-ui = \"={version}\"\n")),
+        manifest.lines().any(|line| line.trim_end() == pin),
         "{}",
         FieldImplementation::SHARED_NAME
     );
