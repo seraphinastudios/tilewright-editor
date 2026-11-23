@@ -1,5 +1,6 @@
 """Check private fresh-root provisioning and refusal without source mutation."""
 # Copyright 2026 Seraphina Studios. SPDX-License-Identifier: MIT
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -9,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 SCRIPT = Path(__file__).with_name('provision-prototype.py')
@@ -168,6 +170,37 @@ class ProposalOptionTests(unittest.TestCase):
             receipt = json.loads((session / 'provision.json').read_text())
             self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope'])
             self.assertEqual(sorted(receipt['roots']), ['evidence', 'recovery', 'session', 'world'])
+
+    def test_the_shared_string_field_switch_is_recorded_only_when_given(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
+            root = self.persistent_root(temporary)
+            result = self.run_helper(root, '--shared-string-field')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads((root / 'session' / 'provision.json').read_text())
+            # Named as the editor's frame records name it.
+            self.assertEqual(receipt['string_field'], 'tilewright-ui 0.1.0')
+            self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope',
+                                               'string_field'])
+
+    def test_the_editor_is_given_the_switch_exactly_when_it_is_asked_for(self):
+        children = {'world': 3, 'recovery': 4, 'evidence': 5}
+        for given in (False, True):
+            args = argparse.Namespace(font_pack=Path('/fonts'), demo_script=False, reference=False,
+                                      shared_string_field=given)
+            command = provision.editor_command(Path('/editor'), children, args, None, None)
+            self.assertEqual(command[:2], ['/editor', 'prototype'])
+            self.assertEqual('--shared-string-field' in command, given)
+            self.assertEqual(command.count('--shared-string-field'), int(given))
+
+    def test_the_receipt_and_the_frame_records_name_the_pinned_shared_field(self):
+        root = Path(__file__).resolve().parents[1]
+        pin = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']['dependencies']['tilewright-ui']
+        self.assertTrue(pin.startswith('='), pin)
+        name = f'tilewright-ui {pin[1:]}'
+        self.assertEqual(provision.SHARED_STRING_FIELD, name)
+        # The editor's frame records use `FieldImplementation::SHARED_NAME`.
+        source = (root / 'crates/tilewright-editor-ui/src/field_input.rs').read_text()
+        self.assertIn(f'pub const SHARED_NAME: &\'static str = "{name}";', source)
 
     def test_bad_proposals_and_actors_are_refused_before_anything_is_created(self):
         with tempfile.TemporaryDirectory() as temporary:

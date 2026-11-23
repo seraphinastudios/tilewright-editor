@@ -1,0 +1,245 @@
+// Copyright 2026 Seraphina Studios
+// SPDX-License-Identifier: MIT
+
+//! Drawing the opt-in shared string field (`--shared-string-field`).
+//!
+//! The inspector's string field is edited by `tilewright-ui`'s field (see
+//! `tilewright_editor_ui::field_input`); here its state is laid out in the
+//! sidebar row, compiled by `tilewright-ui-render`'s `UiCompiler` with the
+//! editor's own text system lent for each call, and composed into the
+//! editor's frame. Its geometry then serves pointer selection, caret steps
+//! and the input method area in place of the editor's own.
+use crate::workspace_render::{EditableGeometry, Presentation};
+use crate::workspace_ui::{Rect, WorkspaceUi};
+use tilewright_editor_ui::field_input::{SharedInput, editor_snapshot};
+use tilewright_render_ui::{TextSystem, UiRect};
+use tilewright_ui_render::{CompiledFrame, Error, Namespace, UiCompiler, UiLimits};
+
+type Result<T> = std::result::Result<T, String>;
+
+/// Host rule 1 of the shared compiler: its atlas (and its solid texture)
+/// use IDs the editor can never compute for its own. The editor's own UI
+/// textures are the largest World or thumbnail resource ID plus one and
+/// two; World resource IDs are catalog positions plus one, bounded by the
+/// catalog's size, and the cell reference art is `u64::MAX`. These sit far
+/// above every derived ID and clear of that sentinel. A host scene that
+/// uses one anyway is refused by `CompiledFrame::compose`.
+pub const SHARED_SOLID_RESOURCE: u64 = 0xffff_ffff_ffff_ff00;
+pub const SHARED_ATLAS_RESOURCE: u64 = 0xffff_ffff_ffff_ff01;
+/// The lowest ID the editor's own textures must stay below.
+pub const RESERVED_RESOURCES: u64 = SHARED_SOLID_RESOURCE;
+/// The shared field's quads' semantic IDs start here, above the World's
+/// and the editor interface's.
+pub const SHARED_FIRST_SEMANTIC: u32 = 0xf000_0000;
+const _: () =
+    assert!(SHARED_ATLAS_RESOURCE != u64::MAX && SHARED_SOLID_RESOURCE != SHARED_ATLAS_RESOURCE);
+
+/// The logical height of the shared field's row: its composer and Apply
+/// button with the shared layout's insets.
+pub const ROW_HEIGHT: u32 = 52;
+
+/// The shared field's pointer geometry, beside the editor's own terms.
+#[derive(Clone, Debug)]
+pub struct SharedGeometry {
+    pub text: tilewright_ui_render::TextGeometry,
+    /// The shared field's own Apply button, in logical coordinates.
+    pub submit: Option<tilewright_ui::Rect>,
+}
+
+pub struct SharedField {
+    compiler: UiCompiler,
+}
+
+impl SharedField {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            compiler: UiCompiler::new(
+                Namespace {
+                    first_semantic: SHARED_FIRST_SEMANTIC,
+                    solid_resource: SHARED_SOLID_RESOURCE,
+                    atlas_resource: SHARED_ATLAS_RESOURCE,
+                },
+                UiLimits::default(),
+            )
+            .map_err(refusal)?,
+        })
+    }
+
+    /// Lay out and compile the field's current state in `bounds`. Host rule
+    /// 2: the one text system the editor draws its own text with is lent
+    /// here on every call.
+    fn compile(
+        &mut self,
+        text: &mut TextSystem,
+        shared: &SharedInput,
+        ui: &WorkspaceUi,
+        bounds: Rect,
+    ) -> Result<(CompiledFrame, Option<tilewright_ui::Rect>)> {
+        let logical = ui.logical_size();
+        #[allow(clippy::cast_precision_loss)]
+        let viewport = tilewright_ui::Viewport::new(
+            logical.0 as f32,
+            logical.1 as f32,
+            ui.size.0 as f32 / logical.0.max(1) as f32,
+        )
+        .map_err(|error| format!("shared field: {error}"))?;
+        let snapshot = shared.snapshot();
+        let layout = tilewright_ui::layout_in(
+            &snapshot,
+            viewport,
+            neutral(bounds),
+            neutral(ui.logical_sidebar),
+        )
+        .map_err(|error| format!("shared field: {error}"))?;
+        let submit = layout
+            .hits
+            .iter()
+            .find(|hit| hit.widget.id == tilewright_ui::SUBMIT)
+            .map(|hit| hit.bounds);
+        let frame = self
+            .compiler
+            .compile(text, &snapshot, &layout, [ui.size.0, ui.size.1])
+            .map_err(refusal)?;
+        Ok((frame, submit))
+    }
+
+    /// Compile the field in the row the sidebar reserved, before the
+    /// editor's frame is fitted, so the fit can leave room for it
+    /// ([`PreparedField::quads`]). Without a reserved row (the field is
+    /// scrolled away) there is nothing to draw.
+    pub fn prepare(
+        &mut self,
+        text: &mut TextSystem,
+        shared: &SharedInput,
+        draft: u64,
+        ui: &WorkspaceUi,
+    ) -> Result<Option<PreparedField>> {
+        let Some(bounds) = ui.shared_field else {
+            return Ok(None);
+        };
+        let (frame, submit) = self.compile(text, shared, ui, bounds)?;
+        // `CompiledFrame` has no quad count in 0.1.0: its standalone scene
+        // holds exactly its quads.
+        let quads = frame
+            .standalone([0.0; 4])
+            .map_err(refusal)?
+            .scene
+            .quads()
+            .len();
+        Ok(Some(PreparedField {
+            frame,
+            submit,
+            draft,
+            quads,
+        }))
+    }
+
+    /// The current state's geometry, for a caret step: its shared
+    /// `TextGeometry` steps with `step_caret`.
+    pub fn current(
+        &mut self,
+        text: &mut TextSystem,
+        shared: &SharedInput,
+        ui: &WorkspaceUi,
+        draft: u64,
+    ) -> Result<EditableGeometry> {
+        let (frame, submit) = self.compile(text, shared, ui, bounds(ui))?;
+        frame
+            .editable()
+            .and_then(|geometry| geometry_for(geometry, submit, draft))
+            .ok_or_else(|| "shared field: no editable text".into())
+    }
+}
+
+/// The field compiled for this frame, not yet drawn.
+pub struct PreparedField {
+    frame: CompiledFrame,
+    submit: Option<tilewright_ui::Rect>,
+    draft: u64,
+    quads: usize,
+}
+
+impl PreparedField {
+    /// How many quads drawing the field adds to the frame.
+    pub fn quads(&self) -> usize {
+        self.quads
+    }
+
+    /// Draw the field over the editor's composed frame and hand its
+    /// geometry to the input paths.
+    pub fn attach(self, presentation: &mut Presentation) -> Result<()> {
+        let composed = self
+            .frame
+            .compose(&presentation.scene, presentation.resources.clone())
+            .map_err(refusal)?;
+        presentation.scene = composed.scene;
+        presentation.resources = composed.resources;
+        presentation.editable = self
+            .frame
+            .editable()
+            .and_then(|geometry| geometry_for(geometry, self.submit, self.draft));
+        Ok(())
+    }
+}
+
+/// The reserved row, or one of its size at the top left while the row is
+/// not laid out: a caret step does not depend on where it is.
+fn bounds(ui: &WorkspaceUi) -> Rect {
+    let logical = ui.logical_size();
+    ui.shared_field.unwrap_or(Rect {
+        x: 0,
+        y: 0,
+        width: 300.min(logical.0),
+        height: ROW_HEIGHT.min(logical.1),
+    })
+}
+
+/// The shared geometry in the editor's terms; `None` for text that is
+/// not the editable field.
+fn geometry_for(
+    geometry: &tilewright_ui_render::TextGeometry,
+    submit: Option<tilewright_ui::Rect>,
+    draft: u64,
+) -> Option<EditableGeometry> {
+    let snapshot = editor_snapshot(geometry.snapshot.as_ref()?, draft);
+    Some(EditableGeometry {
+        revision: snapshot.revision,
+        layout: geometry.layout.clone(),
+        origin: geometry.origin,
+        clip: UiRect {
+            x: geometry.clip.x,
+            y: geometry.clip.y,
+            width: geometry.clip.width,
+            height: geometry.clip.height,
+        },
+        snapshot,
+        shared: Some(SharedGeometry {
+            text: geometry.clone(),
+            submit,
+        }),
+    })
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn neutral(rect: Rect) -> tilewright_ui::Rect {
+    tilewright_ui::Rect {
+        x: rect.x as f32,
+        y: rect.y as f32,
+        width: rect.width as f32,
+        height: rect.height as f32,
+    }
+}
+
+/// A clean refusal for each compiler error; the frame is not drawn and the
+/// editor pauses through its usual presentation refusal.
+fn refusal(error: Error) -> String {
+    match error {
+        Error::TextSystemChanged => {
+            "shared field: the lent text system changed; the field is not drawn".into()
+        }
+        Error::IdentityCollision => {
+            "shared field: the frame uses an identity reserved for the shared field".into()
+        }
+        other => format!("shared field: {other}"),
+    }
+}

@@ -152,6 +152,87 @@ input before world picking. The world remains full-window behind the panels;
 the editor does not translate or rasterize world geometry. Resize/camera/session changes
 invalidate earlier masks.
 
+### Shared string field
+
+`--shared-string-field` (given to `tools/provision-prototype.py`, which records
+`"string_field": "tilewright-ui 0.1.0"` in the receipt and passes the flag to
+the editor) switches the inspector's **string** fields to the shared text
+field of `tilewright-ui` 0.1.0, drawn by `tilewright-ui-render` with the
+editor's own text system and font pack. It is off by default; without it
+nothing changes, and the frame records and images of a session are
+byte-identical. With it, each frame record carries the same
+`"string_field": "tilewright-ui 0.1.0"` member and the editor prints it at
+start.
+
+Only string field drafts change hands. Numbers, booleans and references,
+coordinates, zone names, anchors, portal locations and the palette filter
+keep the editor's own field. A string draft keeps the same refusals and
+messages, stored line breaks as the same markers (now drawn by the shared
+field), the same keys, clipboard and input method events, and Enter or
+Review hands the engine the same `SetField` with the shared field's
+committed text. The arrows step the caret with the shared field's own
+`step_caret`, which steps over a marker's zero-width space in one press. Its
+text is 20 px rather than 18 px, so in mixed-direction text an arrow or a
+click can land on another visual stop (or the same position with another
+side) than in the editor's own field.
+
+The field looks different: a taller row (52 px, so the rows below move down
+22 px), its own dark box, a white caret and preedit underline, a narrower text
+area, and its own **Apply** button beside the text, which reviews exactly as
+Review does. Apply is drawn with its label at the top left, and looks active
+even when Review is disabled (clicking it then gives Review's refusal):
+`tilewright-ui` 0.1.0 offers no control over either.
+
+Known limitation: next to a stored-break marker one arrow press can do
+nothing. In `Trail⏎mar⏎ker¶` (stored as `Trail\nmar\u{2028}ker\u{2029}`),
+Left from End reaches position 9 (before the second marker) with its fifth
+press; the sixth press does nothing, and the seventh moves on. At the field's 20 px text the two sides of that position
+are a fraction of a pixel apart, and `tilewright-ui-render` 0.1.0 counts the
+step between them as a move. The fix is planned for `tilewright-ui-render`
+0.1.1. If the shared field cannot be drawn (a structural refusal from its
+renderer), editing pauses with the draft kept. Esc, which discards the draft,
+recovers; if the cause is the frame budget, zooming in also does.
+
+What only a person can check, in a real window with the switch on. Start the
+session with `--shared-string-field`; the terminal prints
+`string field: tilewright-ui 0.1.0 (opt-in)`. Select a marker and click its
+`label` row.
+
+1. **Looks.** The field is taller, with a dark box, a white caret and a blue
+   Apply button. Every row below stays reachable, in a 720×480 window too
+   (scroll the sidebar with the mouse wheel).
+2. **Typing and paste.** Type, paste a short text and a long one. Pasting two
+   lines is refused with "Input exceeds byte budget or contains control
+   characters or line breaks" and leaves the field as it was.
+3. **Long value.** Type past the box's width: the caret and the newest
+   letters stay visible. Press Home, then hold Right: the text scrolls along.
+4. **Line breaks.** Use a value that has them (for example `Trail⏎mar⏎ker¶`).
+   The markers show; Left and Right cross each marker (expect the one press
+   that does nothing, above); Backspace after a marker removes exactly one
+   break; a click on the left or right half of a marker puts the caret on
+   that side.
+5. **Copy across a break.** Select across a marker, copy, and paste into a
+   plain text editor: you get a real line break, not `⏎`.
+6. **Input method** (Japanese or Chinese). While composing there is an
+   underline and the candidate window sits next to the caret, also when the
+   text is long and scrolled. Commit inserts the text once; Esc cancels the
+   composition without closing the field; Enter while composing does not
+   review.
+7. **Dead keys.** `´` then `e` gives `é` once.
+8. **Right-to-left.** Hebrew or Arabic with digits: Left, Right, Home, End,
+   Shift with the arrows, clicks and Shift-clicks. Some back-and-forth in
+   mixed text is known, in the editor's own field too.
+9. **Review.** Enter, Review and Apply each show the same pending change.
+   Accept, then Undo: the label returns exactly.
+10. **Unsupported text.** Paste a character the font pack lacks: the hint
+    says "Unsupported text; cannot review", Apply still looks active, and
+    clicking it refuses with the same reason.
+11. **Scaling.** At 125 % or 150 % display scaling the caret, clicks and the
+    candidate window line up with the text.
+12. **Esc and the other fields.** Esc discards the draft. Numbers,
+    coordinates, zone names and the palette filter look and behave exactly
+    as before.
+
 ### Terrain drag brush
 
 In Terrain mode, choose an explicit palette value, then press on a cell and

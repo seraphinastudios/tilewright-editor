@@ -88,6 +88,21 @@ ports nothing further.
   error codes) are used; no specification text, schema file or SDK code is
   copied or adapted.
 
+## Shared UI field
+
+The opt-in shared string field uses `tilewright-ui` and
+`tilewright-ui-render` **0.1.0** from crates.io (MIT, Seraphina Studios),
+archive SHA-256
+`b9856c447dbca814025851b45f242ed11e9b1a82ee34b5e92a2c3614e52459b1` and
+`cf40bb78e4d34abea0ba637ed41b175d5f62b92f9d3959794841126d15f83fbf`, which
+match the `SHA256SUMS` of the
+[v0.1.0 release](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.1.0),
+source revision `b46ad171a453fd134fd5304ba81845d34441b005`. They are
+dependencies, not reused source: nothing of them is copied into this
+repository. Their text editing was itself adapted from this repository's
+`text_input.rs` (their own `PROVENANCE.md` records it). They pin renderer
+0.7.2, the editor's own, so the lock holds one renderer.
+
 ## Shared renderer UI font
 
 The package policy and production Cargo graph pin `tilewright-render-ui`

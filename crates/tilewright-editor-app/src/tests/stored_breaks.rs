@@ -3,7 +3,7 @@
 
 //! A field value stored with line breaks: shown as markers on one line,
 //! edited through real SDL events, reviewed with the real characters.
-use super::{acknowledge_ui, application_with_source, input_key, modified_input_key};
+use super::{acknowledge_ui, application_with_source_using, input_key, modified_input_key};
 use crate::prototype::Application;
 use crate::workspace_ui::{Control, WorkspaceUi};
 use sdl3::{
@@ -11,14 +11,15 @@ use sdl3::{
     keyboard::{Keycode, Mod},
 };
 use std::fs;
+use tilewright_editor_ui::field_input::FieldImplementation;
 use tilewright_editor_ui::text_input::{LINE_BREAK_MARKER, PARAGRAPH_MARKER};
 
 /// The label of `marker_1`: a line feed, a line separator and a final
 /// paragraph separator.
 const STORED: &str = "Trail\nmar\u{2028}ker\u{2029}";
 
-fn stored_application() -> (tempfile::TempDir, Application) {
-    let (temporary, mut app) = application_with_source(|world| {
+fn stored_application(implementation: FieldImplementation) -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = application_with_source_using(implementation, |world| {
         let path = world.join("planes/main/layers/0/0_0.jsonc");
         let mut chunk: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -71,9 +72,10 @@ fn caret(app: &Application) -> usize {
     selection.focus.byte
 }
 
-#[test]
-fn stored_breaks_show_as_markers_on_one_line_in_the_row_and_the_draft() {
-    let (temporary, mut app) = stored_application();
+fn stored_breaks_show_as_markers_on_one_line_in_the_row_and_the_draft(
+    implementation: FieldImplementation,
+) {
+    let (temporary, mut app) = stored_application(implementation);
     app.refresh_ui();
     let texts: Vec<_> = app.ui.widgets.iter().map(|w| w.text.clone()).collect();
     let row = app
@@ -95,16 +97,28 @@ fn stored_breaks_show_as_markers_on_one_line_in_the_row_and_the_draft() {
     let snapshot = app.tools.draft_snapshot().unwrap();
     assert_eq!(snapshot.committed, STORED);
     assert_eq!(snapshot.display_text, shown());
-    let editable = app
-        .ui
-        .widgets
-        .iter()
-        .find(|widget| widget.editable.is_some())
-        .unwrap();
-    assert_eq!(editable.text, shown());
+    // The editor's own field draws the markers in its row; the shared
+    // field draws its own row from the same display text.
+    if implementation == FieldImplementation::Editor {
+        let editable = app
+            .ui
+            .widgets
+            .iter()
+            .find(|widget| widget.editable.is_some())
+            .unwrap();
+        assert_eq!(editable.text, shown());
+    }
     let geometry = app.displayed_text.as_ref().unwrap();
+    assert_eq!(geometry.snapshot.display_text, shown());
+    assert_eq!(geometry.layout.text(), shown());
     assert!(geometry.layout.missing_glyphs().is_empty());
-    let plain = app.text.layout("Trail", 18.0, None).unwrap();
+    // The shared field's composer text is 20 px, the editor's 18 px.
+    let size = if implementation == FieldImplementation::Editor {
+        18.0
+    } else {
+        20.0
+    };
+    let plain = app.text.layout("Trail", size, None).unwrap();
     assert_eq!(
         geometry.layout.size()[1].to_bits(),
         plain.size()[1].to_bits(),
@@ -124,9 +138,10 @@ fn stored_breaks_show_as_markers_on_one_line_in_the_row_and_the_draft() {
     assert_eq!(label(&app), STORED);
 }
 
-#[test]
-fn arrows_step_over_a_marker_and_backspace_and_delete_remove_one_character() {
-    let (_temporary, mut app) = stored_application();
+fn arrows_step_over_a_marker_and_backspace_and_delete_remove_one_character(
+    implementation: FieldImplementation,
+) {
+    let (_temporary, mut app) = stored_application(implementation);
     app.control(Control::Field("label".into())).unwrap();
     acknowledge_ui(&mut app);
     let mut input = crate::native_input::NativeInput::new(7);
@@ -199,9 +214,10 @@ fn arrows_step_over_a_marker_and_backspace_and_delete_remove_one_character() {
     assert_eq!(label(&app).as_bytes(), "Trailmarker\u{2029}".as_bytes());
 }
 
-#[test]
-fn a_click_on_either_half_of_a_marker_places_the_caret_beside_it() {
-    let (_temporary, mut app) = stored_application();
+fn a_click_on_either_half_of_a_marker_places_the_caret_beside_it(
+    implementation: FieldImplementation,
+) {
+    let (_temporary, mut app) = stored_application(implementation);
     app.control(Control::Field("label".into())).unwrap();
     acknowledge_ui(&mut app);
     let geometry = app.displayed_text.as_ref().unwrap();
@@ -226,12 +242,13 @@ fn a_click_on_either_half_of_a_marker_places_the_caret_beside_it() {
     assert_eq!(app.tools.draft_text(), Some(STORED));
 }
 
-#[test]
-fn a_guarded_marker_is_never_tofu_and_arrows_cross_it_both_ways() {
+fn a_guarded_marker_is_never_tofu_and_arrows_cross_it_both_ways(
+    implementation: FieldImplementation,
+) {
     // A combining or spacing mark after a stored break would join a visible
     // marker; a zero-width guard keeps them apart, as the break did.
     for stored in ["A\n\u{301}B", "A\n\u{93f}B"] {
-        let (_temporary, mut app) = application_with_source(|world| {
+        let (_temporary, mut app) = application_with_source_using(implementation, |world| {
             let path = world.join("planes/main/layers/0/0_0.jsonc");
             let mut chunk: serde_json::Value =
                 serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
@@ -290,7 +307,7 @@ fn a_guarded_marker_is_never_tofu_and_arrows_cross_it_both_ways() {
 
 #[test]
 fn every_marker_class_lays_out_on_one_line_with_the_real_font_pack() {
-    let (_temporary, mut app) = stored_application();
+    let (_temporary, mut app) = stored_application(FieldImplementation::Editor);
     let single = app.text.layout("Trail", 18.0, None).unwrap().size()[1];
     for stored in [
         // Tab, NUL, ESC, DEL and a C1 control: `→` and `⬚`.
@@ -323,3 +340,11 @@ fn every_marker_class_lays_out_on_one_line_with_the_real_font_pack() {
         );
     }
 }
+
+// Each case runs with the editor's own string field and the shared one.
+tilewright_editor_ui::both_fields!(
+    stored_breaks_show_as_markers_on_one_line_in_the_row_and_the_draft,
+    arrows_step_over_a_marker_and_backspace_and_delete_remove_one_character,
+    a_click_on_either_half_of_a_marker_places_the_caret_beside_it,
+    a_guarded_marker_is_never_tofu_and_arrows_cross_it_both_ways,
+);

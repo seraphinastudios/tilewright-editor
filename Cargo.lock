@@ -1474,6 +1474,8 @@ dependencies = [
  "tilewright-render-world",
  "tilewright-scene",
  "tilewright-source",
+ "tilewright-ui",
+ "tilewright-ui-render",
 ]
 
 [[package]]
@@ -1634,6 +1636,7 @@ dependencies = [
  "tilewright-editor-testkit",
  "tilewright-jsonc",
  "tilewright-source",
+ "tilewright-ui",
  "unicode-segmentation",
 ]
 
@@ -1744,6 +1747,28 @@ dependencies = [
  "rustix",
  "sha2",
  "tilewright-jsonc",
+]
+
+[[package]]
+name = "tilewright-ui"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9856c447dbca814025851b45f242ed11e9b1a82ee34b5e92a2c3614e52459b1"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "tilewright-ui-render"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf40bb78e4d34abea0ba637ed41b175d5f62b92f9d3959794841126d15f83fbf"
+dependencies = [
+ "tilewright-render-api",
+ "tilewright-render-resources",
+ "tilewright-render-ui",
+ "tilewright-scene",
+ "tilewright-ui",
 ]
 
 [[package]]

@@ -56,6 +56,8 @@ pub struct EditableGeometry {
     pub origin: [f32; 2],
     pub clip: UiRect,
     pub snapshot: TextInputSnapshot,
+    /// The shared field's own geometry, when it drew the draft.
+    pub shared: Option<crate::shared_field::SharedGeometry>,
 }
 pub struct Presentation {
     pub scene: SceneBundle,
@@ -974,6 +976,10 @@ fn display_list<'a>(
         });
     }
     for (index, widget) in ui.widgets.iter().enumerate() {
+        // The shared field draws its own row (`shared_field::compose`).
+        if widget.shared {
+            continue;
+        }
         let bounds = rect(widget.layout);
         let order = u32::try_from(index)
             .ok()
@@ -1029,6 +1035,7 @@ fn display_list<'a>(
                 origin,
                 clip: bounds,
                 snapshot: snapshot.clone(),
+                shared: None,
             });
         }
         primitives.push(UiPrimitive::Text {
@@ -1112,6 +1119,8 @@ pub fn compose_with_overlay(
     let first_resource = resource
         .checked_add(2)
         .ok_or(CompositionError::ResourceIdentityExhausted)?;
+    // The shared field's reserved IDs lie far above any ID derived here.
+    debug_assert!(first_resource < crate::shared_field::RESERVED_RESOURCES);
     let identity = thumbnails
         .last()
         .map_or(identity, |quad| quad.semantic_id.0);
