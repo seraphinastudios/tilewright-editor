@@ -47,9 +47,10 @@ const STROKE_INTERRUPTED: &str = "Brush stroke ended before release; nothing was
 /// ended it; a key that edits or reviews was refused while it is drawn; a
 /// click that hit no tile of the view.
 const ROAD_DROPPED: &str = "Road dropped; nothing was prepared.";
-const ROAD_ENDED: &str =
-    "Road dropped: the mode, the rule or the grid changed; nothing was prepared.";
-const ROAD_IN_PROGRESS: &str = "A road is being drawn: Enter reviews it, Esc drops it. Undo, redo, delete, reopen and proposal steps wait until then.";
+const ROAD_ENDED_BY_MODE: &str = "Road dropped: the mode changed; nothing was prepared.";
+const ROAD_ENDED_BY_RULE: &str = "Road dropped: the rule changed; nothing was prepared.";
+const ROAD_ENDED_BY_GRID: &str = "Road dropped: the grid changed; nothing was prepared.";
+const ROAD_IN_PROGRESS: &str = "Finish the road with Enter or drop it with Esc first.";
 const ROAD_OFF_VIEW: &str =
     "Road points are tiles of the view: no tile under the pointer, so no point was added.";
 
@@ -373,6 +374,9 @@ enum ViewNote {
     },
     /// The view can be drawn again, so editing is possible again.
     Resumed,
+    /// The road being drawn was dropped, by Esc or by a change of mode,
+    /// rule or grid; the status line says which. The input did apply.
+    RoadDropped(&'static str),
 }
 
 /// The status line after a rebuild ended a rendering block.
@@ -1494,6 +1498,7 @@ impl Application {
             .map_err(|error| error.to_string())?;
         self.seed_road()?;
         self.notice = None;
+        self.view_note = None;
         self.presented_generation = None;
         Ok(())
     }
@@ -1557,6 +1562,11 @@ impl Application {
 
     /// The status line while a road is drawn.
     fn road_status(&self) -> Option<String> {
+        // A pending change keeps its own status line (unreachable while the
+        // fence holds: no change can be prepared while a road is drawn).
+        if !self.session.can_prepare() {
+            return None;
+        }
         let preview = self.road_preview()?;
         let count = preview.points.len();
         let points = if count == 1 {
@@ -1626,12 +1636,12 @@ impl Application {
                 record["capped"] = true.into();
             }
         }
-        match &preview.changes {
+        match self.refuse_while_paused().and(preview.changes) {
             Ok(cells) => {
                 record["changes"] = cells.len().into();
                 record["first"] = cells.iter().take(8).copied().collect::<Vec<_>>().into();
             }
-            Err(reason) => record["refused"] = terminal_field(reason).into(),
+            Err(reason) => record["refused"] = terminal_field(&reason).into(),
         }
         Some(record)
     }
@@ -1739,6 +1749,18 @@ impl Application {
         self.sidebar(&mut ui);
         self.review(&mut ui);
         self.proposal_layout = None;
+        // While a road is drawn, what it would refuse is laid out disabled.
+        if self.tools.road().is_some() {
+            for widget in &mut ui.widgets {
+                if widget
+                    .control
+                    .as_ref()
+                    .is_some_and(|control| !road_allows(control))
+                {
+                    widget.enabled = false;
+                }
+            }
+        }
         for widget in &mut ui.widgets {
             if widget.editable.is_none() {
                 let indent = if widget.thumbnail.is_some() || widget.swatch.is_some() {
@@ -3910,6 +3932,7 @@ impl Application {
         match &self.view_note {
             Some(ViewNote::Refused { status, .. }) => return (*status).into(),
             Some(ViewNote::Resumed) => return VIEW_RESUMED.into(),
+            Some(ViewNote::RoadDropped(status)) => return (*status).into(),
             None => {}
         }
         if let Some(status) = self.road_status() {
@@ -4118,30 +4141,29 @@ impl Application {
         Ok(())
     }
 
-    /// A sidebar, toolbar or key control. While a road is drawn, those that
-    /// edit or review otherwise (undo, redo, delete, a proposal step) are
-    /// refused; one that ends the road (a mode, a rule, a terrain or
-    /// palette of another grid) says so.
+    /// A sidebar, toolbar or key control. While a road is drawn only the
+    /// controls [`road_allows`] names apply; every other one (each that
+    /// prepares an edit, opens a draft or a pick step) is refused. One that
+    /// ends the road (a mode, a rule, a terrain or palette of another grid)
+    /// says so on the status line.
     fn control(&mut self, control: Control) -> Result<()> {
         self.presented_generation = None;
         self.notice = None;
         self.view_note = None;
         let road = self.tools.road().is_some();
-        if road
-            && matches!(
-                control,
-                Control::Undo
-                    | Control::Redo
-                    | Control::Delete
-                    | Control::ProposalPrepare
-                    | Control::ProposalContinue
-            )
-        {
+        if road && !road_allows(&control) {
             return Err(ROAD_IN_PROGRESS.into());
         }
+        let (mode, rule) = (self.tools.mode(), self.tools.terrain_rule());
         let result = self.apply_control(control);
         if road && self.tools.road().is_none() {
-            self.notice = Some(ROAD_ENDED.into());
+            self.view_note = Some(ViewNote::RoadDropped(if self.tools.mode() != mode {
+                ROAD_ENDED_BY_MODE
+            } else if self.tools.terrain_rule() != rule {
+                ROAD_ENDED_BY_RULE
+            } else {
+                ROAD_ENDED_BY_GRID
+            }));
         }
         result
     }
@@ -6498,6 +6520,40 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
     }
 }
 
+/// Whether `control` applies while a road is drawn: those that keep the
+/// road (the brush, the overlays, a terrain or palette, the road's own rule
+/// row) or end it by design (a mode, another rule, a terrain or palette of
+/// another grid), and Accept, Cancel and a draft's own controls, which have
+/// nothing to act on then (a road click ends every draft, and no change is
+/// pending while a road is drawn). Everything that prepares an edit or
+/// opens a draft or a pick step is refused, and laid out disabled.
+fn road_allows(control: &Control) -> bool {
+    matches!(
+        control,
+        Control::Select
+            | Control::Move
+            | Control::Terrain
+            | Control::Place
+            | Control::Zone
+            | Control::Anchor
+            | Control::Sculpt
+            | Control::SculptTool(_)
+            | Control::SculptStep(_)
+            | Control::ZoneOverlay
+            | Control::HeightOverlay
+            | Control::BrushSize(_)
+            | Control::BrushShape
+            | Control::TerrainRule(_)
+            | Control::Palette { .. }
+            | Control::ScatterPalette(_)
+            | Control::Clear
+            | Control::Accept
+            | Control::Cancel
+            | Control::EditDraft
+            | Control::CancelDraft
+    )
+}
+
 /// The keys a road being drawn takes: Enter finishes it into one pending
 /// change for Review (a second Enter, on the next displayed frame, accepts
 /// as usual), Backspace takes away its last point, Esc drops it (and does
@@ -6507,15 +6563,16 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
 fn road_key(app: &mut Application, key: Keycode) -> Option<Result<()>> {
     Some(match key {
         Keycode::Return | Keycode::KpEnter => app.finish_road(),
-        Keycode::Backspace => {
+        Keycode::Backspace => app.refuse_while_paused().map(|()| {
             app.tools.pop_road_point();
             app.notice = None;
+            app.view_note = None;
             app.presented_generation = None;
-            Ok(())
-        }
+        }),
         Keycode::Escape => {
             app.tools.drop_road();
-            app.notice = Some(ROAD_DROPPED.into());
+            app.notice = None;
+            app.view_note = Some(ViewNote::RoadDropped(ROAD_DROPPED));
             app.presented_generation = None;
             Ok(())
         }

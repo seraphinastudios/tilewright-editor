@@ -13,6 +13,7 @@ use super::sculpt_mode::wide_isometric;
 use super::zones::{button, key, route, sidebar_texts, zone_application};
 use super::{acknowledge_ui, cell_pixel, terrain_value};
 use crate::prototype::Application;
+use crate::prototype::ROAD_IN_PROGRESS;
 use crate::workspace_ui::Control;
 use sdl3::event::Event;
 use sdl3::keyboard::Keycode;
@@ -389,10 +390,9 @@ fn backspace_takes_one_point_and_esc_drops_the_road_and_does_nothing_else() {
     assert!(app.session.history().pending().is_none());
     assert_eq!(app.tools.mode(), ToolMode::Terrain);
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Road);
-    assert_eq!(
-        app.notice.as_deref(),
-        Some("Road dropped; nothing was prepared.")
-    );
+    // The status line says so; the input did apply.
+    assert!(app.notice.is_none());
+    assert_eq!(app.status_label(), "Road dropped; nothing was prepared.");
     // A pending change stays when Esc drops a road: while a change is
     // pending a click adds no point, so the road was drawn before.
     click(&mut app, [0, 0]).unwrap();
@@ -436,7 +436,7 @@ fn the_brush_overlays_and_view_keys_keep_the_road_and_mode_or_rule_end_it() {
     // Keys that would edit or review otherwise wait for the road.
     for keycode in [Keycode::Z, Keycode::Y, Keycode::R, Keycode::Delete] {
         let refused = press(&mut app, keycode).unwrap_err();
-        assert!(refused.starts_with("A road is being drawn"), "{refused}");
+        assert_eq!(refused, ROAD_IN_PROGRESS);
         assert_eq!(points(&app), [[0, 0], [3, 3]]);
         assert!(app.session.history().pending().is_none());
     }
@@ -455,27 +455,46 @@ fn the_brush_overlays_and_view_keys_keep_the_road_and_mode_or_rule_end_it() {
         app.status_label()
     );
     assert_eq!(app.session.history().depths(), before);
-    // F changes the rule: the road ends, and says so.
+    // T, and the Terrain button, in Terrain mode change nothing the road
+    // depends on: it stays.
+    press(&mut app, Keycode::T).unwrap();
+    app.control(Control::Terrain).unwrap();
+    assert_eq!(points(&app), [[0, 0], [3, 3]]);
+    assert!(app.status_label().starts_with("Road from palette"));
+    // F changes the rule: the road ends, and the status line says so (the
+    // input applied, so not "Input not applied").
     press(&mut app, Keycode::F).unwrap();
     assert!(app.tools.road().is_none());
-    assert!(
-        app.notice
-            .as_deref()
-            .unwrap()
-            .starts_with("Road dropped: the mode")
+    assert!(app.notice.is_none());
+    assert_eq!(
+        app.status_label(),
+        "Road dropped: the rule changed; nothing was prepared."
     );
     for keycode in [Keycode::F, Keycode::F, Keycode::F] {
         press(&mut app, keycode).unwrap();
     }
-    // So does a mode key, even Terrain mode's own.
-    for keycode in [Keycode::T, Keycode::P, Keycode::N, Keycode::K] {
+    // So does a key or button of another mode.
+    for keycode in [Keycode::P, Keycode::N, Keycode::K] {
         if app.tools.mode() != ToolMode::Terrain {
             press(&mut app, Keycode::T).unwrap();
         }
         click(&mut app, [0, 0]).unwrap();
-        let _ = press(&mut app, keycode);
+        press(&mut app, keycode).unwrap();
         assert!(app.tools.road().is_none(), "{keycode:?}");
+        assert_eq!(
+            app.status_label(),
+            "Road dropped: the mode changed; nothing was prepared.",
+            "{keycode:?}"
+        );
     }
+    press(&mut app, Keycode::T).unwrap();
+    click(&mut app, [0, 0]).unwrap();
+    app.control(Control::Select).unwrap();
+    assert!(app.tools.road().is_none());
+    // A later point clears the words.
+    press(&mut app, Keycode::T).unwrap();
+    click(&mut app, [0, 0]).unwrap();
+    assert!(app.status_label().starts_with("Road from palette"));
 }
 
 #[test]
@@ -530,7 +549,7 @@ fn a_scatter_road_draws_its_seed_once_at_its_first_point() {
 
 #[test]
 fn a_road_is_refused_as_a_brush_is_and_never_while_editing_is_paused() {
-    let (_temporary, mut app) = road_application(1, |_| {});
+    let (temporary, mut app) = road_application(1, |_| {});
     // Off the tiles: nothing added, and it says so.
     acknowledge_ui(&mut app);
     let off = off_tile_pixel(&mut app);
@@ -556,8 +575,9 @@ fn a_road_is_refused_as_a_brush_is_and_never_while_editing_is_paused() {
     assert_eq!(points(&app), [[4, 0], [7, 0]]);
     click(&mut app, [3, 0]).unwrap();
     assert_eq!(marked(&mut app), BTreeSet::from([[3, 0]]));
-    // Paused: a click adds no point and Enter prepares nothing, in the
-    // pause's words; Esc still drops the road.
+    // Paused: a click adds no point, and Enter and Backspace change
+    // nothing, in the pause's words; the evidence says the pause; Esc still
+    // drops the road.
     app.blocked = Some(crate::prototype::Blocked::new(
         crate::prototype::BlockCause::Present,
         "test pause",
@@ -568,6 +588,18 @@ fn a_road_is_refused_as_a_brush_is_and_never_while_editing_is_paused() {
     let refused = press(&mut app, Keycode::Return).unwrap_err();
     assert_eq!(refused, "rendering blocked editing: test pause");
     assert!(app.session.history().pending().is_none());
+    let refused = press(&mut app, Keycode::Backspace).unwrap_err();
+    assert_eq!(refused, "rendering blocked editing: test pause");
+    assert_eq!(points(&app).len(), 3);
+    app.capture("paused").unwrap();
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("evidence/paused.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        record["road"]["refused"],
+        "rendering blocked editing: test pause"
+    );
+    assert!(record["road"].get("changes").is_none());
     press(&mut app, Keycode::Escape).unwrap();
     assert!(app.tools.road().is_none());
     app.blocked = None;
@@ -605,36 +637,155 @@ fn off_tile_pixel(app: &mut Application) -> [f32; 2] {
     [(index % width) as f32 + 0.5, (index / width) as f32 + 0.5]
 }
 
-#[test]
-fn keys_typed_into_a_draft_never_reach_the_road() {
-    let (_temporary, mut app) = road_application(1, |_| {});
-    app.control(Control::Select).unwrap();
-    app.select_visible_object(crate::prototype::Capability::Field)
-        .unwrap();
-    route(&mut app, &key(Keycode::T)).unwrap();
-    app.control(Control::TerrainRule(TerrainRule::Road))
-        .unwrap();
-    // The press on a tile adds a point; the object stays selected.
-    click(&mut app, [0, 0]).unwrap();
-    click(&mut app, [2, 0]).unwrap();
-    app.control(Control::Field("label".into())).unwrap();
-    let text = app.tools.draft_text().unwrap().to_owned();
-    assert!(!text.is_empty());
-    for keycode in [Keycode::Backspace, Keycode::Escape] {
-        press(&mut app, keycode).unwrap();
-        assert_eq!(points(&app), [[0, 0], [2, 0]], "{keycode:?}");
+/// The Road rule's application with `gate_east`, whose portal the sample
+/// lets the person edit, selected before Terrain mode: its inspector rows
+/// stay laid out in Terrain mode.
+fn gate_application(shared: bool) -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = road_application(1, |_| {});
+    if shared {
+        app.share_string_field().unwrap();
     }
-    // Backspace shortened the draft; Esc closed it; the road is whole.
+    app.select_object("gate_east").unwrap();
+    route(&mut app, &key(Keycode::T)).unwrap();
+    assert_eq!(app.tools.terrain_rule(), TerrainRule::Road);
+    acknowledge_ui(&mut app);
+    (temporary, app)
+}
+
+/// Whether the laid-out widget for `control`, if any, is enabled.
+fn enabled(app: &mut Application, control: &Control) -> Option<bool> {
+    app.refresh_ui();
+    app.ui
+        .widgets
+        .iter()
+        .find(|widget| widget.control.as_ref() == Some(control))
+        .map(|widget| widget.enabled)
+}
+
+#[test]
+fn nothing_else_is_prepared_or_opened_while_a_road_is_drawn() {
+    for shared in [false, true] {
+        let (_temporary, mut app) = gate_application(shared);
+        let edits = [
+            Control::PortalClear,
+            Control::PortalAnchors,
+            Control::PortalAnchor {
+                plane: "main".into(),
+                anchor: "lookout".into(),
+            },
+            Control::PortalPick,
+            Control::PortalLocation,
+            Control::Coordinates,
+            Control::Field("label".into()),
+            Control::Nudge([1, 0]),
+            Control::Undo,
+            Control::Redo,
+            Control::Delete,
+            Control::ApplyDraft,
+            Control::ProposalPrepare,
+        ];
+        // Without a road the portal rows are live.
+        assert_eq!(enabled(&mut app, &Control::PortalClear), Some(true));
+        click(&mut app, [0, 0]).unwrap();
+        click(&mut app, [3, 0]).unwrap();
+        for control in &edits {
+            assert_ne!(enabled(&mut app, control), Some(true), "{control:?}");
+            let refused = app.control(control.clone()).unwrap_err();
+            assert_eq!(refused, ROAD_IN_PROGRESS, "{control:?}");
+            assert_eq!(points(&app), [[0, 0], [3, 0]], "{control:?}");
+            assert!(app.session.history().pending().is_none(), "{control:?}");
+            assert!(app.tools.draft_text().is_none(), "{control:?}");
+            assert!(!app.tools.portal_picking(), "{control:?}");
+        }
+        // A press on a disabled row does nothing at all.
+        for control in [Control::PortalClear, Control::Undo] {
+            app.refresh_ui();
+            let widget = app
+                .ui
+                .widgets
+                .iter()
+                .find(|widget| widget.control.as_ref() == Some(&control))
+                .cloned()
+                .unwrap();
+            #[allow(clippy::cast_precision_loss)]
+            let at = [
+                (widget.bounds.x + widget.bounds.width / 2) as f32,
+                (widget.bounds.y + widget.bounds.height / 2) as f32,
+            ];
+            acknowledge_ui(&mut app);
+            route(&mut app, &button(true, at)).unwrap();
+            assert_eq!(points(&app), [[0, 0], [3, 0]]);
+            assert!(app.session.history().pending().is_none());
+        }
+        // The road's own controls stay live; Enter still finishes it.
+        assert_eq!(enabled(&mut app, &Control::BrushSize(1)), Some(true));
+        assert!(app.status_label().starts_with("Road of sand: 2 points"));
+        press(&mut app, Keycode::Return).unwrap();
+        assert!(app.session.history().pending().is_some());
+        assert!(app.tools.road().is_none());
+    }
+}
+
+#[test]
+fn a_road_and_a_draft_or_a_pick_step_never_coexist() {
+    let (_temporary, mut app) = gate_application(false);
+    // An open draft ends at the first road point, so it can never be
+    // applied beside a road (nor a change be pending with one).
+    app.control(Control::Coordinates).unwrap();
+    assert!(app.tools.draft_text().is_some());
+    click(&mut app, [0, 0]).unwrap();
     assert!(app.tools.draft_text().is_none());
+    assert_eq!(points(&app), [[0, 0]]);
     let event = Event::TextInput {
         timestamp: 0,
         window_id: 7,
         text: "x".into(),
     };
     route(&mut app, &event).unwrap();
-    assert_eq!(points(&app), [[0, 0], [2, 0]]);
-    press(&mut app, Keycode::Return).unwrap();
+    assert_eq!(points(&app), [[0, 0]]);
+    press(&mut app, Keycode::Escape).unwrap();
+    // An open pick step takes the next tile click, as it always has: no
+    // road begins. Esc ends the pick step first, then clicks draw a road.
+    app.control(Control::PortalPick).unwrap();
+    assert!(app.tools.portal_picking());
+    press(&mut app, Keycode::Escape).unwrap();
+    assert!(!app.tools.portal_picking());
+    assert!(app.session.history().pending().is_none());
+    click(&mut app, [1, 0]).unwrap();
+    assert_eq!(points(&app), [[1, 0]]);
+    press(&mut app, Keycode::Escape).unwrap();
+    app.control(Control::PortalPick).unwrap();
+    click(&mut app, [6, 4]).unwrap();
+    assert!(app.tools.road().is_none());
     assert!(app.session.history().pending().is_some());
+    // While that change is pending a click adds no point.
+    assert!(click(&mut app, [0, 0]).is_err());
+    assert!(app.tools.road().is_none());
+}
+
+#[test]
+fn the_257th_point_is_refused() {
+    let (_temporary, mut app) = road_application(1, |_| {});
+    let cell = |x: i64| SelectionKey::Cell {
+        plane: "main".into(),
+        layer: 0,
+        grid: "floor".into(),
+        x,
+        y: 0,
+    };
+    for index in 0..256 {
+        assert!(
+            app.tools
+                .add_road_point(app.session.catalog(), &cell(index % 2), false)
+                .unwrap()
+        );
+    }
+    assert_eq!(points(&app).len(), 256);
+    let refused = click(&mut app, [2, 0]).unwrap_err();
+    assert_eq!(refused, "A road has at most 256 points");
+    // The last point again adds nothing, silently.
+    click(&mut app, [1, 0]).unwrap();
+    assert_eq!(points(&app).len(), 256);
 }
 
 #[test]

@@ -387,7 +387,11 @@ impl ToolState {
     /// tint back as it was before, whatever H did in between.
     pub fn set_mode(&mut self, mode: ToolMode) {
         self.cancel();
-        self.road = None;
+        // Terrain mode's own key keeps the road: nothing it depends on
+        // changes.
+        if mode != self.mode {
+            self.road = None;
+        }
         self.parent_choices = None;
         if mode != ToolMode::Place {
             self.filter.clear();
