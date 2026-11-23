@@ -698,11 +698,20 @@ version of that rule. Its row reads "Smooth: drag evens out heights", the
 pinned row "Sculpt: Smooth  F", and the status line "Ready. Drag to smooth
 heights toward their neighbours." It has one fixed strength: the step
 rows are dimmed and keys 1 and 8 do nothing for it; a second stroke
-smooths further until the ground rests. A cell is "already even" when it
+smooths further until the ground rests (it did in every case measured).
+A cell is "already even" when it
 is within half a unit of the weighted mean it reads: what decides that is
 how sharply the slope bends, not how large a step is, and an even slope of
-any steepness is kept (except within two tiles of the view's edge, where
-the mean is one-sided). A step of 1 is already even and a step of 2
+any steepness is kept where all 25 tiles are read. Near the view's edge it
+is not: one stroke changes a slope's end within two tiles of the edge,
+where the mean is one-sided, and repeated strokes flatten it further in.
+A slope of 4 across the sample's 8-wide view, smoothed whole until it
+rests, ends as 10, 10, 11, 13, 15, 17, 18, 18 (its relief from 28 down to
+8); across a 16-wide view as 10, 10, 11, 13, 16, 20, …, 44, 47, 49, 50, 50.
+To keep a slope that runs to the view's edge, smooth with a stroke that
+stays more than two tiles away from that edge: every cell it covers then
+reads all 25 tiles (where their chunks exist), and an even slope stays
+exactly as it is. A step of 1 is already even and a step of 2
 becomes 0, 1, 1, 2. A raise of 8 smoothed once becomes 0, 2, 6, 8, a
 second time 0, 1, 3, 5, 7, 8, and then rests. To see it on a copy with the
 range -8 to 8: in Raise by 8 with a 7x7 brush (`]` three times from the

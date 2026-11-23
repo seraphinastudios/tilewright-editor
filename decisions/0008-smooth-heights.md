@@ -40,7 +40,7 @@ On 2026-11-23 (question UI, after review):
   exist**: a cell outside the view, or in a chunk that does not exist, is
   left out of the average.
 - **One fixed strength** (no amount); a repeated stroke smooths further
-  until the ground rests (below).
+  until the ground rests (in every case searched; below).
 - **The desktop's step keys do nothing for Smooth**, as for Flatten, and
   the scripted demonstration and the neutral sample stay unchanged.
 
@@ -125,8 +125,14 @@ Properties that follow, and that the tests and a separate search check
 - **An even slope is kept where all 25 cells are read**: the weights are
   symmetric, so the mean of a plane is its centre. Within two tiles of the
   view's edge, or of a chunk that does not exist, the mean is one-sided, so
-  there a slope's end is pulled toward the inside, and repeated whole-view
-  strokes slowly flatten a slope's ends at the view's edge.
+  one stroke pulls a slope's end there toward the inside, and repeated
+  strokes carry the flattening further in: measured with whole-view
+  strokes, a slope of 4 across a 16-wide view rests after 10 strokes at 10, 10, 11,
+13, 16, 20, …, 44, 47, 49, 50, 50 (each end moved by 10), and across the
+sample's 8-wide view at 10, 10, 11, 13, 15, 17, 18, 18 (its relief from 28
+down to 8). A stroke whose cells all stay more than two
+  tiles from the view's edge (and from missing chunks) reads all 25 tiles
+  for every cell, so it keeps an even slope exactly.
 - **No cycles.** Repeated strokes over the same cells always came to rest
   in the search: no pattern swaps back and forth.
 - **No arithmetic overflows.** `|clamp(t) − h|` is less than 2^32, `D` is
@@ -143,29 +149,46 @@ A cell is "already even" when its height is within half a unit of the
 weighted mean of the cells it reads. Along a straight profile with every
 cell read, that is `|h(x−2) + 4·h(x−1) − 10·h(x) + 4·h(x+1) + h(x+2)| ≤ 8`.
 What decides rest is how sharply the slope bends, not how large a step
-is; an even slope of any steepness is kept. Measured (whole-view strokes;
-the first row in each pair is after one stroke):
+is; an even slope of any steepness is kept where all 25 tiles are read.
+Measured in a 16 × 16 view with whole-view strokes and the range −1,024 to
+1,024 (rows shown across the middle of the view):
 
-| Start | After one stroke | At rest (strokes) |
+| Start (16 × 16 view) | After one stroke | At rest (strokes) |
 |---|---|---|
 | step 0 \| 1 | unchanged | unchanged (0) |
 | step 0 \| 2 | 0, 1, 1, 2 | the same (1) |
 | step 0 \| 3 | 0, 1, 2, 3 | the same (1) |
 | step 0 \| 4 | 0, 1, 3, 4 | the same (1) |
 | step 0 \| 8 (a raise of 8) | 0, 2, 6, 8 | 0, 1, 3, 5, 7, 8 (2) |
-| step 0 \| 64 | 0, 4, 20, 44, 60, 64 | a ramp with steps up to 6 (25) |
-| an even slope of 1 or 4 | kept where every cell is read | kept in the middle; ends flattened at the view's edge |
+| step 0 \| 64 | 0, 4, 20, 44, 60, 64 | 8, 8, 9, 11, 14, 18, 23, 29, 35, 41, 46, 50, 53, 55, 56, 56 (25): the ramp reaches both view edges, whose flat ends are pulled from 0 and 64 to 8 and 56 |
+| an even slope of 4 | its ends change within two tiles of the view's edge | 10, 10, 11, 13, 16, 20, …, 44, 47, 49, 50, 50 (10): each end moved by 10 |
 | a spike of 8 among zeros | 1 and its 4 edge neighbours 1 | all 0 (3) |
-| a checkerboard or stripes of 0 and 1 | kept in the middle, changed near the view's edge | two flat areas, 0 and 1 (4) |
+| a checkerboard of 0 and 1 | only the view's 4 corners change (8 cells) | four flat quadrants, two of 0 and two of 1 (4) |
+| stripes of 0 and 1 | eaten from the two edges across them | two flat halves, 0 and 1 (4) |
+
+The step 0 | 64 depends on the view: in a 64 × 64 view the ramp rests
+after 13 strokes at …, 0, 1, 3, 6, 10, 15, 21, 28, 36, 43, 49, 54, 58, 61,
+63, 64, … (steps up to 8, its ends staying 0 and 64); in the sample's
+8 × 6 view, with the cliff between columns 3 and 4, it takes 24 strokes
+and rests at 28, 28, 29, 31, 33, 35, 36, 36. A checkerboard of 0 and 1 is
+an exact tie at every cell that reads all 25 tiles (1 − 4 + 6 − 4 + 1 = 0)
+and along a straight view edge too, so it is kept there; only near the
+view's four corners is the mean off a half. Each stroke grows the four
+corner regions by two tiles, flat 0 at two opposite corners and flat 1 at
+the other two, until they meet: after about a quarter of the view's width
+in strokes (16 × 16: 4; 64 × 64: 16; 8 × 8: 2), as four quadrants, or in
+an odd view such as 9 × 9 as all 0 (3 strokes). Stripes erode the same way
+from the two edges across them, two columns a stroke from each side.
 
 In the desktop the same raise of 8 (columns 4 to 7 of the sample's 8 × 6
 view, a 7 × 7 brush) becomes 0, 0, 0, 2, 6, 8, 8, 8 after one stroke and
 0, 0, 1, 3, 5, 7, 8, 8 after the second; the third is "already even".
 Across resting monotone profiles of 9 tiles with heights from 0 to 16
-(82,253 of them, exhaustively), the slope bends by at most 3 per tile at a
-resting cell (for example 0, 1, 3, 6), against 2 for the 3 × 3 rule: the
-wider rule rests later in the sense that matters, a raise of 8 ends with
-steps of at most 2 instead of 4, but it does not flatten an even slope.
+(82,253 of them, exhaustively, every interior tile read), the slope bends
+by at most 3 per tile at a resting cell, and rarely (22 of 433,265 resting
+cells, at shoulders like 3, 6, 6); the 3 × 3 rule allowed 2. What the
+wider rule changes is the step it leaves: a raise of 8 rests with steps of
+at most 2 instead of 4.
 
 ### Why these choices
 

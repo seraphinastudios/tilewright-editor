@@ -365,15 +365,22 @@ cell expects its committed height, as for a raise. Cells that are read but
 not written are not in it: Accept refuses with source.changed when
 anything in the World on disk differs from the World the change was
 prepared on, which covers them, one tile away or two. The kernel never
-inverts a pattern, and repeated strokes come to rest: a cell is "already
+inverts a pattern, and repeated strokes came to rest in every case
+searched (ADR 0008): a cell is "already
 even" when its height is within half a unit of the weighted mean it reads.
 What decides rest is how sharply the slope bends, not how large a step
-is: an even slope of any steepness is kept where all 25 cells are read
-(near the view's edge or a missing chunk the mean is one-sided, so
-repeated strokes there pull a slope's end toward the inside). A raise of 8
+is: an even slope of any steepness is kept where all 25 cells are read.
+Within two tiles of the view's edge or a missing chunk the mean is
+one-sided, so one stroke pulls a slope's end there toward the inside, and
+repeated strokes carry that further in: with whole-view strokes, a slope of 4 across a 16-wide view rests after 10 strokes at 10, 10, 11,
+13, 16, 20, …, 44, 47, 49, 50, 50 (each end moved by 10), and across the
+sample's 8-wide view at 10, 10, 11, 13, 15, 17, 18, 18 (its relief from 28
+down to 8). A stroke whose cells all stay more than two tiles from the view's
+edge (and from missing chunks) keeps an even slope exactly. A raise of 8
 smoothed becomes 0, 2, 6, 8 after one stroke and 0, 1, 3, 5, 7, 8 after
-the second, and then rests; a straight step of 2 becomes 0, 1, 1, 2 and a
-step of 1 is already even ([ADR 0008](../decisions/0008-smooth-heights.md)
+the second, and then rests (in the sample's 8 × 6 view, and in a 16 × 16
+one); a straight step of 2 becomes 0, 1, 1, 2 and a step of 1 is already
+even ([ADR 0008](../decisions/0008-smooth-heights.md)
 has the measurements). Because the view decides which cells are read along
 its edges, a covered cell within two tiles of the view's edge depends on
 where the view ends: a recorded step prepared again under a catalog whose
