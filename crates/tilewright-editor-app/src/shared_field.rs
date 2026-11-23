@@ -11,10 +11,9 @@
 //! and the input method area in place of the editor's own.
 use crate::workspace_render::{EditableGeometry, Presentation};
 use crate::workspace_ui::{Rect, WorkspaceUi};
-use tilewright_editor_ui::field_input::{SharedInput, cursor, editor_snapshot};
-use tilewright_editor_ui::text_input::TextCursor;
+use tilewright_editor_ui::field_input::{SharedInput, editor_snapshot};
 use tilewright_render_ui::{TextSystem, UiRect};
-use tilewright_ui_render::{CompiledFrame, Error, Namespace, UiCompiler, UiLimits, VisualMotion};
+use tilewright_ui_render::{CompiledFrame, Error, Namespace, UiCompiler, UiLimits};
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -104,52 +103,39 @@ impl SharedField {
         Ok((frame, submit))
     }
 
-    /// Draw the field over the editor's composed frame, in the row the
-    /// sidebar reserved, and hand its geometry to the input paths. Without
-    /// a reserved row (the field is scrolled away) nothing is drawn.
-    pub fn compose(
+    /// Compile the field in the row the sidebar reserved, before the
+    /// editor's frame is fitted, so the fit can leave room for it
+    /// ([`PreparedField::quads`]). Without a reserved row (the field is
+    /// scrolled away) there is nothing to draw.
+    pub fn prepare(
         &mut self,
         text: &mut TextSystem,
         shared: &SharedInput,
         draft: u64,
         ui: &WorkspaceUi,
-        presentation: &mut Presentation,
-    ) -> Result<()> {
+    ) -> Result<Option<PreparedField>> {
         let Some(bounds) = ui.shared_field else {
-            presentation.editable = None;
-            return Ok(());
+            return Ok(None);
         };
         let (frame, submit) = self.compile(text, shared, ui, bounds)?;
-        let composed = frame
-            .compose(&presentation.scene, presentation.resources.clone())
-            .map_err(refusal)?;
-        presentation.scene = composed.scene;
-        presentation.resources = composed.resources;
-        presentation.editable = frame
-            .editable()
-            .and_then(|geometry| geometry_for(geometry, submit, draft));
-        Ok(())
+        // `CompiledFrame` has no quad count in 0.1.0: its standalone scene
+        // holds exactly its quads.
+        let quads = frame
+            .standalone([0.0; 4])
+            .map_err(refusal)?
+            .scene
+            .quads()
+            .len();
+        Ok(Some(PreparedField {
+            frame,
+            submit,
+            draft,
+            quads,
+        }))
     }
 
-    /// One visual caret step of the current state, in committed text:
-    /// `TextGeometry::step_caret`, which steps over a stored-break marker's
-    /// guard.
-    pub fn step(
-        &mut self,
-        text: &mut TextSystem,
-        shared: &SharedInput,
-        ui: &WorkspaceUi,
-        motion: VisualMotion,
-    ) -> Result<TextCursor> {
-        let (frame, _) = self.compile(text, shared, ui, bounds(ui))?;
-        let geometry = frame.editable().ok_or("shared field: no editable text")?;
-        let focus = geometry
-            .step_caret(motion)
-            .map_err(|error| format!("shared field: {error}"))?;
-        Ok(cursor(focus))
-    }
-
-    /// The current state's geometry, for collapsing a selection.
+    /// The current state's geometry, for a caret step: its shared
+    /// `TextGeometry` steps with `step_caret`.
     pub fn current(
         &mut self,
         text: &mut TextSystem,
@@ -162,6 +148,37 @@ impl SharedField {
             .editable()
             .and_then(|geometry| geometry_for(geometry, submit, draft))
             .ok_or_else(|| "shared field: no editable text".into())
+    }
+}
+
+/// The field compiled for this frame, not yet drawn.
+pub struct PreparedField {
+    frame: CompiledFrame,
+    submit: Option<tilewright_ui::Rect>,
+    draft: u64,
+    quads: usize,
+}
+
+impl PreparedField {
+    /// How many quads drawing the field adds to the frame.
+    pub fn quads(&self) -> usize {
+        self.quads
+    }
+
+    /// Draw the field over the editor's composed frame and hand its
+    /// geometry to the input paths.
+    pub fn attach(self, presentation: &mut Presentation) -> Result<()> {
+        let composed = self
+            .frame
+            .compose(&presentation.scene, presentation.resources.clone())
+            .map_err(refusal)?;
+        presentation.scene = composed.scene;
+        presentation.resources = composed.resources;
+        presentation.editable = self
+            .frame
+            .editable()
+            .and_then(|geometry| geometry_for(geometry, self.submit, self.draft));
+        Ok(())
     }
 }
 

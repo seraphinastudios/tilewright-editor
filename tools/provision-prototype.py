@@ -201,6 +201,30 @@ def copy_tree(source, destination):
     return {'files': files, 'bytes': total}
 
 
+# What the receipt and the editor's frame records call the shared field.
+SHARED_STRING_FIELD = 'tilewright-ui 0.1.0'
+
+
+def editor_command(executable, children, args, proposal_name, actor):
+    """The editor's arguments: the retained descriptors and the options given."""
+    command = [str(executable), 'prototype',
+               '--world-fd', str(children['world']),
+               '--recovery-fd', str(children['recovery']),
+               '--evidence-fd', str(children['evidence']),
+               '--font-pack', str(args.font_pack)]
+    if args.demo_script:
+        command.append('--demo-script')
+    if args.reference:
+        command.append('--reference')
+    if proposal_name:
+        command += ['--proposal-fd', str(children['proposal']), '--proposal-name', proposal_name]
+    if actor is not None:
+        command += ['--actor', actor]
+    if args.shared_string_field:
+        command.append('--shared-string-field')
+    return command
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--destination', type=Path, required=True, help='new absent session directory')
@@ -275,7 +299,7 @@ def main():
         if actor is not None:
             receipt['actor'] = actor
         if args.shared_string_field:
-            receipt['string_field'] = 'tilewright-ui'
+            receipt['string_field'] = SHARED_STRING_FIELD
         receipt_fd = os.open('provision.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=task_fd)
         with os.fdopen(receipt_fd, 'w') as stream:
@@ -292,22 +316,8 @@ def main():
         if identity(task_fd) != ids['session']:
             raise ValueError('session identity or mount changed before launch')
         if args.editor:
-            executable = args.editor.resolve(strict=True)
-            command = [str(executable), 'prototype',
-                       '--world-fd', str(children['world']),
-                       '--recovery-fd', str(children['recovery']),
-                       '--evidence-fd', str(children['evidence']),
-                       '--font-pack', str(args.font_pack)]
-            if args.demo_script:
-                command.append('--demo-script')
-            if args.reference:
-                command.append('--reference')
-            if proposal:
-                command += ['--proposal-fd', str(children['proposal']), '--proposal-name', proposal[0]]
-            if actor is not None:
-                command += ['--actor', actor]
-            if args.shared_string_field:
-                command.append('--shared-string-field')
+            command = editor_command(args.editor.resolve(strict=True), children, args,
+                                     proposal and proposal[0], actor)
             # subprocess closes every other descriptor (close_fds), so only
             # the standard streams and these directories reach the editor.
             result = subprocess.run(command, pass_fds=tuple(children.values()), check=False)

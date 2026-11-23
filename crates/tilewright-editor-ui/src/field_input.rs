@@ -50,6 +50,8 @@ pub struct SharedInput {
     /// The composer's committed text, kept after every change so callers
     /// can borrow it as they borrow the editor's own draft.
     text: String,
+    /// Whether a composition is open, kept with `text`.
+    composing: bool,
 }
 
 impl SharedInput {
@@ -66,7 +68,12 @@ impl SharedInput {
         })?;
         ui.apply(Input::Focus(Some(COMPOSER)))
             .map_err(shared_error)?;
-        Ok(Self { ui, draft, text })
+        Ok(Self {
+            ui,
+            draft,
+            text,
+            composing: false,
+        })
     }
 
     /// The shared state, for the host's compiler.
@@ -82,15 +89,20 @@ impl SharedInput {
         self.ui.text_target().ok_or(ToolError("No input draft"))
     }
 
+    /// Read from the focused target, without a snapshot: the field is
+    /// focused for its whole life.
     fn revision(&self) -> TextRevision {
         TextRevision {
             draft: self.draft,
-            revision: self.ui.snapshot().composer.revision.get(),
+            revision: self
+                .ui
+                .text_target()
+                .map_or(0, |target| target.revision.get()),
         }
     }
 
     fn composing(&self) -> bool {
-        self.ui.snapshot().composer.composition.is_some()
+        self.composing
     }
 
     /// Apply one composer input; a refusal changes nothing and is worded
@@ -105,11 +117,9 @@ impl SharedInput {
             UiError::InvalidInput => invalid(composing),
             other => shared_error(other),
         })?;
-        self.ui
-            .snapshot()
-            .composer
-            .committed
-            .clone_into(&mut self.text);
+        let composer = self.ui.snapshot().composer;
+        self.composing = composer.composition.is_some();
+        self.text = composer.committed;
         Ok(())
     }
 

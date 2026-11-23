@@ -143,7 +143,10 @@ fn a_frame_using_a_reserved_identity_or_another_text_system_is_refused_not_drawn
         .shared_field
         .as_mut()
         .unwrap()
-        .compose(&mut app.text, &shared, draft, &app.ui, &mut presentation)
+        .prepare(&mut app.text, &shared, draft, &app.ui)
+        .unwrap()
+        .unwrap()
+        .attach(&mut presentation)
         .unwrap_err();
     assert!(error.contains("reserved"), "{error}");
     // Grow the atlas on the lent system, then lend another one: its atlas
@@ -347,4 +350,157 @@ fn both_fields_turn_the_same_sdl_events_into_the_same_draft_and_review() {
         }
     }
     assert!(events > 150 && reviews > 10, "{events} {reviews}");
+}
+
+/// The caret after each of `presses` Left presses from End.
+fn lefts_from_end(app: &mut Application, presses: usize) -> Vec<usize> {
+    let mut input = crate::native_input::NativeInput::new(7);
+    let mut clipboard = String::new();
+    route(
+        app,
+        &mut input,
+        &input_key(7, Keycode::End, false),
+        &mut clipboard,
+    )
+    .unwrap();
+    (0..presses)
+        .map(|_| {
+            route(
+                app,
+                &mut input,
+                &input_key(7, Keycode::Left, false),
+                &mut clipboard,
+            )
+            .unwrap();
+            app.tools.draft_snapshot().unwrap().selection.focus.byte
+        })
+        .collect()
+}
+
+/// A known limitation of the shared field, pinned so that moving to a
+/// release with the fix has to update it on purpose. At its 20 px text the
+/// renderer gives committed position 9 of this value two caret stops a
+/// float apart (x 97.700005 and 97.7), and `step_caret` in
+/// tilewright-ui-render 0.1.0 treats the affinity-only step between them
+/// as a stop: one Left press there does nothing. The editor's own field,
+/// at 18 px, is not affected. To be fixed in tilewright-ui-render 0.1.1.
+#[test]
+fn known_limitation_one_left_press_next_to_a_marker_does_nothing_in_the_shared_field() {
+    let stored = "Trail\nmar\u{2028}ker\u{2029}";
+    for (implementation, expected) in [
+        (FieldImplementation::Editor, vec![15, 14, 13, 12, 9, 8, 7]),
+        (FieldImplementation::Shared, vec![15, 14, 13, 12, 9, 9, 8]),
+    ] {
+        let (_temporary, mut app) = labelled(implementation, stored, (960, 640));
+        app.control(Control::Field("label".into())).unwrap();
+        acknowledge_ui(&mut app);
+        assert_eq!(lefts_from_end(&mut app, 7), expected, "{implementation:?}");
+    }
+}
+
+/// The pending change, file by file.
+fn pending(app: &Application) -> Option<Vec<(String, Option<String>)>> {
+    app.session.history().pending().map(|pending| {
+        pending
+            .changed()
+            .map(|file| (file.path.clone(), file.after.clone()))
+            .collect()
+    })
+}
+
+#[test]
+fn the_shared_apply_button_reviews_exactly_as_review_does() {
+    // A label to review, then one with a character the font pack lacks,
+    // which Review refuses.
+    for typed in ["Applied", "a\u{10ffff}"] {
+        let [(_one, mut clicked), (_two, mut reviewed)] = [0, 1].map(|_| {
+            let (temporary, mut app) =
+                labelled(FieldImplementation::Shared, "Trail marker", (960, 640));
+            app.control(Control::Field("label".into())).unwrap();
+            app.tools.select_all().unwrap();
+            app.tools.input(typed).unwrap();
+            acknowledge_ui(&mut app);
+            (temporary, app)
+        });
+        let submit = clicked
+            .displayed_text
+            .as_ref()
+            .and_then(|geometry| geometry.shared.as_ref())
+            .and_then(|shared| shared.submit)
+            .unwrap();
+        let centre = [
+            submit.x + submit.width / 2.0,
+            submit.y + submit.height / 2.0,
+        ];
+        let by_click =
+            crate::prototype::native_pointer(&mut clicked, centre, (960, 640), (320, 240));
+        let by_review = reviewed.control(Control::ApplyDraft);
+        assert_eq!(by_click, by_review, "{typed:?}");
+        assert_eq!(pending(&clicked), pending(&reviewed), "{typed:?}");
+        assert_eq!(pending(&clicked).is_some(), typed == "Applied");
+        if typed != "Applied" {
+            assert!(by_click.unwrap_err().contains("glyph"));
+            assert_eq!(clicked.tools.draft_text(), Some(typed), "the draft is kept");
+        }
+    }
+}
+
+#[test]
+fn the_frame_leaves_room_for_the_shared_field_before_the_highlight() {
+    use crate::prototype::proposal_view::{HIGHLIGHT_FROM_TINT, HIGHLIGHT_TINT};
+    let mut twin = super::proposal::twin(1, |_| {}, |_| {}, None);
+    super::proposal::open(&mut twin);
+    let app = &mut twin.app;
+    app.share_string_field().unwrap();
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(app);
+    let highlight = |scene: &tilewright_scene::SceneBundle| {
+        scene
+            .quads()
+            .iter()
+            .filter(|quad| {
+                !quad.pickable
+                    && (quad.color == HIGHLIGHT_TINT || quad.color == HIGHLIGHT_FROM_TINT)
+            })
+            .count()
+    };
+    let full = crate::prototype::workspace_presentation(app).unwrap();
+    let shared = full
+        .scene
+        .quads()
+        .iter()
+        .filter(|quad| quad.semantic_id.0 >= SHARED_FIRST_SEMANTIC)
+        .count();
+    assert!(highlight(&full.scene) > 0 && shared > 0);
+    // The editor fits its own frame to the budget less the field's quads,
+    // so the composed frame never exceeds the budget. With exactly room
+    // for everything it is drawn whole.
+    let total = full.scene.quads().len();
+    app.frame_limits.maximum_quads = total;
+    let fitted = crate::prototype::workspace_presentation(app).unwrap();
+    assert_eq!(fitted.scene.quads().len(), total);
+    assert!(!app.highlight_omitted);
+    // One quad less: the editor's frame must give way within its share.
+    // Here the "Highlight left out" note costs more quads than the two
+    // highlighted tiles, so leaving the highlight out does not fit either
+    // and the frame is refused, as the editor's own field would be at the
+    // same share; it is never drawn over the budget.
+    app.frame_limits.maximum_quads = total - 1;
+    app.refresh_ui();
+    match crate::prototype::workspace_presentation(app) {
+        Ok(presentation) => assert!(presentation.scene.quads().len() < total),
+        Err(error) => assert!(error.contains("LimitExceeded"), "{error}"),
+    }
+    assert!(app.tools.shared_draft().is_some(), "the draft is kept");
+    // The editor's share alone, with the field compiled first, is what was
+    // fitted: the field's quads are reserved, not added on top.
+    app.frame_limits = tilewright_scene::SceneLimits::default();
+    app.highlight_omitted = false;
+    app.refresh_ui();
+    let again = crate::prototype::workspace_presentation(app).unwrap();
+    assert_eq!(again.scene.quads().len(), total);
+    assert_eq!(highlight(&again.scene), highlight(&full.scene));
+    assert!(shared > 0);
 }

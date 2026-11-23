@@ -185,6 +185,10 @@ fn both_fields_agree_on_every_step_and_on_the_reviewed_action() {
                 tools.begin_field(&view, "label", false).unwrap();
                 tools
             });
+            // Each side really is the implementation it is named for, so a
+            // build that ignores the switch cannot compare a field with itself.
+            assert!(own.shared_draft().is_none());
+            assert!(shared.shared_draft().is_some());
             assert_eq!(own.draft_text(), Some(stored));
             assert_eq!(shared.draft_text(), Some(stored));
             let stale = [
@@ -259,6 +263,20 @@ fn only_string_fields_use_the_shared_field() {
     tools.begin_field(&view, "label", false).unwrap();
     let shared = tools.shared_draft().expect("the string field is shared");
     assert_eq!(shared.snapshot().composer.committed, "Trail marker");
+    // A revision presented for an earlier shared draft never selects in a
+    // later one, even where the two revisions are equal.
+    let earlier = tools.input_revision().unwrap();
+    tools.begin_field(&view, "label", false).unwrap();
+    let later = tools.input_revision().unwrap();
+    assert_eq!(earlier.revision, later.revision);
+    assert_ne!(earlier.draft, later.draft);
+    assert_eq!(
+        tools.set_selection(TextSelection::caret(TextCursor::new(0)), earlier),
+        Err(ToolError("Input presentation is stale"))
+    );
+    tools
+        .set_selection(TextSelection::caret(TextCursor::new(0)), later)
+        .unwrap();
     // Coordinates, the palette filter and every other draft keep the
     // editor's own field.
     tools.begin_move(&view, false).unwrap();

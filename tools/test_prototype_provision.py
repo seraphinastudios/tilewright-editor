@@ -1,5 +1,6 @@
 """Check private fresh-root provisioning and refusal without source mutation."""
 # Copyright 2026 Seraphina Studios. SPDX-License-Identifier: MIT
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -175,9 +176,20 @@ class ProposalOptionTests(unittest.TestCase):
             result = self.run_helper(root, '--shared-string-field')
             self.assertEqual(result.returncode, 0, result.stderr)
             receipt = json.loads((root / 'session' / 'provision.json').read_text())
-            self.assertEqual(receipt['string_field'], 'tilewright-ui')
+            # Named as the editor's frame records name it.
+            self.assertEqual(receipt['string_field'], 'tilewright-ui 0.1.0')
             self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope',
                                                'string_field'])
+
+    def test_the_editor_is_given_the_switch_exactly_when_it_is_asked_for(self):
+        children = {'world': 3, 'recovery': 4, 'evidence': 5}
+        for given in (False, True):
+            args = argparse.Namespace(font_pack=Path('/fonts'), demo_script=False, reference=False,
+                                      shared_string_field=given)
+            command = provision.editor_command(Path('/editor'), children, args, None, None)
+            self.assertEqual(command[:2], ['/editor', 'prototype'])
+            self.assertEqual('--shared-string-field' in command, given)
+            self.assertEqual(command.count('--shared-string-field'), int(given))
 
     def test_bad_proposals_and_actors_are_refused_before_anything_is_created(self):
         with tempfile.TemporaryDirectory() as temporary:

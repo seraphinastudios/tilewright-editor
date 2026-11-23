@@ -5242,10 +5242,16 @@ fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> 
     use tilewright_editor_ui::text_input::TextSelection;
     use tilewright_render_ui::VisualMotion;
     let snapshot = app.tools.draft_snapshot().ok_or("no current text draft")?;
-    let shared = app.tools.shared_draft().zip(app.shared_field.as_mut());
-    let layout = if let Some((shared, field)) = shared {
-        let draft = snapshot.revision.draft;
-        field.current(&mut app.text, shared, &app.ui, draft)?.layout
+    // The shared field's geometry of the current state, compiled once.
+    let shared = match app.tools.shared_draft().zip(app.shared_field.as_mut()) {
+        Some((shared, field)) => {
+            let draft = snapshot.revision.draft;
+            Some(field.current(&mut app.text, shared, &app.ui, draft)?)
+        }
+        None => None,
+    };
+    let layout = if let Some(geometry) = &shared {
+        geometry.layout.clone()
     } else {
         app.text
             .layout(
@@ -5276,9 +5282,16 @@ fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> 
         } else {
             current
         }
-    } else if let Some((shared, field)) = app.tools.shared_draft().zip(app.shared_field.as_mut()) {
+    } else if let Some(geometry) = shared
+        .as_ref()
+        .and_then(|geometry| geometry.shared.as_ref())
+    {
         // The shared field steps in committed text itself.
-        let focus = field.step(&mut app.text, shared, &app.ui, motion)?;
+        let focus = geometry
+            .text
+            .step_caret(motion)
+            .map(tilewright_editor_ui::field_input::cursor)
+            .map_err(|error| format!("shared field: {error}"))?;
         return app
             .tools
             .set_selection(
@@ -5297,10 +5310,15 @@ fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> 
         layout.move_visual(current, motion)
     };
     let focus = crate::workspace_render::model_cursor(focus);
-    let focus = if let Some(shared) = app.tools.shared_draft() {
-        shared
-            .snapshot()
-            .composer
+    let focus = if let Some(geometry) = shared
+        .as_ref()
+        .and_then(|geometry| geometry.shared.as_ref())
+    {
+        geometry
+            .text
+            .snapshot
+            .as_ref()
+            .ok_or("shared field: no editable text")?
             .committed_cursor(tilewright_editor_ui::field_input::shared_cursor(focus))
             .map(tilewright_editor_ui::field_input::cursor)
             .map_err(|error| format!("shared field: {error}"))?
@@ -6141,18 +6159,29 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     overlay.extend(proposal_overlay(app));
     overlay.extend(stroke.iter().copied());
     person.extend(stroke);
-    let compose = |app: &mut Application| {
+    // The shared string field is compiled first, so the editor's frame is
+    // fitted with room for its quads: near the budget the highlight and the
+    // preview give way, as without it, instead of the frame failing.
+    let mut field = prepare_shared_field(app)?;
+    let compose = |app: &mut Application, reserved: usize| {
+        let limits = tilewright_scene::SceneLimits {
+            maximum_quads: app.frame_limits.maximum_quads.saturating_sub(reserved),
+            ..app.frame_limits
+        };
         compose_highlight_first(
             &mut app.text,
             &app.ui,
             &app.prepared,
             &overlay,
             &person,
-            app.frame_limits,
+            limits,
         )
         .map_err(|error| error.to_string())
     };
-    let (mut presentation, mut omitted, mut highlight) = compose(app)?;
+    let reserved = field
+        .as_ref()
+        .map_or(0, crate::shared_field::PreparedField::quads);
+    let (mut presentation, mut omitted, mut highlight) = compose(app, reserved)?;
     if app.unsupported_runs != presentation.unsupported_runs
         || app.preview_omitted != omitted
         || app.highlight_omitted != highlight
@@ -6161,24 +6190,33 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         app.preview_omitted = omitted;
         app.highlight_omitted = highlight;
         app.refresh_ui();
-        (presentation, omitted, highlight) = compose(app)?;
+        // The row may have moved with the new layout; its size has not.
+        field = prepare_shared_field(app)?;
+        (presentation, omitted, highlight) = compose(app, reserved)?;
         app.preview_omitted = omitted;
         app.highlight_omitted = highlight;
     }
-    if let (Some(field), Some(shared), Some(revision)) = (
+    if let Some(field) = field {
+        field.attach(&mut presentation)?;
+    }
+    Ok(presentation)
+}
+
+/// The shared string field compiled for the current layout, while it edits
+/// the open draft and its row is laid out.
+fn prepare_shared_field(
+    app: &mut Application,
+) -> Result<Option<crate::shared_field::PreparedField>> {
+    match (
         app.shared_field.as_mut(),
         app.tools.shared_draft(),
         app.tools.input_revision(),
     ) {
-        field.compose(
-            &mut app.text,
-            shared,
-            revision.draft,
-            &app.ui,
-            &mut presentation,
-        )?;
+        (Some(field), Some(shared), Some(revision)) => {
+            field.prepare(&mut app.text, shared, revision.draft, &app.ui)
+        }
+        _ => Ok(None),
     }
-    Ok(presentation)
 }
 
 #[cfg(all(test, target_os = "linux"))]
