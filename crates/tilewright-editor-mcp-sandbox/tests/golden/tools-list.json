@@ -250,6 +250,7 @@
                     "scatter_terrain",
                     "adjust_heights",
                     "flatten_heights",
+                    "smooth_heights",
                     "paint_zones",
                     "remove",
                     "place",
@@ -695,6 +696,61 @@
                     "layer",
                     "cells",
                     "target",
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "smooth_heights"
+                    },
+                    "plane": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "layer": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    },
+                    "cells": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      },
+                      "minItems": 1,
+                      "maxItems": 4096,
+                      "uniqueItems": true,
+                      "description": "Cells [x, y], distinct and in increasing order of x, then y."
+                    },
+                    "kernel": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1,
+                      "description": "The smoothing rule's version; only 1 exists. Needs the catalog's editing.heights range (the catalog tool reports it as heights). Each cell becomes the weighted mean of its own height (weight 4) and its 8 neighbours' (2 for the 4 sharing an edge, 1 for the diagonals), rounded to the nearest whole number, an exact half toward the cell's own height. Every height read is the committed one, clamped into the range, so the result is always in the range and the order of cells does not matter. Neighbours not listed in cells are read too; a neighbour outside the catalog's active view or in a map chunk that does not exist is left out of the mean. Cells whose height would not change, and cells of map chunks that do not exist, are left out. Repeat to smooth further."
+                    },
+                    "expected": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The sandbox revision the action was made for: state.revision."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "plane",
+                    "layer",
+                    "cells",
+                    "kernel",
                     "expected"
                   ],
                   "additionalProperties": false

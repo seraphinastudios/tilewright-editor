@@ -812,10 +812,12 @@ fn sculpt_steps_are_one_and_eight() {
     assert_eq!(tools.sculpt_amount(), 8);
     assert_eq!(SculptTool::Raise.next(), SculptTool::Lower);
     assert_eq!(SculptTool::Lower.next(), SculptTool::Flatten);
-    assert_eq!(SculptTool::Flatten.next(), SculptTool::Raise);
-    // The step is for raise and lower; flatten records a target.
+    assert_eq!(SculptTool::Flatten.next(), SculptTool::Smooth);
+    assert_eq!(SculptTool::Smooth.next(), SculptTool::Raise);
+    // The step is for raise and lower; flatten records a target, smooth a
+    // kernel.
     assert!(SculptTool::Raise.stepped() && SculptTool::Lower.stepped());
-    assert!(!SculptTool::Flatten.stepped());
+    assert!(!SculptTool::Flatten.stepped() && !SculptTool::Smooth.stepped());
 }
 
 #[test]

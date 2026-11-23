@@ -304,6 +304,77 @@ tool marks them while a stroke is dragged and releases the stroke as one
 `FlattenHeights` to the height it read under the press
 (`sculpt::flatten_target`, on the committed World).
 
+## Smooth
+
+`SmoothHeights { plane, layer, cells, kernel, expected }` records a smooth
+as it was meant: the covered cells and the version of the averaging rule,
+not the heights it writes. Only kernel 1 exists; it is frozen, and a
+different rule would be a new version
+([ADR 0008](../decisions/0008-smooth-heights.md)). It needs the catalog's
+`editing.heights` range. When it is prepared, the engine
+(`tilewright_editor_ui::sculpt::smooth_plan`), in this order:
+
+1. checks the stroke rule (input.budget, input.invalid, as for a raise)
+   and the kernel (any version but 1: input.invalid, "unknown smooth
+   kernel 2; this editor knows kernel 1");
+2. refuses without the range (grant.missing) and for a cell outside the
+   active view (scope.outside_view);
+3. leaves out cells of chunks that do not exist, as a raise does;
+4. computes every other cell's new height from committed heights only
+   (never another cell's new one, so the stroke's order and extent do not
+   change any cell's result), with kernel 1:
+   - every height read, the cell's own `s` included, is clamped into the
+     range: `h = clamp(s)`;
+   - the eight neighbours `(x ± 1, y ± 1)` on the same plane and layer are
+     read when they are inside the active view and their chunk exists (a
+     chunk without a height grid reads 0); any other neighbour is left
+     out of both the sum and the weight. Neighbours outside the stroke
+     are read like any other;
+   - weights: 4 for the cell, 2 for a neighbour sharing an edge, 1 for a
+     diagonal one; `D` is the sum of `weight × (clamp(t) − h)` over the
+     read neighbours, and `W` is 4 plus their weights (4 to 16);
+   - `q = ⌊|D| / W⌋`, plus 1 when `2 × (|D| − q × W) > W` (the nearest
+     integer, an exact half toward zero); the new height is `h + q`, or
+     `h − q` when `D < 0`;
+
+   so the new height is the weighted mean of the clamped heights read,
+   rounded to the nearest integer with a half going toward the cell's own
+   height. It always lies in the range, so a cell outside the range is
+   brought in. A cell whose new height equals its stored one is left out
+   ("already even");
+5. refuses with target.unsupported a new height that would stack past 32
+   bits on its layer, as a raise does;
+6. refuses with change.none when no cell is left, and the message counts
+   the covered cells already even and those in chunks that do not exist.
+
+| What | Kernel 1 |
+|---|---|
+| Neighbourhood | the 8 around the cell, same plane and layer |
+| Weights | cell 4, edge neighbours 2, diagonal 1 (16 in all) |
+| Read | committed heights, clamped into the range, inside the active view, in chunks that exist |
+| Not read | a neighbour outside the view or in a missing chunk: out of sum and weight |
+| Rounding | nearest integer; an exact half toward the cell's own height |
+| Range | never written outside; a cell outside it is brought in |
+| Arithmetic | 64-bit integers; nothing can overflow |
+
+The result is one `terrain.set` on the `height` grid in which each changed
+cell expects its committed height, as for a raise. Neighbours that are
+read but not written are not in it: Accept refuses with source.changed
+when anything in the World on disk differs from the World the change was
+prepared on, which covers them. The kernel never inverts a pattern, and
+repeated smoothing comes to rest where neighbours differ by about 2 or
+less: a straight step of 2 between two flat areas is already even, since
+each side's mean is exactly half a step away. Because the view decides
+which neighbours are read along its edges, a recorded step prepared again
+under a catalog whose view reads other neighbours prepares another
+transaction (a proposal step is then diverged), as a raise does under
+another range; under the same view, or one that differs only away from
+the stroke, it applies. `smooth_plan` answers which cells a smooth would
+change, from the same code; a proposal step's words count them, and the
+desktop's [Sculpt mode](OFFLINE-PROTOTYPE.md#sculpt-mode) Smooth tool
+marks them while a stroke is dragged and releases the stroke as one
+`SmoothHeights` with kernel 1.
+
 ## Refusal codes
 
 Every `SessionError` carries a stable `RefusalCode` (`code()`, and

@@ -332,6 +332,12 @@ pub(super) fn step_tiles<'a>(
             cells,
             ..
         }
+        | Action::SmoothHeights {
+            plane,
+            layer,
+            cells,
+            ..
+        }
         | Action::PaintZones {
             plane,
             layer,
@@ -1691,6 +1697,25 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
                 "Flatten {} to {target}{}{} (on {}/{layer})",
                 cells_words(cells.len()),
                 height_effect(plan, granted),
+                outside(catalog, plane, *layer, cells),
+                shown(plane)
+            )
+        }
+        Action::SmoothHeights {
+            plane,
+            layer,
+            cells,
+            kernel,
+            ..
+        } => {
+            let plan = tilewright_editor_ui::sculpt::smooth_plan(
+                world, catalog, plane, *layer, cells, *kernel,
+            )
+            .map(|(changes, _)| changes);
+            format!(
+                "Smooth {}{}{} (on {}/{layer})",
+                cells_words(cells.len()),
+                height_effect(plan, catalog.editing().heights.is_some()),
                 outside(catalog, plane, *layer, cells),
                 shown(plane)
             )

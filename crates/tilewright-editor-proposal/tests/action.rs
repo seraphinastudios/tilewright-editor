@@ -149,6 +149,22 @@ fn every_edit_kind_round_trips_exactly_with_edge_values() {
             target: 0,
             expected: [0; 32],
         },
+        Action::SmoothHeights {
+            plane: odd.clone(),
+            layer: i32::MIN,
+            cells: vec![[-MAX, MAX]],
+            kernel: limits::SMOOTH_KERNEL,
+            expected: [0xff; 32],
+        },
+        Action::SmoothHeights {
+            plane: "p".into(),
+            layer: i32::MAX,
+            cells: (0..i64::try_from(limits::CELLS).unwrap())
+                .map(|x| [x, x])
+                .collect(),
+            kernel: 1,
+            expected: [0; 32],
+        },
         Action::PaintZones {
             plane: "p".into(),
             layer: 0,
@@ -272,6 +288,13 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         target,
         expected: revision,
     };
+    let smoothed = |kernel: u32| Action::SmoothHeights {
+        plane: "p".into(),
+        layer: 0,
+        cells: vec![[0, 0]],
+        kernel,
+        expected: revision,
+    };
     let mut deep = json!(1);
     for _ in 0..=limits::FIELD_VALUE_DEPTH {
         deep = json!([deep]);
@@ -320,6 +343,9 @@ fn values_outside_the_bounds_are_refused_when_writing() {
         (flattened(-1025), RefusalCode::ProposalInvalid),
         (flattened(i32::MAX), RefusalCode::ProposalInvalid),
         (flattened(i32::MIN), RefusalCode::ProposalInvalid),
+        (smoothed(0), RefusalCode::ProposalInvalid),
+        (smoothed(2), RefusalCode::ProposalInvalid),
+        (smoothed(u32::MAX), RefusalCode::ProposalInvalid),
         (field(json!(u64::MAX)), RefusalCode::ProposalInvalid),
         (
             field(json!({"a": ["nul \u{0}"]})),
@@ -454,8 +480,11 @@ fn reading_refuses_every_other_form() {
     assert_eq!(scatter["kind"], "scatter_terrain");
     let heights = encode_action(&edit(18, [3; 32])).unwrap();
     assert_eq!(heights["kind"], "adjust_heights");
-    let flatten = encode_action(&edit(19, [3; 32])).unwrap();
+    let flatten = encode_action(&edit(20, [3; 32])).unwrap();
     assert_eq!(flatten["kind"], "flatten_heights");
+    let smooth = encode_action(&edit(19, [3; 32])).unwrap();
+    assert_eq!(smooth["kind"], "smooth_heights");
+    assert_eq!(smooth["kernel"], 1);
     let with = |base: &Value, key: &str, value: Value| {
         let mut changed = base.clone();
         changed[key] = value;
@@ -566,6 +595,20 @@ fn reading_refuses_every_other_form() {
         with(&flatten, "cells", json!([])),
         with(&flatten, "cells", json!([[1, 0], [0, 0]])),
         with(&flatten, "kind", json!("flatten")),
+        with(&smooth, "kernel", json!(2)),
+        with(&smooth, "kernel", json!(0)),
+        with(&smooth, "kernel", json!(-1)),
+        with(&smooth, "kernel", json!(4_294_967_297_i64)),
+        with(&smooth, "kernel", json!(1.0)),
+        with(&smooth, "kernel", json!("1")),
+        with(&smooth, "kernel", json!(null)),
+        without(&smooth, "kernel"),
+        with(&smooth, "amount", json!(1)),
+        with(&smooth, "target", json!(1)),
+        with(&smooth, "grid", json!("height")),
+        with(&smooth, "cells", json!([])),
+        with(&smooth, "cells", json!([[1, 0], [0, 0]])),
+        with(&smooth, "kind", json!("smooth")),
         "[]".into(),
         "\"move\"".into(),
     ];

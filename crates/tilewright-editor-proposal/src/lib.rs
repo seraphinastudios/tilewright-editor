@@ -70,6 +70,8 @@ pub mod limits {
     pub const HEIGHT_AMOUNT: i32 = tilewright_editor_ui::sculpt::MAXIMUM_AMOUNT;
     /// The largest flatten `target` either way: the engine's own bound.
     pub const HEIGHT_TARGET: i32 = tilewright_editor_ui::sculpt::MAXIMUM_TARGET;
+    /// The only smooth `kernel` version: the engine's own.
+    pub const SMOOTH_KERNEL: u32 = tilewright_editor_ui::sculpt::SMOOTH_KERNEL;
     /// Most bytes of a field value, encoded, and its deepest nesting: the
     /// engine's own field budget.
     pub const FIELD_VALUE_BYTES: usize = 64 << 10;

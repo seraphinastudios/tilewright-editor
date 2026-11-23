@@ -113,7 +113,7 @@ pub fn revision(session: &Session) -> [u8; 32] {
 /// The edit actions of every kind, in an order in which each applies
 /// after the ones before it on the neutral fixture; the fill twice, once
 /// as a fill and once as a replace.
-pub const KINDS: usize = 20;
+pub const KINDS: usize = 21;
 #[allow(clippy::too_many_lines)]
 pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
     let main = || String::from("main");
@@ -255,6 +255,14 @@ pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
             layer: 0,
             cells: (0..8).flat_map(|x| (0..2).map(move |y| [x, y])).collect(),
             amount: 5,
+            expected,
+        },
+        // Smooth the view's rows 1 to 3, across the raised edge.
+        19 => Action::SmoothHeights {
+            plane: main(),
+            layer: 0,
+            cells: (0..8).flat_map(|x| (1..4).map(move |y| [x, y])).collect(),
+            kernel: 1,
             expected,
         },
         // Flatten the view's top three rows to -2.

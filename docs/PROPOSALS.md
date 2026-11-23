@@ -82,6 +82,7 @@ hold no NUL.
 | `scatter_terrain` | `plane`, `layer`, `grid`, `cells` (as for `paint_stroke`), `palette` (a catalog palette's name), `seed` (an integer from 0 to 4,294,967,295) |
 | `adjust_heights` | `plane`, `layer`, `cells` (as for `paint_stroke`), `amount` (an integer from -1,024 to 1,024, not 0) |
 | `flatten_heights` | `plane`, `layer`, `cells` (as for `paint_stroke`), `target` (an integer from -1,024 to 1,024) |
+| `smooth_heights` | `plane`, `layer`, `cells` (as for `paint_stroke`), `kernel` (the integer 1) |
 | `paint_zones` | `plane`, `layer`, `cells` (as for `paint_stroke`), `zone` (string or `null`) |
 | `remove` | `uid` |
 | `place` | `plane`, `layer`, `x`, `y`, `proto` |
@@ -154,6 +155,21 @@ refused with `proposal.step_refused` and the engine's grant.missing. A
 target past 1,024 either way or not an integer is `proposal.invalid` when
 the proposal is read. An editor from before `flatten_heights` (1.59.0 and
 earlier) refuses a whole proposal that holds one with `proposal.invalid`.
+
+A `smooth_heights` step records the cells and the version of the
+averaging rule (`kernel`), not the heights before or after: the engine
+reads every height, and the range and the view from the catalog, each
+time the step is prepared ([docs/ENGINE.md](ENGINE.md#smooth)). Under a
+catalog whose range and view read the same heights around the stroke, the
+same world gives the same transaction and the step applies; under one
+whose range or view changes any result (the view decides which neighbours
+along its edge are read), the step diverges; without a range it is
+refused with `proposal.step_refused` and the engine's grant.missing. A
+`kernel` other than 1, or not an integer, is `proposal.invalid` when the
+proposal is read, as an unknown action kind is: the reader cannot know
+what another version means. An editor from before `smooth_heights`
+(1.61.0 and earlier) refuses a whole proposal that holds one with
+`proposal.invalid`.
 
 ### What a reader requires and what the writer emits
 

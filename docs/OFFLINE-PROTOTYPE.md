@@ -592,8 +592,9 @@ desktop cancels it and says so, with the renderer's reason ("Change
 refused: it cannot be drawn at this view, so it was cancelled.", then
 "Zoom out, or raise or lower by less." for a height adjustment, "Zoom
 out, or flatten to a height nearer the tiles around it." for a flatten,
-"Zoom out and prepare the step again." for a proposal's height step,
-whose amount or target the person cannot change, and "Zoom out or pan and
+"Zoom out." for a smooth, "Zoom out and prepare the step again." for a
+proposal's height step, whose amount, target or cells the person cannot
+change, and "Zoom out or pan and
 try again." for any other edit); editing continues. The
 member is the same in catalog formats 1 and 2; a catalog without it loads
 and behaves exactly as before, and an editor from before it refuses a
@@ -620,6 +621,14 @@ which is how a tile too far outside for a raise or lower is brought back
 `{"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": [[2, 2], [3, 2]], "target": -4}`
 with its `expected`, then `accept`: `tile` reports `height` -4 at both.
 
+A `smooth_heights` action moves each covered cell toward the weighted mean
+of the committed heights around it, inside the view, with the fixed rule
+`kernel` 1 ([docs/ENGINE.md](ENGINE.md#smooth)). In the same sandbox,
+`edit` `{"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": [[3, 2]], "kernel": 1}`
+with its `expected`, then `accept`: (3, 2), at -4 among neighbours from -4
+to 11, reads 116 / 16 = 7.25 above itself on average, so `tile` reports
+`height` 3.
+
 #### Sculpt mode
 
 Under a catalog with a [height range](#height-range), the sidebar has a
@@ -645,10 +654,9 @@ the tool and step (pressing it, or F, switches between Raise and Lower);
 then "Granted heights -64 to 64", the brush rows, "Raise: drag lifts each
 cell once" and "Lower: drag sinks each cell once", and "Step 1  1" and
 "Step 8  8" (keys 1 and 8). The tool and step are kept across modes. The
-status line reads "Ready. Drag to raise heights by 8." A later pull request
-adds smooth to the tool list.
+status line reads "Ready. Drag to raise heights by 8."
 
-The third tool, Flatten (F after Lower; F again goes back to Raise), sets
+The third tool, Flatten (F after Lower; F again goes on to Smooth), sets
 every cell a drag covers to one height: the height of the tile where the
 drag starts. That target is read once, at the press, from the committed
 World (a stroke cannot start while a change is pending), and stays fixed
@@ -669,6 +677,25 @@ into the range, however far outside it is, but such a tile may not be
 drawn where it stands, so it cannot be pointed at: press on a neighbour
 inside the range and let the brush cover its cell (a 3 × 3 brush reaches
 it), then read the count in the status line.
+
+The fourth tool, Smooth (F after Flatten; F again goes back to Raise),
+evens out the heights of the cells a drag covers: each moves toward the
+weighted mean of its own height and its eight neighbours' (the four that
+share an edge weigh twice the diagonal ones, the cell itself four times),
+rounded to a whole height, an exact half toward where the cell was. The
+heights read are the committed ones, never another cell's new height, so
+the result does not depend on the order or extent of the drag; neighbours
+outside the stroke are read too, but not those outside the view or in
+chunks that do not exist. Every height read counts as if clamped into the
+granted range, so a smooth never writes outside it, and a tile far
+outside it is brought in. The release prepares one `smooth_heights`
+action ([docs/ENGINE.md](ENGINE.md#smooth)) with kernel 1, the only
+version of that rule. Its row reads "Smooth: drag evens out heights", the
+pinned row "Sculpt: Smooth  F", and the status line "Ready. Drag to smooth
+heights toward their neighbours." It has one fixed strength: the step
+rows are dimmed and keys 1 and 8 do nothing for it, and a second stroke
+smooths further. Smoothing comes to rest where neighbours differ by about
+2 or less; a straight step of 2 is already even.
 
 While dragging, before the release, each cell the release would change
 carries a mark: a magenta copy of the cell's flat shape at half its size
@@ -694,14 +721,17 @@ ends "Too many cells to preview."; the release still prepares every cell.
 Turning the zones off (O, between strokes) or zooming in brings the marks
 back.
 The marked cells are the engine's own answer
-(`tilewright_editor_ui::sculpt::plan`, or `flatten_plan` for Flatten, on the
-committed World): the cells Accept writes that this view draws. A changed
+(`tilewright_editor_ui::sculpt::plan`, `flatten_plan` for Flatten, or
+`smooth_plan` for Smooth, on the committed World): the cells Accept writes that this view draws. A changed
 cell whose tile is not drawn at this view (a height far outside the range,
-which only a flatten changes) has nothing to mark; the status line counts
+which only a flatten or a smooth changes) has nothing to mark; the status line counts
 it ("…, 35 to change, 2 not drawn at this view; release to review.", only
 when there are any) and Accept writes it too. For Flatten the status line reads
 "Flattening 37 cells to 8, 35 to change, 2 already there; release to
-review.", cells already at the target being left out and counted. The status line says what the release would do: "Raising 37
+review.", cells already at the target being left out and counted; for
+Smooth "Smoothing 37 cells, 30 to change, 7 already even; release to
+review.", cells whose height would not change being left out and
+counted. The status line says what the release would do: "Raising 37
 cells by 8, 35 to change, 2 at or above the top; release to review." Cells
 at or beyond the end the step moves toward ("at or above the top", "at or
 below the bottom") and cells of chunks that do not exist ("without a
@@ -714,17 +744,20 @@ way and prepares nothing; avoid that cell, or use the larger step. A stroke
 that would change no cell is refused with the engine's count of the cells at
 the end and without a chunk. A release whose result cannot be drawn at the
 current view is cancelled, as for any edit ("Change refused: ..., Zoom out,
-or raise or lower by less.", or for Flatten "Zoom out, or flatten to a
-height nearer the tiles around it."), and the mode carries on. While rendering
+or raise or lower by less.", for Flatten "Zoom out, or flatten to a
+height nearer the tiles around it.", and for Smooth, which has no amount
+to lessen though a stroke's edge can come out steeper, "Zoom out."), and
+the mode carries on. While rendering
 pauses editing, a press is refused with the pause's reason. With a proposal
 open, the person's own strokes between steps are prepared and accepted like
 any other edit of theirs. A frame captured while a sculpt stroke runs has a
 `sculpt_preview` member: the signed `amount`, the covered `cells`, and either
 `changes`, `at_end`, `missing` and the `first` eight changed cells, or
 `refused` with the engine's message. A Flatten stroke's has `target` in
-place of `amount` and `at_target` in place of `at_end`. When some changed
-cells are not drawn, either kind's record also has `undrawn`: their `count`
-and the `first` eight.
+place of `amount` and `at_target` in place of `at_end`; a Smooth stroke's
+has `kernel` (1) in place of `amount` and `even` in place of `at_end`.
+When some changed cells are not drawn, each kind's record also has
+`undrawn`: their `count` and the `first` eight.
 
 The scripted demonstration has no sculpt step: the neutral sample grants no
 height range, and it stays that way. Hand test on a copy (every height of the
@@ -763,8 +796,16 @@ heights as in the [Heights](#heights) hand test):
    F", (1, 2) and (1, 3) are marked, and the status line reads "Flattening
    3 cells to 8, 2 to change, 1 already there; release to review."
    Release and press Enter: the inspector, on (1, 1), still reads "Height:
-   8", and (1, 3) now has the lightest band too. Press F to go back to
-   Raise, then T: the tint goes off again, as it was before U.
+   8", and (1, 3) now has the lightest band too.
+6. Press F (the pinned row reads "Sculpt: Smooth  F"). Drag from (2, 2) to
+   (4, 2) with the 1x1 brush and hold: (2, 2) and (3, 2) are marked, and
+   the status line reads "Smoothing 3 cells, 2 to change, 1 already even;
+   release to review." (4, 2) touches the raised tiles only at a corner:
+   its mean is exactly half a step above it, and a half rounds toward the
+   cell's own height. Release and press Enter: the inspector, on (2, 2),
+   reads "Height: 3" (five raised neighbours: 56 / 16 = 3.5, rounded
+   toward 0), and (3, 2) reads 1. Press F to go back to Raise, then T: the
+   tint goes off again, as it was before U.
 
 ### Zones
 

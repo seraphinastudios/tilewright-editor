@@ -1342,3 +1342,138 @@ fn a_forged_flatten_step_is_invalid_refused_or_diverged() {
         assert!(person.history().pending().is_none());
     }
 }
+
+/// A proposal of one smooth (kind 19) of rows 1 to 3 at the base of the
+/// fixture with generated heights, in the view 0..8 × 0..6.
+fn smooth_proposal() -> (tempfile::TempDir, Proposal) {
+    let agent_world = world(generated_heights);
+    let mut session = sandbox(agent_world.path());
+    let mut records = Records::default();
+    let expected = revision(&session);
+    accept(&mut session, edit(19, expected), &mut records);
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
+    (agent_world, proposal)
+}
+
+/// The person's copy of the fixture with generated heights, the range -8
+/// to 8 or none, and the view `bounds`.
+fn viewed(bounds: [i64; 4], granted: bool) -> tempfile::TempDir {
+    world(|root| {
+        generated_heights(root);
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["view"]["bounds"] = json!(bounds);
+            if !granted {
+                catalog["editing"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("heights");
+            }
+        });
+    })
+}
+
+#[test]
+fn a_smooth_step_replays_where_the_view_reads_the_same_neighbours() {
+    let (_agent, proposal) = smooth_proposal();
+    let action = &body(proposal.bytes())["steps"][0]["action"];
+    assert_eq!(action["kind"], "smooth_heights");
+    assert_eq!(action["kernel"], 1);
+    let mut records = Records::default();
+    // The same view, and one that grows only away from the stroke (rows 1
+    // to 3 read rows 0 to 4): the same transaction, applied.
+    for bounds in [[0, 0, 8, 6], [0, 0, 8, 7], [0, -1, 8, 8]] {
+        let copy = viewed(bounds, true);
+        let mut person = open(copy.path(), PERSON);
+        let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+        progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_or_else(|error| panic!("{bounds:?}: {error}"));
+        person.dispatch(Action::Accept, &mut records).unwrap();
+        assert_eq!(person.history().document().revision(), proposal.result());
+    }
+    // A view that ends above row 4, starts below row 0 or takes in column
+    // 8 reads other neighbours along its edge: another transaction, so
+    // diverged.
+    for bounds in [[0, 0, 8, 4], [0, 1, 8, 5], [0, 0, 9, 6]] {
+        let copy = viewed(bounds, true);
+        let mut person = open(copy.path(), PERSON);
+        let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+        let untouched = Untouched::of(&person, copy.path());
+        let error = progress
+            .prepare_step(&proposal, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            RefusalCode::ProposalStepDiverged,
+            "{bounds:?}"
+        );
+        untouched.check(&person, copy.path(), "another view");
+    }
+    // A view that leaves out a covered cell: the engine refuses.
+    let copy = viewed([0, 2, 8, 4], true);
+    let mut person = open(copy.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepRefused);
+    assert_eq!(error.engine_code(), Some(RefusalCode::ScopeOutsideView));
+    // No grant: refused with the engine's grant.missing.
+    let copy = viewed([0, 0, 8, 6], false);
+    let mut person = open(copy.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    let untouched = Untouched::of(&person, copy.path());
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepRefused);
+    assert_eq!(error.engine_code(), Some(RefusalCode::GrantMissing));
+    untouched.check(&person, copy.path(), "no grant");
+}
+
+#[test]
+fn a_forged_smooth_step_is_invalid_refused_or_diverged() {
+    let (_agent, proposal) = smooth_proposal();
+    let root = world(generated_heights);
+    let mut records = Records::default();
+    // Kernels the reader refuses: unknown versions, not an integer.
+    for kernel in [
+        json!(2),
+        json!(0),
+        json!(-1),
+        json!(1.0),
+        json!("1"),
+        json!(null),
+    ] {
+        let mut body = body(proposal.bytes());
+        body["steps"][0]["action"]["kernel"] = kernel.clone();
+        fix_digests(&mut body);
+        let error = Proposal::decode(&document(&body)).unwrap_err();
+        assert_eq!(error.code(), RefusalCode::ProposalInvalid, "{kernel}");
+    }
+    // Other cells in the view: another transaction.
+    let forged_cells = forged(&proposal, |body| {
+        body["steps"][0]["action"]["cells"] = json!([[0, 1], [0, 2]]);
+    });
+    // Cells outside the view: the engine refuses.
+    let forged_outside = forged(&proposal, |body| {
+        body["steps"][0]["action"]["cells"] = json!([[0, 1], [8, 1]]);
+    });
+    for (forged, code, engine) in [
+        (&forged_cells, RefusalCode::ProposalStepDiverged, None),
+        (
+            &forged_outside,
+            RefusalCode::ProposalStepRefused,
+            Some(RefusalCode::ScopeOutsideView),
+        ),
+    ] {
+        let mut person = open(root.path(), PERSON);
+        let (mut progress, _) = Progress::begin(forged, &person).unwrap();
+        let error = progress
+            .prepare_step(forged, &mut person, &mut records)
+            .unwrap_err();
+        assert_eq!(error.code(), code, "{error}");
+        assert_eq!(error.engine_code(), engine);
+        assert!(person.history().pending().is_none());
+    }
+}

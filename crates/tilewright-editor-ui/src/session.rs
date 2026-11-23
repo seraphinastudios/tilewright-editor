@@ -147,6 +147,22 @@ pub enum Action {
         target: i32,
         expected: [u8; 32],
     },
+    /// Smooth the tile heights of the covered cells of the active view with
+    /// smooth kernel `kernel`, in one reviewed `terrain.set` on the grid
+    /// `height` ([`crate::sculpt::smooth_plan`]). Needs `editing.heights`:
+    /// each cell becomes the rounded weighted mean of its own and its read
+    /// neighbours' committed heights, each clamped into the range
+    /// ([`crate::sculpt::smoothed`]); a neighbour is read inside the active
+    /// view and in a chunk that exists. Cells already even, or in chunks
+    /// that do not exist, are left out; every other cell expects its
+    /// committed height. Only [`crate::sculpt::SMOOTH_KERNEL`] exists.
+    SmoothHeights {
+        plane: String,
+        layer: i32,
+        cells: Vec<[i64; 2]>,
+        kernel: u32,
+        expected: [u8; 32],
+    },
     /// One zone brush gesture: every covered cell of the active view gets
     /// `zone`, or is emptied (`None`, the plane's default zone), in one
     /// reviewed `terrain.set` on the grid `zone`. Needs `editing.zones.paint`.
@@ -808,8 +824,9 @@ impl Session {
     /// refuses the whole stroke. An error means the release would be
     /// refused too, including a stroke that changes no cell. A height
     /// stroke's cells are [`crate::sculpt::plan`]'s, which its
-    /// [`Action::AdjustHeights`] dispatch prepares, and a flatten stroke's
-    /// [`crate::sculpt::flatten_plan`]'s.
+    /// [`Action::AdjustHeights`] dispatch prepares, a flatten stroke's
+    /// [`crate::sculpt::flatten_plan`]'s and a smooth stroke's
+    /// [`crate::sculpt::smooth_plan`]'s.
     pub fn stroke_changes(
         &self,
         stroke: &crate::brush::Stroke,
@@ -857,6 +874,20 @@ impl Session {
                     &cells,
                     *target,
                 )?
+                .into_iter()
+                .map(|(at, _, _)| at)
+                .collect());
+            }
+            crate::brush::StrokeTarget::Smooth { kernel } => {
+                return Ok(crate::sculpt::smooth_plan(
+                    self.history.document().world(),
+                    &self.catalog,
+                    stroke.plane(),
+                    stroke.layer(),
+                    &cells,
+                    *kernel,
+                )?
+                .0
                 .into_iter()
                 .map(|(at, _, _)| at)
                 .collect());
@@ -1272,6 +1303,7 @@ impl Session {
                     | Action::ScatterTerrain { .. }
                     | Action::AdjustHeights { .. }
                     | Action::FlattenHeights { .. }
+                    | Action::SmoothHeights { .. }
                     | Action::PaintZones { .. }
                     | Action::Remove { .. }
                     | Action::Place { .. }
@@ -1543,6 +1575,30 @@ impl Session {
                     &cells,
                     target,
                 )?
+                .into_iter()
+                .map(|(at, before, after)| json!({"at":at,"value":after,"expect":before}))
+                .collect();
+                self.prepare(
+                    expected,
+                    &json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":"height","cells":cells}),
+                )
+            }
+            Action::SmoothHeights {
+                plane,
+                layer,
+                cells,
+                kernel,
+                expected,
+            } => {
+                let cells: Vec<Value> = crate::sculpt::smooth_plan(
+                    self.history.document().world(),
+                    &self.catalog,
+                    &plane,
+                    layer,
+                    &cells,
+                    kernel,
+                )?
+                .0
                 .into_iter()
                 .map(|(at, before, after)| json!({"at":at,"value":after,"expect":before}))
                 .collect();
@@ -1823,6 +1879,7 @@ fn is_edit(action: &Action) -> bool {
         | Action::ScatterTerrain { .. }
         | Action::AdjustHeights { .. }
         | Action::FlattenHeights { .. }
+        | Action::SmoothHeights { .. }
         | Action::PaintZones { .. }
         | Action::Remove { .. }
         | Action::Place { .. }

@@ -71,7 +71,7 @@ fn pending(app: &Application) -> BTreeSet<([i64; 2], i64, i64)> {
 }
 
 #[test]
-fn f_cycles_raise_lower_flatten_and_back_and_the_steps_do_nothing_for_flatten() {
+fn f_cycles_raise_lower_flatten_smooth_and_back_and_the_steps_do_nothing_for_flatten() {
     let (_temporary, mut app) = sculpt_application(|root| heights(root, -4, 4, |x, y| x - y));
     route(&mut app, &key(Keycode::_8)).unwrap();
     let pinned = |app: &mut Application| {
@@ -81,7 +81,7 @@ fn f_cycles_raise_lower_flatten_and_back_and_the_steps_do_nothing_for_flatten() 
             .unwrap()
     };
     let mut seen = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         seen.push((app.tools.sculpt_tool(), pinned(&mut app)));
         route(&mut app, &key(Keycode::F)).unwrap();
     }
@@ -92,6 +92,7 @@ fn f_cycles_raise_lower_flatten_and_back_and_the_steps_do_nothing_for_flatten() 
             (SculptTool::Lower, "Sculpt: Lower by 8  F".to_owned()),
             // No target until a press samples one.
             (SculptTool::Flatten, "Sculpt: Flatten  F".to_owned()),
+            (SculptTool::Smooth, "Sculpt: Smooth  F".to_owned()),
             (SculptTool::Raise, "Sculpt: Raise by 8  F".to_owned()),
         ]
     );
@@ -114,7 +115,8 @@ fn f_cycles_raise_lower_flatten_and_back_and_the_steps_do_nothing_for_flatten() 
     route(&mut app, &key(Keycode::_1)).unwrap();
     assert_eq!(app.tools.sculpt_step(), 8);
     assert!(app.notice.is_none());
-    // Back at Raise, the kept step applies again.
+    // Past Smooth, back at Raise, the kept step applies again.
+    route(&mut app, &key(Keycode::F)).unwrap();
     route(&mut app, &key(Keycode::F)).unwrap();
     assert_eq!(app.tools.sculpt_amount(), 8);
     assert_eq!(widget(&mut app, "Step 1  1"), (true, false));

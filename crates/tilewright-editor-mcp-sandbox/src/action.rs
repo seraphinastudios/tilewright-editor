@@ -12,7 +12,7 @@ use tilewright_jsonc::Value;
 
 /// Every action kind and its members besides `kind` and `expected`, in
 /// the decoder's order. Each member's schema is [`member`]'s.
-pub const KINDS: [(&str, &[&str]); 19] = [
+pub const KINDS: [(&str, &[&str]); 20] = [
     ("move", &["uid", "x", "y"]),
     ("set_field", &["uid", "field", "value"]),
     ("paint", &["plane", "layer", "grid", "x", "y", "proto"]),
@@ -30,6 +30,7 @@ pub const KINDS: [(&str, &[&str]); 19] = [
     ),
     ("adjust_heights", &["plane", "layer", "cells", "amount"]),
     ("flatten_heights", &["plane", "layer", "cells", "target"]),
+    ("smooth_heights", &["plane", "layer", "cells", "kernel"]),
     ("paint_zones", &["plane", "layer", "cells", "zone"]),
     ("remove", &["uid"]),
     ("place", &["plane", "layer", "x", "y", "proto"]),
@@ -118,6 +119,12 @@ fn member(kind: &str, name: &str) -> String {
             r#"{{"anyOf":[{{"type":"integer","minimum":-{0},"maximum":-1}},{{"type":"integer","minimum":1,"maximum":{0}}}],"description":"How much to raise (positive) or lower (negative) the tile height of each cell, once each, never 0. Needs the catalog's editing.heights range (the catalog tool reports it as heights): each cell becomes its height plus amount, kept from min to max. Cells at or beyond the end of the range the amount moves toward, and cells of map chunks that do not exist, are left out. A cell beyond the other end moves by amount and is kept in the range; if amount does not bring it into the range, the whole action is refused, naming the amount it needs."}}"#,
             limits::HEIGHT_AMOUNT
         ),
+        // An integer from 1 to 1 rather than a const, so that 1.0, which
+        // JSON Schema's integer admits, is admitted alike everywhere.
+        "kernel" => format!(
+            r#"{{"type":"integer","minimum":{0},"maximum":{0},"description":"The smoothing rule's version; only {0} exists. Needs the catalog's editing.heights range (the catalog tool reports it as heights). Each cell becomes the weighted mean of its own height (weight 4) and its 8 neighbours' (2 for the 4 sharing an edge, 1 for the diagonals), rounded to the nearest whole number, an exact half toward the cell's own height. Every height read is the committed one, clamped into the range, so the result is always in the range and the order of cells does not matter. Neighbours not listed in cells are read too; a neighbour outside the catalog's active view or in a map chunk that does not exist is left out of the mean. Cells whose height would not change, and cells of map chunks that do not exist, are left out. Repeat to smooth further."}}"#,
+            limits::SMOOTH_KERNEL
+        ),
         "name" | "parent" => optional_text(),
         "zone" if kind == "paint_zones" => optional_text(),
         _ => text(),
@@ -163,7 +170,7 @@ pub fn action_schema() -> String {
 /// `integer` admits them, so that the decoder, which reads integers as
 /// written, takes what the schema takes. Only the members that are
 /// integers in every action are rewritten: `x`, `y`, `layer`, `seed`,
-/// `amount`, a flatten's `target`, the cells of `cells`, and a portal
+/// `amount`, `kernel`, a flatten's `target`, the cells of `cells`, and a portal
 /// target's `layer` and `at`; a field `value`
 /// is never touched, so it is recorded as written.
 pub fn normalized(action: &Value) -> Value {
@@ -171,7 +178,7 @@ pub fn normalized(action: &Value) -> Value {
     if let Value::Object { members, .. } = &mut action {
         for member in members {
             match member.key.as_str() {
-                "x" | "y" | "layer" | "seed" | "amount" => whole(&mut member.value),
+                "x" | "y" | "layer" | "seed" | "amount" | "kernel" => whole(&mut member.value),
                 "cells" => {
                     if let Value::Array { items, .. } = &mut member.value {
                         items.iter_mut().for_each(pair);

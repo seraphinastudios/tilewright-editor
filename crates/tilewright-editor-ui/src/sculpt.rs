@@ -366,10 +366,153 @@ pub fn flatten_plan(
     Ok(changes)
 }
 
+/// The only smooth kernel version this editor knows: the rule of
+/// [`smoothed`], frozen for `smooth_heights` steps that record it
+/// (`decisions/0008-smooth-heights.md`). Part of the wire form.
+pub const SMOOTH_KERNEL: u32 = 1;
+
+/// The kernel rule: [`SMOOTH_KERNEL`] only.
+///
+/// # Errors
+/// [`RefusalCode::InputInvalid`] for any other version.
+pub fn check_kernel(kernel: u32) -> Result<(), SessionError> {
+    if kernel != SMOOTH_KERNEL {
+        return Err(refuse(
+            RefusalCode::InputInvalid,
+            &format!("unknown smooth kernel {kernel}; this editor knows kernel {SMOOTH_KERNEL}"),
+        ));
+    }
+    Ok(())
+}
+
+/// The offsets of a cell's eight neighbours, in row order, each with its
+/// kernel-1 weight: 2 when it shares an edge with the cell, 1 when
+/// diagonal. The cell itself weighs [`SMOOTH_CENTRE`].
+pub const SMOOTH_NEIGHBOURS: [([i64; 2], i64); 8] = [
+    ([-1, -1], 1),
+    ([0, -1], 2),
+    ([1, -1], 1),
+    ([-1, 0], 2),
+    ([1, 0], 2),
+    ([-1, 1], 1),
+    ([0, 1], 2),
+    ([1, 1], 1),
+];
+/// The kernel-1 weight of the cell itself.
+pub const SMOOTH_CENTRE: i64 = 4;
+
+/// Kernel 1 for one cell of stored height `height` whose neighbours, in
+/// [`SMOOTH_NEIGHBOURS`]' order, hold `around` (`None`: not read, because
+/// outside the active view or in a chunk that does not exist), under
+/// `grant` (frozen, see `decisions/0008-smooth-heights.md`): every height
+/// read, the cell's own included, is clamped into the range; the new
+/// height is the cell's clamped height `h` plus the weighted sum of the
+/// read neighbours' differences from `h`, divided by the total weight
+/// read, rounded to the nearest integer with an exact half toward zero.
+/// The result always lies in the range; the cell changes when it differs
+/// from `height`.
+#[must_use]
+pub fn smoothed(height: i32, around: [Option<i32>; 8], grant: HeightGrant) -> i32 {
+    let clamp = |value: i32| i64::from(value.clamp(grant.min, grant.max));
+    let own = clamp(height);
+    let (mut sum, mut weight) = (0_i64, SMOOTH_CENTRE);
+    for (read, (_, neighbour)) in around.into_iter().zip(SMOOTH_NEIGHBOURS) {
+        if let Some(read) = read {
+            sum += neighbour * (clamp(read) - own);
+            weight += neighbour;
+        }
+    }
+    let magnitude = sum.unsigned_abs();
+    let divisor = weight.unsigned_abs();
+    let mut quotient = magnitude / divisor;
+    if 2 * (magnitude - quotient * divisor) > divisor {
+        quotient += 1;
+    }
+    // At most the largest difference read, so the sum lies in the range.
+    let step = i64::try_from(quotient).unwrap_or(0);
+    let new = if sum < 0 { own - step } else { own + step };
+    i32::try_from(new).unwrap_or(height)
+}
+
+/// What a smooth plan leaves out besides its changes: covered cells
+/// already even (kernel 1 gives their own height) and covered cells in
+/// chunks that do not exist.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SmoothCounts {
+    pub even: usize,
+    pub missing: usize,
+}
+
+/// The cells of smooth `cells` with `kernel` that its `terrain.set` on the
+/// `height` grid changes in `world` under `catalog`, each with its height
+/// before and after ([`smoothed`]), in stroke order, and the counts of the
+/// cells it leaves out: what dispatching an
+/// [`Action::SmoothHeights`](crate::Action::SmoothHeights) prepares, and
+/// what a proposal step's words and the desktop's live preview count. Every
+/// height read is a committed one, never another cell's new height, so the
+/// order of `cells` does not change any result. A neighbour is read only
+/// inside the active view and in a chunk that exists.
+///
+/// # Errors
+/// In this order: the stroke rule (input codes); the kernel
+/// ([`check_kernel`]); [`RefusalCode::GrantMissing`] without
+/// `editing.heights`; [`RefusalCode::ScopeOutsideView`] for a cell outside
+/// the active view; [`RefusalCode::TargetUnsupported`] when a new height
+/// would stack past the 32-bit range on this layer;
+/// [`RefusalCode::ChangeNone`] when no cell would change, saying how many
+/// were already even and how many in chunks that do not exist.
+pub fn smooth_plan(
+    world: &World,
+    catalog: &PreviewCatalog,
+    plane: &str,
+    layer: i32,
+    cells: &[[i64; 2]],
+    kernel: u32,
+) -> Result<(Vec<HeightChange>, SmoothCounts), SessionError> {
+    crate::session::stroke_cells(cells)?;
+    check_kernel(kernel)?;
+    let grant = granted(catalog)?;
+    let (found, base) = located(world, catalog, plane, layer, cells)?;
+    let read = |x: i64, y: i64, [dx, dy]: [i64; 2]| {
+        let (x, y) = (x.checked_add(dx)?, y.checked_add(dy)?);
+        if !catalog.tile_in_active_view(plane, layer, x, y) {
+            return None;
+        }
+        crate::heights::cell_height(found, layer, x, y)
+    };
+    let mut counts = SmoothCounts::default();
+    let mut changes = Vec::new();
+    for &[x, y] in cells {
+        let Some(before) = crate::heights::cell_height(found, layer, x, y) else {
+            counts.missing += 1;
+            continue;
+        };
+        let around = SMOOTH_NEIGHBOURS.map(|(offset, _)| read(x, y, offset));
+        let after = smoothed(before, around, grant);
+        if after == before {
+            counts.even += 1;
+            continue;
+        }
+        stacks(base, after, [x, y], layer)?;
+        changes.push(([x, y], before, after));
+    }
+    if changes.is_empty() {
+        return Err(refuse(
+            RefusalCode::ChangeNone,
+            &format!(
+                "smooth changes no cell: {} covered cells already even, {} in map chunks that do not exist (painting terrain there creates them)",
+                counts.even, counts.missing
+            ),
+        ));
+    }
+    Ok((changes, counts))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Adjusted, MAXIMUM_AMOUNT, MAXIMUM_TARGET, adjusted, check_amount, check_target, flattened,
+        Adjusted, MAXIMUM_AMOUNT, MAXIMUM_TARGET, SMOOTH_KERNEL, adjusted, check_amount,
+        check_kernel, check_target, flattened, smoothed,
     };
     use crate::RefusalCode;
     use tilewright_editor_preview::HeightGrant;
@@ -471,6 +614,121 @@ mod tests {
                 check_target(target).unwrap_err().code(),
                 RefusalCode::InputBudget,
                 "{target}"
+            );
+        }
+    }
+
+    /// Neighbours in [`super::SMOOTH_NEIGHBOURS`]' order: corners at 0, 2,
+    /// 5, 7; edges at 1, 3, 4, 6.
+    fn ring(corner: Option<i32>, edge: Option<i32>) -> [Option<i32>; 8] {
+        [corner, edge, corner, edge, edge, corner, edge, corner]
+    }
+    const WIDE: HeightGrant = HeightGrant {
+        min: -100,
+        max: 100,
+    };
+
+    #[test]
+    fn smoothing_takes_the_weighted_mean_of_the_cell_and_its_neighbours() {
+        // Even ground stays.
+        assert_eq!(smoothed(5, ring(Some(5), Some(5)), WIDE), 5);
+        // A pit among 16s: (4 * 0 + 12 * 16) / 16 = 12; a spike: 4.
+        assert_eq!(smoothed(0, ring(Some(16), Some(16)), WIDE), 12);
+        assert_eq!(smoothed(16, ring(Some(0), Some(0)), WIDE), 4);
+        assert_eq!(smoothed(-16, ring(Some(0), Some(0)), WIDE), -4);
+        // Edges weigh 2, corners 1: (4 * 0 + 8 * 8 + 4 * 0) / 16 = 4, and
+        // (4 * 0 + 0 + 4 * 8) / 16 = 2.
+        assert_eq!(smoothed(0, ring(Some(0), Some(8)), WIDE), 4);
+        assert_eq!(smoothed(0, ring(Some(8), Some(0)), WIDE), 2);
+        // Nearest integer: 3 / 16 rounds to 0, 9 / 16 to 1; and below 0.
+        let one_corner = |value| [Some(value), None, None, None, None, None, None, None];
+        // Weight 4 + 1 = 5: 3 / 5 = 0.6 rounds to 1, 2 / 5 = 0.4 to 0.
+        assert_eq!(smoothed(0, one_corner(3), WIDE), 1);
+        assert_eq!(smoothed(0, one_corner(2), WIDE), 0);
+        assert_eq!(smoothed(0, one_corner(-3), WIDE), -1);
+        assert_eq!(smoothed(0, one_corner(-2), WIDE), 0);
+    }
+
+    #[test]
+    fn an_exact_half_rounds_toward_the_cells_own_height() {
+        // Two corners read, weight 6: differences 1 and 2 make 3 / 6 = 0.5.
+        let two = |a, b| [Some(a), None, Some(b), None, None, None, None, None];
+        assert_eq!(smoothed(0, two(1, 2), WIDE), 0);
+        assert_eq!(smoothed(0, two(-1, -2), WIDE), 0);
+        // 9 / 6 = 1.5: one step, not two, either way.
+        assert_eq!(smoothed(0, two(4, 5), WIDE), 1);
+        assert_eq!(smoothed(0, two(-4, -5), WIDE), -1);
+        // The same around 5 and -5: the mean 5.5 stays 5, -5.5 stays -5
+        // (floor would give -6, half away from zero 6 and -6).
+        assert_eq!(smoothed(5, two(6, 7), WIDE), 5);
+        assert_eq!(smoothed(-5, two(-6, -7), WIDE), -5);
+        assert_eq!(smoothed(6, two(5, 4), WIDE), 6);
+        assert_eq!(smoothed(-6, two(-5, -4), WIDE), -6);
+        // All eight read: edges at 1, corners at 0 make 8 / 16 = 0.5.
+        assert_eq!(smoothed(0, ring(Some(0), Some(1)), WIDE), 0);
+        assert_eq!(smoothed(1, ring(Some(1), Some(0)), WIDE), 1);
+    }
+
+    #[test]
+    fn neighbours_not_read_are_left_out_of_the_weight() {
+        // Nothing read: the cell keeps its height.
+        assert_eq!(smoothed(7, [None; 8], WIDE), 7);
+        // One edge at 12, weight 6: 24 / 6 = 4.
+        let edge = [None, Some(12), None, None, None, None, None, None];
+        assert_eq!(smoothed(0, edge, WIDE), 4);
+        // Counted as 0 instead, it would be 24 / 16, rounded to 2.
+        assert_ne!(smoothed(0, edge, WIDE), 2);
+    }
+
+    #[test]
+    fn every_height_read_is_clamped_into_the_range() {
+        let range = HeightGrant { min: -8, max: 8 };
+        // One edge neighbour far above: it counts as 8, so 16 / 16 = 1.
+        let mut around = ring(Some(0), Some(0));
+        around[1] = Some(1000);
+        assert_eq!(smoothed(0, around, range), 1);
+        around[1] = Some(-1000);
+        assert_eq!(smoothed(0, around, range), -1);
+        // A cell outside the range is read as its end, so it moves in.
+        assert_eq!(smoothed(30, [None; 8], range), 8);
+        assert_eq!(smoothed(-30, ring(Some(-8), Some(-8)), range), -8);
+        assert_eq!(smoothed(30, ring(Some(0), Some(0)), range), 2);
+        // The range's ends are results.
+        assert_eq!(smoothed(8, ring(Some(8), Some(8)), range), 8);
+        assert_eq!(smoothed(-8, ring(Some(-8), Some(-8)), range), -8);
+    }
+
+    #[test]
+    fn smoothing_never_overflows_at_the_integer_extremes() {
+        let wide = HeightGrant {
+            min: i32::MIN,
+            max: i32::MAX,
+        };
+        // (4 * MAX + 12 * MIN) / 16 = -2^30 - 0.25.
+        assert_eq!(
+            smoothed(i32::MAX, ring(Some(i32::MIN), Some(i32::MIN)), wide),
+            -1_073_741_824
+        );
+        assert_eq!(
+            smoothed(i32::MIN, ring(Some(i32::MAX), Some(i32::MAX)), wide),
+            1_073_741_823
+        );
+        assert_eq!(smoothed(i32::MAX, [None; 8], wide), i32::MAX);
+        assert_eq!(
+            smoothed(i32::MIN, [None; 8], HeightGrant { min: -8, max: 8 }),
+            -8
+        );
+    }
+
+    #[test]
+    fn only_kernel_one_exists() {
+        assert_eq!(SMOOTH_KERNEL, 1);
+        assert!(check_kernel(1).is_ok());
+        for kernel in [0, 2, u32::MAX] {
+            assert_eq!(
+                check_kernel(kernel).unwrap_err().code(),
+                RefusalCode::InputInvalid,
+                "{kernel}"
             );
         }
     }
