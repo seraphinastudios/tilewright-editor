@@ -4227,7 +4227,7 @@ impl Application {
             "committed_revision":tilewright_editor_document::revision_hex(&self.session.history().document().revision()),
             "catalog_revision":tilewright_editor_document::revision_hex(&self.prepared.catalog_revision),
             "width":frame.width,"height":frame.height,"status":self.session.status().to_string(),
-            "toolkit":tilewright_editor_document::TOOLKIT_VERSION,"renderer":"0.7.1","pending":self.session.history().pending().is_some()
+            "toolkit":tilewright_editor_document::TOOLKIT_VERSION,"renderer":"0.7.2","pending":self.session.history().pending().is_some()
         });
         // Only while hovering with the Fill or Replace rule, so other frames
         // are unchanged.

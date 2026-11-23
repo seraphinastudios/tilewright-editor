@@ -1,6 +1,6 @@
 # Offline editing prototype
 
-The prototype targets World 0.2.2 and renderer 0.7.1. Release builds require
+The prototype targets World 0.2.2 and renderer 0.7.2. Release builds require
 the exact published registry dependencies; local source candidates do not
 establish released-consumer acceptance. The generic
 editor opens ordinary World data and its strict `preview.jsonc` catalog. A
@@ -1130,7 +1130,7 @@ art as ATX1 files and the catalog entries. The editor has no image decoder
 and converts nothing. An ATX1 file is the four bytes `ATX1`, the width and
 the height as little-endian unsigned 32-bit integers, then `width × height`
 pixels of four bytes each (red, green, blue, alpha), tightly packed, row by
-row from the top, as the released `tilewright-render-resources` 0.7.1 crate
+row from the top, as the released `tilewright-render-resources` 0.7.2 crate
 defines the envelope. Width and height are at least 1. Alpha is straight,
 not premultiplied: both renderers blend the stored colour by its alpha
 (source over), and the values are used as stored, with no gamma conversion
