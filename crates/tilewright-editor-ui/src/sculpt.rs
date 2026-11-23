@@ -268,6 +268,40 @@ pub fn flattened(height: i32, target: i32) -> Option<i32> {
     (height != target).then_some(target)
 }
 
+/// The target a desktop Flatten stroke pressed on plane tile `[x, y]` of
+/// `layer` records: that tile's height in `world`, which the caller passes
+/// as the committed World, sampled once at the press. Refused, with words
+/// for the person, without `editing.heights`, on a tile whose chunk does
+/// not exist (there is no height to sample), and on a tile whose height is
+/// outside the granted range: a flatten to it would be refused, and
+/// clamping it into the range would flatten to a height nobody pointed at.
+///
+/// # Errors
+/// The refusal's words.
+pub fn flatten_target(
+    world: &World,
+    catalog: &PreviewCatalog,
+    plane: &str,
+    layer: i32,
+    [x, y]: [i64; 2],
+) -> Result<i32, String> {
+    let grant = granted(catalog).map_err(|error| error.message().to_owned())?;
+    let height = world
+        .planes()
+        .get(plane)
+        .and_then(|found| crate::heights::cell_height(found, layer, x, y))
+        .ok_or_else(|| {
+            format!("Flatten needs a starting tile with ground: tile ({x}, {y}) has no map chunk.")
+        })?;
+    if !grant.contains(height) {
+        return Err(format!(
+            "Flatten refused: this tile's height {height} is outside the granted range {} to {}; start on a tile inside it.",
+            grant.min, grant.max
+        ));
+    }
+    Ok(height)
+}
+
 /// The cells of flatten `cells` to `target` that its `terrain.set` on the
 /// `height` grid changes in `world` under `catalog`, each with its height
 /// before and after (`target`), in stroke order: what dispatching an

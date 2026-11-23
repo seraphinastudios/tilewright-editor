@@ -2171,6 +2171,9 @@ mod height_steps;
 #[path = "sculpt_mode.rs"]
 mod sculpt_mode;
 
+#[path = "flatten_mode.rs"]
+mod flatten_mode;
+
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]

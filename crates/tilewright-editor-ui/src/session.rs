@@ -808,7 +808,8 @@ impl Session {
     /// refuses the whole stroke. An error means the release would be
     /// refused too, including a stroke that changes no cell. A height
     /// stroke's cells are [`crate::sculpt::plan`]'s, which its
-    /// [`Action::AdjustHeights`] dispatch prepares.
+    /// [`Action::AdjustHeights`] dispatch prepares, and a flatten stroke's
+    /// [`crate::sculpt::flatten_plan`]'s.
     pub fn stroke_changes(
         &self,
         stroke: &crate::brush::Stroke,
@@ -842,6 +843,19 @@ impl Session {
                     stroke.layer(),
                     &cells,
                     *amount,
+                )?
+                .into_iter()
+                .map(|(at, _, _)| at)
+                .collect());
+            }
+            crate::brush::StrokeTarget::Flatten { target } => {
+                return Ok(crate::sculpt::flatten_plan(
+                    self.history.document().world(),
+                    &self.catalog,
+                    stroke.plane(),
+                    stroke.layer(),
+                    &cells,
+                    *target,
                 )?
                 .into_iter()
                 .map(|(at, _, _)| at)

@@ -298,7 +298,11 @@ and is frozen for that kind ([ADR 0007](../decisions/0007-flatten-heights.md)).
 Under any range that still holds the target, the same world gives the
 same transaction; under one that does not, a proposal step is refused with
 the engine's grant.missing. `flatten_plan` answers which cells a flatten
-would change, from the same code; a proposal step's words count them.
+would change, from the same code; a proposal step's words count them,
+and the desktop's [Sculpt mode](OFFLINE-PROTOTYPE.md#sculpt-mode) Flatten
+tool marks them while a stroke is dragged and releases the stroke as one
+`FlattenHeights` to the height it read under the press
+(`sculpt::flatten_target`, on the committed World).
 
 ## Refusal codes
 

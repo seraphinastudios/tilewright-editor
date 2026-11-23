@@ -562,8 +562,28 @@ the tool and step (pressing it, or F, switches between Raise and Lower);
 then "Granted heights -64 to 64", the brush rows, "Raise: drag lifts each
 cell once" and "Lower: drag sinks each cell once", and "Step 1  1" and
 "Step 8  8" (keys 1 and 8). The tool and step are kept across modes. The
-status line reads "Ready. Drag to raise heights by 8." Later pull requests
-add flatten and smooth to the tool list.
+status line reads "Ready. Drag to raise heights by 8." A later pull request
+adds smooth to the tool list.
+
+The third tool, Flatten (F after Lower; F again goes back to Raise), sets
+every cell a drag covers to one height: the height of the tile where the
+drag starts. That target is read once, at the press, from the committed
+World (a stroke cannot start while a change is pending), and stays fixed
+for the whole stroke, whatever heights the drag passes over; the release
+prepares one `flatten_heights` action ([docs/ENGINE.md](ENGINE.md#flatten))
+that records it. Its rows read "Flatten: drag levels to the start tile",
+and the pinned row "Sculpt: Flatten  F", then "Sculpt: Flatten to 8  F"
+while a stroke runs. The step rows are dimmed and keys 1 and 8 do nothing
+for it (the step stays kept for Raise and Lower). The status line reads
+"Ready. Drag to flatten heights to the start tile's height." A press on a
+tile without a map chunk is refused ("Flatten needs a starting tile with
+ground: tile (33, 1) has no map chunk."), and so is a press on a tile whose
+height is outside the granted range ("Flatten refused: this tile's height
+30 is outside the granted range -8 to 8; start on a tile inside it."):
+the target would not be granted, and clamping it into the range would
+flatten to a height nobody pointed at. Start on a tile inside the range
+and drag over the far one: a flatten brings any tile back into the range,
+however far outside it is.
 
 While dragging, before the release, each cell the release would change
 carries a mark: a magenta copy of the cell's flat shape at half its size
@@ -589,8 +609,10 @@ ends "Too many cells to preview."; the release still prepares every cell.
 Turning the zones off (O, between strokes) or zooming in brings the marks
 back.
 The marked cells are the engine's own answer
-(`tilewright_editor_ui::sculpt::plan` on the committed World), the cells
-Accept writes. The status line says what the release would do: "Raising 37
+(`tilewright_editor_ui::sculpt::plan`, or `flatten_plan` for Flatten, on the
+committed World), the cells Accept writes. For Flatten the status line reads
+"Flattening 37 cells to 8, 35 to change, 2 already there; release to
+review.", cells already at the target being left out and counted. The status line says what the release would do: "Raising 37
 cells by 8, 35 to change, 2 at or above the top; release to review." Cells
 at or beyond the end the step moves toward ("at or above the top", "at or
 below the bottom") and cells of chunks that do not exist ("without a
@@ -603,13 +625,15 @@ way and prepares nothing; avoid that cell, or use the larger step. A stroke
 that would change no cell is refused with the engine's count of the cells at
 the end and without a chunk. A release whose result cannot be drawn at the
 current view is cancelled, as for any edit ("Change refused: ..., Zoom out,
-or raise or lower by less."), and the mode carries on. While rendering
+or raise or lower by less.", or for Flatten "Zoom out, or flatten to a
+height nearer the tiles around it."), and the mode carries on. While rendering
 pauses editing, a press is refused with the pause's reason. With a proposal
 open, the person's own strokes between steps are prepared and accepted like
 any other edit of theirs. A frame captured while a sculpt stroke runs has a
 `sculpt_preview` member: the signed `amount`, the covered `cells`, and either
 `changes`, `at_end`, `missing` and the `first` eight changed cells, or
-`refused` with the engine's message.
+`refused` with the engine's message. A Flatten stroke's has `target` in
+place of `amount` and `at_target` in place of `at_end`.
 
 The scripted demonstration has no sculpt step: the neutral sample grants no
 height range, and it stays that way. Hand test on a copy (every height of the
@@ -641,8 +665,15 @@ heights as in the [Heights](#heights) hand test):
    pending.
 4. Press F (the pinned row reads "Sculpt: Lower by 8  F"), then click tile
    (1, 1): a click is a one-cell stroke, and the review shows its height
-   going from 8 to 0. Press Esc to cancel it. Press T: the tint goes off
-   again, as it was before U.
+   going from 8 to 0. Press Esc to cancel it.
+5. Press F (the pinned row reads "Sculpt: Flatten  F" and the step rows
+   dim). Press on tile (1, 1), height 8, and drag to (1, 3) with the 1x1
+   brush, holding the button: the pinned row reads "Sculpt: Flatten to 8
+   F", (1, 2) and (1, 3) are marked, and the status line reads "Flattening
+   3 cells to 8, 2 to change, 1 already there; release to review."
+   Release and press Enter: the inspector, on (1, 1), still reads "Height:
+   8", and (1, 3) now has the lightest band too. Press F to go back to
+   Raise, then T: the tint goes off again, as it was before U.
 
 ### Zones
 

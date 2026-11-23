@@ -38,20 +38,22 @@ pub enum ToolMode {
 }
 
 /// What a press-drag does in Sculpt mode. Kept across modes like the
-/// brush. Raise and lower are [`crate::sculpt`]'s `adjust_heights`; later
-/// tools join this list.
+/// brush. Raise and lower are [`crate::sculpt`]'s `adjust_heights`;
+/// flatten is its `flatten_heights`, to the height under the press.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SculptTool {
     #[default]
     Raise,
     Lower,
+    Flatten,
 }
 impl SculptTool {
-    pub const ALL: [Self; 2] = [Self::Raise, Self::Lower];
+    pub const ALL: [Self; 3] = [Self::Raise, Self::Lower, Self::Flatten];
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Raise => "raise",
             Self::Lower => "lower",
+            Self::Flatten => "flatten",
         }
     }
     /// The next tool in [`Self::ALL`], wrapping (what F and the pinned
@@ -60,8 +62,14 @@ impl SculptTool {
     pub const fn next(self) -> Self {
         match self {
             Self::Raise => Self::Lower,
-            Self::Lower => Self::Raise,
+            Self::Lower => Self::Flatten,
+            Self::Flatten => Self::Raise,
         }
+    }
+    /// Whether the step (1 or 8) applies: to raise and lower, not to
+    /// flatten, whose stroke sets one height.
+    pub const fn stepped(self) -> bool {
+        !matches!(self, Self::Flatten)
     }
 }
 
@@ -392,12 +400,13 @@ impl ToolState {
         self.sculpt_step = SculptStep(step);
         Ok(())
     }
-    /// The signed amount a sculpt stroke records: the step, negative to
-    /// lower.
+    /// The signed amount a raise or lower stroke records: the step,
+    /// negative to lower (and for flatten, which records a target instead,
+    /// the step).
     pub fn sculpt_amount(&self) -> i32 {
         let step = i32::from(self.sculpt_step.0);
         match self.sculpt {
-            SculptTool::Raise => step,
+            SculptTool::Raise | SculptTool::Flatten => step,
             SculptTool::Lower => -step,
         }
     }
@@ -1690,7 +1699,7 @@ impl ToolState {
             return self.begin_zone_stroke(inspector, cell, pending);
         }
         if self.mode == ToolMode::Sculpt {
-            return self.begin_sculpt_stroke(inspector, cell, pending);
+            return self.begin_sculpt_stroke(inspector, cell, pending, None);
         }
         if self.filling() {
             return Err(ToolError(
@@ -1793,16 +1802,43 @@ impl ToolState {
         self.stroke = Some(stroke);
         Ok(())
     }
+    /// [`ToolState::begin_stroke`] for the Flatten tool of Sculpt mode,
+    /// with the `target` the caller sampled at the press
+    /// ([`crate::sculpt::flatten_target`], from the committed World). The
+    /// stroke keeps it, whatever heights the drag passes over.
+    pub fn begin_flatten_stroke(
+        &mut self,
+        inspector: &Inspector<'_>,
+        cell: &SelectionKey,
+        pending: bool,
+        target: i32,
+    ) -> Result<(), ToolError> {
+        if self.mode != ToolMode::Sculpt || self.sculpt != SculptTool::Flatten {
+            return Err(ToolError("Flatten strokes are Sculpt mode's Flatten tool"));
+        }
+        self.begin_sculpt_stroke(inspector, cell, pending, Some(target))
+    }
     /// A sculpt stroke samples the ground cell mask like a terrain stroke;
     /// its release raises or lowers the covered cells' heights by
-    /// [`Self::sculpt_amount`], fixed at the press.
+    /// [`Self::sculpt_amount`], fixed at the press, or flattens them to
+    /// `target`, sampled at the press (required for the Flatten tool).
     fn begin_sculpt_stroke(
         &mut self,
         inspector: &Inspector<'_>,
         cell: &SelectionKey,
         pending: bool,
+        target: Option<i32>,
     ) -> Result<(), ToolError> {
         available(pending)?;
+        let goal = match (self.sculpt, target) {
+            (SculptTool::Flatten, Some(target)) => StrokeTarget::Flatten { target },
+            (SculptTool::Flatten, None) => {
+                return Err(ToolError("Flatten samples its target at the press"));
+            }
+            _ => StrokeTarget::Heights {
+                amount: self.sculpt_amount(),
+            },
+        };
         if inspector.catalog.editing().heights.is_none() {
             return Err(ToolError(
                 "The catalog does not allow editing heights (editing.heights)",
@@ -1829,9 +1865,7 @@ impl ToolState {
             plane.clone(),
             *layer,
             grid.clone(),
-            StrokeTarget::Heights {
-                amount: self.sculpt_amount(),
-            },
+            goal,
             self.brush,
             stamp.revision,
             stamp.generation,

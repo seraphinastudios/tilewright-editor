@@ -29,10 +29,10 @@ use tilewright_editor_ui::Action;
 use tilewright_editor_ui::brush::{Brush, BrushShape};
 use tilewright_editor_ui::tools::{SculptTool, ToolMode};
 
-const MAIN: &str = "planes/main/layers/0/0_0.jsonc";
+pub(super) const MAIN: &str = "planes/main/layers/0/0_0.jsonc";
 
 /// The range `min` to `max`, and `height(x, y)` in the main chunk.
-fn heights(root: &Path, min: i32, max: i32, height: impl Fn(i64, i64) -> i64) {
+pub(super) fn heights(root: &Path, min: i32, max: i32, height: impl Fn(i64, i64) -> i64) {
     edit_json(root, "preview.jsonc", |catalog| {
         catalog["editing"]["heights"] = json!({"min": min, "max": max});
     });
@@ -58,7 +58,7 @@ fn isometric(root: &Path) {
 
 /// Isometric with 64 x 32 diamonds, so the sample's 32 x 32 art does not
 /// overhang them and every tile's mark shows.
-fn wide_isometric(root: &Path) {
+pub(super) fn wide_isometric(root: &Path) {
     edit_json(root, "profile/profile.jsonc", |profile| {
         profile["projection"] = json!({"kind": "isometric", "tile_width": 64, "tile_height": 32});
     });
@@ -66,7 +66,7 @@ fn wide_isometric(root: &Path) {
 
 /// The 1280x800 application in Sculpt mode, entered by U, with a 3 x 3
 /// square brush.
-fn sculpt_application(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
+pub(super) fn sculpt_application(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
     let (temporary, mut app) = zone_application(prepare);
     route(&mut app, &key(Keycode::U)).unwrap();
     assert_eq!(app.tools.mode(), ToolMode::Sculpt);
@@ -79,13 +79,13 @@ fn sculpt_application(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Applic
 }
 
 /// The committed (or, while pending, the shown) height of tile `x, y`.
-fn height(app: &Application, x: i64, y: i64) -> i32 {
+pub(super) fn height(app: &Application, x: i64, y: i64) -> i32 {
     let plane = &app.session.world().planes()["main"];
     tilewright_editor_ui::heights::cell_height(plane, 0, x, y).unwrap()
 }
 
 /// Press at `from`, drag through `through`, keep the button down.
-fn drag(app: &mut Application, from: [i64; 2], through: &[[i64; 2]]) {
+pub(super) fn drag(app: &mut Application, from: [i64; 2], through: &[[i64; 2]]) {
     let start = cell_pixel(app, from[0], from[1]);
     crate::prototype::native_pointer(app, start, BRUSH_WINDOW, BRUSH_WINDOW).unwrap();
     for &[x, y] in through {
@@ -94,19 +94,19 @@ fn drag(app: &mut Application, from: [i64; 2], through: &[[i64; 2]]) {
     }
 }
 
-fn release(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
+pub(super) fn release(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
     let pixel = cell_pixel(app, at[0], at[1]);
     crate::prototype::native_stroke_release(app, pixel, BRUSH_WINDOW, BRUSH_WINDOW)
 }
 
 /// The sculpt overlay of the frame being shown.
-fn marks(app: &mut Application) -> Vec<tilewright_scene::Quad> {
+pub(super) fn marks(app: &mut Application) -> Vec<tilewright_scene::Quad> {
     app.refresh_ui();
     crate::prototype::stroke_overlay(app)
 }
 
 /// The tiles the sculpt preview marks, read back through the cell picks.
-fn marked(app: &mut Application) -> BTreeSet<[i64; 2]> {
+pub(super) fn marked(app: &mut Application) -> BTreeSet<[i64; 2]> {
     marks(app)
         .iter()
         .map(
@@ -119,7 +119,7 @@ fn marked(app: &mut Application) -> BTreeSet<[i64; 2]> {
 }
 
 /// The engine's own answer for the running stroke.
-fn engine(app: &Application) -> BTreeSet<[i64; 2]> {
+pub(super) fn engine(app: &Application) -> BTreeSet<[i64; 2]> {
     app.session
         .stroke_changes(app.tools.stroke().unwrap())
         .unwrap()
@@ -656,7 +656,7 @@ fn strokes_are_refused_in_the_pauses_words() {
 
 /// The isometric sample with the range -1024 to 1024 and the steep
 /// pattern of the view tests at ±512 in the 3 x 3 tiles from `at`.
-fn steep_at(root: &Path, [ax, ay]: [i64; 2]) {
+pub(super) fn steep_at(root: &Path, [ax, ay]: [i64; 2]) {
     let pattern = [[1, 1, -1], [1, -1, -1], [-1, -1, 1]];
     heights(root, -1024, 1024, |x, y| {
         if (ax..ax + 3).contains(&x) && (ay..ay + 3).contains(&y) {
@@ -670,7 +670,7 @@ fn steep_at(root: &Path, [ax, ay]: [i64; 2]) {
     });
     isometric(root);
 }
-fn steep(root: &Path) {
+pub(super) fn steep(root: &Path) {
     steep_at(root, [1, 1]);
 }
 
@@ -812,6 +812,24 @@ fn the_guides_hand_test_reads_as_written() {
     route(&mut app, &key(Keycode::Escape)).unwrap();
     assert!(app.session.history().pending().is_none());
     assert_eq!(height(&app, 1, 1), 8);
+    // 5.
+    route(&mut app, &key(Keycode::F)).unwrap();
+    assert!(sidebar_texts(&mut app).contains(&"Sculpt: Flatten  F".to_owned()));
+    acknowledge_ui(&mut app);
+    drag(&mut app, [1, 1], &[[1, 3]]);
+    assert!(sidebar_texts(&mut app).contains(&"Sculpt: Flatten to 8  F".to_owned()));
+    assert_eq!(marked(&mut app), BTreeSet::from([[1, 2], [1, 3]]));
+    assert_eq!(
+        app.status_label(),
+        "Flattening 3 cells to 8, 2 to change, 1 already there; release to review."
+    );
+    release(&mut app, [1, 3]).unwrap();
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Return)).unwrap();
+    assert!(sidebar_texts(&mut app).contains(&"Height: 8".to_owned()));
+    assert_eq!(height(&app, 1, 3), 8);
+    route(&mut app, &key(Keycode::F)).unwrap();
+    assert_eq!(app.tools.sculpt_tool(), SculptTool::Raise);
     assert!(app.tools.heights_visible());
     route(&mut app, &key(Keycode::T)).unwrap();
     assert!(!app.tools.heights_visible(), "it was off before U");
