@@ -605,8 +605,36 @@ fn the_composed_frame_keeps_to_the_editors_own_raster_sample_limit() {
     );
     assert_eq!(app.tools.draft_text(), Some("Trail marker"));
     assert!(app.session.history().pending().is_none());
-    // Back within the limit, it is drawn again.
+    // The native loop pauses on that refusal. The first Esc discards the
+    // draft, and the next frame draws, but the pause stays; a second Esc
+    // ends it (as a zoom or a pan would).
+    app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::Present,
+        &error,
+    ));
+    let paused = "Editing paused: the frame could not be shown.";
+    let mut input = crate::native_input::NativeInput::new(7);
+    let mut clipboard = String::new();
+    let escape = input_key(7, Keycode::Escape, false);
+    route(&mut app, &mut input, &escape, &mut clipboard).unwrap();
+    assert!(app.tools.shared_draft().is_none(), "the draft is discarded");
+    crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert_eq!(app.status_label(), paused);
+    let _ = route(&mut app, &mut input, &escape, &mut clipboard);
+    assert!(app.blocked.is_none());
+    assert_ne!(app.status_label(), paused);
+    // Back within the limit, the field is drawn again.
     app.frame_limits = tilewright_scene::SceneLimits::default();
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(&mut app);
     let again = crate::prototype::workspace_presentation(&mut app).unwrap();
-    assert_eq!(again.scene.quads(), quads);
+    assert!(
+        again
+            .scene
+            .quads()
+            .iter()
+            .any(|quad| quad.semantic_id.0 >= SHARED_FIRST_SEMANTIC)
+    );
 }

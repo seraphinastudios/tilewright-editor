@@ -189,8 +189,9 @@ to leave room for the field's quads; `tilewright-ui-render` 0.1.1 does not
 report the field's raster samples, so a field that would take the frame past
 the sample limit is refused instead. If the shared field cannot be drawn
 (such a refusal, or a structural refusal from its renderer), editing pauses
-with the draft kept. Esc, which discards the draft, recovers; if the cause is
-the frame budget, zooming in also does.
+with the draft kept. Esc discards the draft; a second Esc, a zoom or a pan
+then ends the pause (if the cause is the frame budget, zooming in avoids it
+next time).
 
 What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints
