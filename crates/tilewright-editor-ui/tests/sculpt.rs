@@ -12,6 +12,9 @@ use tilewright_editor_commands::{History, RecoveryStore};
 use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewLimits, loader};
 use tilewright_editor_testkit::fixture_world;
+use tilewright_editor_ui::brush::{Brush, BrushShape};
+use tilewright_editor_ui::inspector;
+use tilewright_editor_ui::tools::{SculptTool, ToolMode, ToolState};
 use tilewright_editor_ui::{Action, Actor, RefusalCode, Session, sculpt};
 
 const CHUNK: &str = "planes/main/layers/0/0_0.jsonc";
@@ -691,4 +694,186 @@ fn without_the_grant_heights_cannot_be_edited_anywhere() {
         assert_eq!(error.code(), RefusalCode::GrantMissing);
     }
     assert!(session.history().pending().is_none());
+}
+
+// The desktop's Sculpt mode: its stroke collects cells as the terrain
+// brush does, and its release is one adjustment by the signed step.
+
+fn floor_cell(x: i64, y: i64) -> tilewright_editor_preview::SelectionKey {
+    tilewright_editor_preview::SelectionKey::Cell {
+        plane: "main".into(),
+        layer: 0,
+        grid: "floor".into(),
+        x,
+        y,
+    }
+}
+/// Select `start` and begin a sculpt stroke there, as a native press does.
+fn sculpt_press(
+    session: &mut Session,
+    tools: &mut ToolState,
+    start: [i64; 2],
+) -> Result<(), tilewright_editor_ui::tools::ToolError> {
+    session
+        .dispatch(
+            Action::Select {
+                generation: session.generation(),
+                key: floor_cell(start[0], start[1]),
+            },
+            &mut Records::default(),
+        )
+        .unwrap();
+    let key = session.selection().unwrap().clone();
+    let inspected = inspector::inspect(
+        session.world(),
+        session.catalog(),
+        session.selection(),
+        session.generation(),
+        revision(session),
+    );
+    tools.begin_stroke(&inspected, &key, !session.can_prepare())
+}
+fn sculpt_tools(tool: SculptTool, step: u16, radius: u16) -> ToolState {
+    let mut tools = ToolState::default();
+    tools.set_mode(ToolMode::Sculpt);
+    tools.set_sculpt_tool(tool);
+    tools.set_sculpt_step(step).unwrap();
+    tools.set_brush(Brush {
+        shape: BrushShape::Square,
+        radius,
+    });
+    tools
+}
+
+#[test]
+fn a_sculpt_stroke_releases_one_adjustment_by_the_signed_step() {
+    for (tool, step, amount) in [
+        (SculptTool::Raise, 1, 1),
+        (SculptTool::Raise, 8, 8),
+        (SculptTool::Lower, 1, -1),
+        (SculptTool::Lower, 8, -8),
+    ] {
+        let (_dir, mut session) = fixture_with(|_| {});
+        let mut tools = sculpt_tools(tool, step, 1);
+        assert_eq!(tools.sculpt_amount(), amount);
+        sculpt_press(&mut session, &mut tools, [1, 1]).unwrap();
+        let generation = session.generation();
+        // Back and forth over the same cells: each is covered once.
+        for x in [2, 3, 2, 1, 3] {
+            tools.extend_stroke(&floor_cell(x, 1), generation).unwrap();
+        }
+        let covered: Vec<[i64; 2]> = tools.stroke().unwrap().cells().collect();
+        // A 3 x 3 square from x 1 to 3: x 0 to 4, y 0 to 2.
+        assert_eq!(covered.len(), 15, "{covered:?}");
+        let preview: std::collections::BTreeSet<[i64; 2]> = session
+            .stroke_changes(tools.stroke().unwrap())
+            .unwrap()
+            .into_iter()
+            .collect();
+        let action = tools.finish_stroke(generation, false).unwrap().unwrap();
+        assert_eq!(
+            action,
+            Action::AdjustHeights {
+                plane: "main".into(),
+                layer: 0,
+                cells: covered.clone(),
+                amount,
+                expected: revision(&session),
+            }
+        );
+        session.dispatch(action, &mut Records::default()).unwrap();
+        // The preview is exactly the set Accept writes, each cell moved by
+        // the amount once.
+        let pending = pending_cells(&session);
+        assert_eq!(pending, expected_changes(&covered, amount, generated));
+        assert_eq!(
+            pending
+                .keys()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            preview
+        );
+        assert!(!preview.is_empty());
+    }
+}
+
+#[test]
+fn sculpt_steps_are_one_and_eight() {
+    let mut tools = ToolState::default();
+    assert_eq!(tools.sculpt_step(), 1);
+    assert_eq!(tools.sculpt_tool(), SculptTool::Raise);
+    for step in [0, 2, 7, 9, 64] {
+        assert!(tools.set_sculpt_step(step).is_err(), "{step}");
+        assert_eq!(tools.sculpt_step(), 1);
+    }
+    tools.set_sculpt_step(8).unwrap();
+    assert_eq!(tools.sculpt_amount(), 8);
+    assert_eq!(SculptTool::Raise.next(), SculptTool::Lower);
+    assert_eq!(SculptTool::Lower.next(), SculptTool::Raise);
+}
+
+#[test]
+fn the_sculpt_mode_shows_the_height_tint_and_puts_it_back() {
+    // Off before: shown in Sculpt mode, off again after.
+    let mut tools = ToolState::default();
+    tools.set_mode(ToolMode::Sculpt);
+    assert!(tools.heights_visible());
+    // Choosing Sculpt again keeps what it put back.
+    tools.set_mode(ToolMode::Sculpt);
+    tools.set_mode(ToolMode::Terrain);
+    assert!(!tools.heights_visible());
+    // On before: still on after.
+    tools.toggle_heights();
+    tools.set_mode(ToolMode::Sculpt);
+    assert!(tools.heights_visible());
+    tools.set_mode(ToolMode::Select);
+    assert!(tools.heights_visible());
+    // H inside the mode hides it there; leaving puts back what was before.
+    tools.toggle_heights();
+    tools.set_mode(ToolMode::Sculpt);
+    assert!(tools.heights_visible());
+    tools.toggle_heights();
+    assert!(!tools.heights_visible());
+    tools.set_mode(ToolMode::Zone);
+    assert!(!tools.heights_visible());
+    tools.toggle_heights();
+    tools.set_mode(ToolMode::Sculpt);
+    tools.toggle_heights();
+    tools.set_mode(ToolMode::Anchor);
+    assert!(tools.heights_visible());
+    // Other modes never touch it.
+    tools.set_mode(ToolMode::Terrain);
+    tools.set_mode(ToolMode::Place);
+    assert!(tools.heights_visible());
+}
+
+#[test]
+fn a_sculpt_stroke_needs_the_grant_and_no_pending_change() {
+    let (_dir, mut session) = fixture_with(|root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]
+                .as_object_mut()
+                .unwrap()
+                .remove("heights");
+        });
+    });
+    let mut tools = sculpt_tools(SculptTool::Raise, 8, 0);
+    assert_eq!(
+        sculpt_press(&mut session, &mut tools, [1, 1])
+            .unwrap_err()
+            .to_string(),
+        "The catalog does not allow editing heights (editing.heights)"
+    );
+    assert!(tools.stroke().is_none());
+    let (_dir, mut session) = fixture_with(|_| {});
+    let pending = adjust(&session, vec![[0, 0]], 1);
+    session.dispatch(pending, &mut Records::default()).unwrap();
+    let mut tools = sculpt_tools(SculptTool::Raise, 8, 0);
+    assert_eq!(
+        sculpt_press(&mut session, &mut tools, [1, 1])
+            .unwrap_err()
+            .to_string(),
+        "Accept or cancel the pending edit first"
+    );
+    assert!(tools.stroke().is_none());
 }

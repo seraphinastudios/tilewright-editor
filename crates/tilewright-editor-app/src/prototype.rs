@@ -263,9 +263,10 @@ impl SculptPreview {
     /// the engine's refusal in its own words.
     fn status(&self) -> String {
         let head = format!(
-            "{} {} cells by {}",
+            "{} {} {} by {}",
             self.verb(),
             self.covered,
+            if self.covered == 1 { "cell" } else { "cells" },
             self.amount.unsigned_abs()
         );
         match &self.plan {

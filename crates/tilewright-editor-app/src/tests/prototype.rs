@@ -2168,6 +2168,9 @@ mod scatter;
 #[path = "height_steps.rs"]
 mod height_steps;
 
+#[path = "sculpt_mode.rs"]
+mod sculpt_mode;
+
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]
