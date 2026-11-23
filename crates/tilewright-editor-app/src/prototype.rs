@@ -195,7 +195,7 @@ impl AnchorView {
     }
 }
 
-/// A sidebar row whose text names a zone id that must stay
+/// A sidebar row whose text names a zone id or terrain value that must stay
 /// distinguishable however narrow the sidebar is: fitted when the sidebar is
 /// laid out (see `workspace_render::fit_id`).
 enum IdText {
@@ -1721,8 +1721,16 @@ impl Application {
             rows.push(("Terrain palette".into(), None, true, false));
             for choice in tools::terrain_palette(self.session.catalog()) {
                 let active = self.tools.terrain_choice() == Some(&choice);
+                // Fitted later so the value each row writes stays readable.
+                fits.push((
+                    rows.len(),
+                    IdText::Id {
+                        id: choice.prototype.clone(),
+                        variants: tools::terrain_label_variants(self.session.world(), &choice),
+                    },
+                ));
                 rows.push((
-                    format!("{} / {}", choice.grid, choice.prototype),
+                    tools::terrain_label(self.session.world(), &choice),
                     Some(Control::Palette {
                         grid: choice.grid,
                         prototype: choice.prototype,
@@ -3095,8 +3103,8 @@ impl Application {
         let x = ui.sidebar_x();
         let width = ui.sidebar_width();
         let (mut rows, fits) = self.inspector_rows();
-        // Rows naming a zone id are fitted so the id's distinguishing tail
-        // survives a narrow sidebar: they then fit whole and are not cut
+        // Rows naming a zone id or a terrain palette value are fitted so
+        // the id's distinguishing tail survives a narrow sidebar: they then fit whole and are not cut
         // at the end again when laid out.
         for (index, text) in fits {
             let Some(row) = rows.get_mut(index) else {
@@ -3108,6 +3116,12 @@ impl Application {
                     crate::workspace_render::thumbnail_indent(ZONE_ROW_HEIGHT),
                 ),
                 Some(Control::AnchorChoose(_)) => (ZONE_ROW_HEIGHT, 0),
+                // Measured as if it had its thumbnail, which it has when
+                // its art is ready; without one the row is only wider.
+                Some(Control::Palette { .. }) => (
+                    PALETTE_ROW_HEIGHT,
+                    crate::workspace_render::thumbnail_indent(PALETTE_ROW_HEIGHT),
+                ),
                 _ => (TEXT_ROW_HEIGHT, 0),
             };
             let available = width.saturating_sub(indent);
@@ -3246,8 +3260,8 @@ impl Application {
     }
 
     /// The scrolled sidebar rows from logical `y` down. Text rows are
-    /// 26 px and Place palette rows, which carry their prototype's
-    /// thumbnail, are 40 px, each with a 2 px gap; only rows that fit whole,
+    /// 26 px and Place and terrain palette rows, which carry their
+    /// prototype's thumbnail, are 40 px, each with a 2 px gap; only rows that fit whole,
     /// gap included, are laid out. The scroll offset counts rows and stops where the last
     /// row is visible.
     /// Each sidebar row's swatch and swatch outline: a zone row's tint in
@@ -3316,7 +3330,12 @@ impl Application {
             .into_iter()
             .map(|(text, control, enabled, active)| {
                 let thumbnail = match &control {
-                    Some(Control::PlacePalette(proto)) => self
+                    Some(
+                        Control::PlacePalette(proto)
+                        | Control::Palette {
+                            prototype: proto, ..
+                        },
+                    ) => self
                         .session
                         .resources()
                         .prototype_texture(self.session.catalog(), proto),

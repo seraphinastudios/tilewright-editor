@@ -266,8 +266,10 @@ prototypes_more: 0
 terrain_palette:
   - grid: floor
     value: grass
+    terrain: grass
   - grid: floor
     value: sand
+    terrain: sand
 terrain_palette_more: 0
 zone_palette:
   - id: meadow
