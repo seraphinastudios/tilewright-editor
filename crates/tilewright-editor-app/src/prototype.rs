@@ -20,7 +20,9 @@ use tilewright_editor_preview::{
 use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
 use tilewright_editor_ui::brush::StrokeTarget;
 use tilewright_editor_ui::inspector::{self, SelectionSummary};
-use tilewright_editor_ui::tools::{self, PortalStep, TerrainRule, ToolMode, ToolState, ZoneChoice};
+use tilewright_editor_ui::tools::{
+    self, PortalStep, SculptTool, TerrainRule, ToolMode, ToolState, ZoneChoice,
+};
 use tilewright_editor_ui::{Action, Session, SessionPhase};
 use tilewright_editor_ui::{anchors, heights, portals, zones};
 use tilewright_render_api::{
@@ -31,7 +33,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Sculpt: F raise or lower, 1 or 8 step | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -59,6 +61,10 @@ use tilewright_editor_ui::review::{REVIEW_LIMIT_MESSAGE, Review};
 const ACTOR: &str = "editor:prototype";
 const PERSON_PREFIX: &str = "human:";
 const NOTHING_TO_PLACE: &str = "Place is unavailable: the catalog grants no prototype to place.";
+/// The refusal of Sculpt mode (U) under a catalog without
+/// `editing.heights`; its sidebar row is then not shown.
+const NOTHING_TO_SCULPT: &str =
+    "Sculpt is unavailable: the catalog does not grant height editing (editing.heights).";
 /// Sidebar row heights and the gap between rows, in logical pixels. Place
 /// palette rows are taller so their thumbnails stay legible.
 const TEXT_ROW_HEIGHT: u32 = 26;
@@ -220,6 +226,70 @@ struct FillPreview {
     generation: u64,
     action: Action,
     changes: std::result::Result<Vec<[i64; 2]>, String>,
+}
+
+/// What a running sculpt stroke's release would do, from the engine's own
+/// plan ([`tilewright_editor_ui::sculpt::plan`] through
+/// `Session::stroke_changes`) on the committed World.
+struct SculptPreview {
+    /// The stroke's signed amount.
+    amount: i32,
+    /// How many cells the stroke covers.
+    covered: usize,
+    /// The cells the release changes, or the engine's refusal.
+    plan: std::result::Result<SculptCounts, String>,
+}
+
+/// The covered cells of a sculpt stroke the engine would not refuse: those
+/// it changes, those at or beyond the end of the range the amount moves
+/// toward, and those in chunks that do not exist (both left out).
+struct SculptCounts {
+    changes: Vec<[i64; 2]>,
+    at_end: usize,
+    missing: usize,
+}
+
+impl SculptPreview {
+    /// "Raising" or "Lowering".
+    fn verb(&self) -> &'static str {
+        if self.amount > 0 {
+            "Raising"
+        } else {
+            "Lowering"
+        }
+    }
+
+    /// The status line: what the release would change and leave out, or
+    /// the engine's refusal in its own words.
+    fn status(&self) -> String {
+        let head = format!(
+            "{} {} {} by {}",
+            self.verb(),
+            self.covered,
+            if self.covered == 1 { "cell" } else { "cells" },
+            self.amount.unsigned_abs()
+        );
+        match &self.plan {
+            Err(reason) => format!("{head} refused: {reason}"),
+            Ok(counts) => {
+                let end = if self.amount > 0 {
+                    "at or above the top"
+                } else {
+                    "at or below the bottom"
+                };
+                let left: Vec<String> = [(counts.at_end, end), (counts.missing, "without a chunk")]
+                    .into_iter()
+                    .filter(|(count, _)| *count > 0)
+                    .map(|(count, what)| format!(", {count} {what}"))
+                    .collect();
+                let left = left.concat();
+                format!(
+                    "{head}, {} to change{left}; release to review.",
+                    counts.changes.len()
+                )
+            }
+        }
+    }
 }
 
 /// The pointer over the map in Terrain mode: where it is, and with the Fill
@@ -862,7 +932,7 @@ impl Application {
                 y,
                 matches!(
                     self.tools.mode(),
-                    ToolMode::Terrain | ToolMode::Zone | ToolMode::Anchor
+                    ToolMode::Terrain | ToolMode::Zone | ToolMode::Anchor | ToolMode::Sculpt
                 ),
             )
             .map_err(|error| error.to_string())?
@@ -1021,6 +1091,17 @@ impl Application {
                 .choose_placement(self.session.catalog(), &first)
                 .map_err(|error| error.to_string())?;
         }
+        self.sidebar_scroll = 0;
+        Ok(())
+    }
+
+    /// Enter Sculpt mode, which shows the height tint. Refused, with a
+    /// plain reason, when the catalog does not grant `editing.heights`.
+    fn enter_sculpt_mode(&mut self) -> Result<()> {
+        if self.session.catalog().editing().heights.is_none() {
+            return Err(NOTHING_TO_SCULPT.into());
+        }
+        self.tools.set_mode(ToolMode::Sculpt);
         self.sidebar_scroll = 0;
         Ok(())
     }
@@ -1293,6 +1374,41 @@ impl Application {
         self.action(action)
     }
 
+    /// What the running stroke's release would do, when it is a sculpt
+    /// stroke of the current frame: the cells the engine's plan changes (the
+    /// preview marks exactly these) and those it leaves out, or its refusal.
+    fn sculpt_preview(&self) -> Option<SculptPreview> {
+        let stroke = self.tools.stroke()?;
+        let StrokeTarget::Heights { amount } = *stroke.target() else {
+            return None;
+        };
+        let plan = self
+            .session
+            .stroke_changes(stroke)
+            .map(|changes| {
+                let world = self.session.history().document().world();
+                let missing = world.planes().get(stroke.plane()).map_or(0, |plane| {
+                    stroke
+                        .cells()
+                        .filter(|&[x, y]| {
+                            heights::cell_height(plane, stroke.layer(), x, y).is_none()
+                        })
+                        .count()
+                });
+                SculptCounts {
+                    at_end: stroke.len() - changes.len() - missing,
+                    changes,
+                    missing,
+                }
+            })
+            .map_err(|error| error.message().to_owned());
+        Some(SculptPreview {
+            amount,
+            covered: stroke.len(),
+            plan,
+        })
+    }
+
     /// The status line while hovering with the Fill or Replace rule.
     fn fill_status(&self) -> Option<String> {
         // A pending change, a block or a proposal step under review keeps
@@ -1522,6 +1638,7 @@ impl Application {
         }
         self.zone_toggle_row(&mut rows);
         self.height_rows(&mut rows);
+        self.sculpt_rows(&mut rows);
         if mode == ToolMode::Terrain {
             self.brush_rows(&mut rows);
             rows.push(("Terrain palette".into(), None, true, false));
@@ -1624,6 +1741,53 @@ impl Application {
             for (text, _) in self.height_legend() {
                 rows.push((text, None, true, false));
             }
+        }
+    }
+
+    /// The Sculpt mode row, after the height rows in every mode, only when
+    /// the catalog grants `editing.heights` (the toolbar is full at the
+    /// minimum width), and in Sculpt mode its own rows: the granted range,
+    /// the brush, the tools and the steps.
+    fn sculpt_rows(&self, rows: &mut UiRows) {
+        let Some(grant) = self.session.catalog().editing().heights else {
+            return;
+        };
+        let sculpting = self.tools.mode() == ToolMode::Sculpt;
+        rows.push((
+            "Sculpt heights  U".into(),
+            Some(Control::Sculpt),
+            true,
+            sculpting,
+        ));
+        if !sculpting {
+            return;
+        }
+        rows.push((
+            format!("Granted heights {} to {}", grant.min, grant.max),
+            None,
+            true,
+            false,
+        ));
+        self.brush_rows(rows);
+        for tool in SculptTool::ALL {
+            rows.push((
+                match tool {
+                    SculptTool::Raise => "Raise: drag lifts each cell once",
+                    SculptTool::Lower => "Lower: drag sinks each cell once",
+                }
+                .into(),
+                Some(Control::SculptTool(tool)),
+                true,
+                self.tools.sculpt_tool() == tool,
+            ));
+        }
+        for step in tools::SCULPT_STEPS {
+            rows.push((
+                format!("Step {step}  {step}"),
+                Some(Control::SculptStep(step)),
+                true,
+                self.tools.sculpt_step() == step,
+            ));
         }
     }
 
@@ -2879,15 +3043,7 @@ impl Application {
             };
         }
         let mut y = self.proposal_panel(ui, 56);
-        if self.tools.mode() == ToolMode::Place
-            && !tools::object_palette(self.session.catalog()).is_empty()
-        {
-            y = self.filter_field(ui, y);
-            y = self.placing_row(ui, y);
-        }
-        if self.tools.mode() == ToolMode::Terrain {
-            y = self.rule_row(ui, y);
-        }
+        y = self.pinned_rows(ui, y);
         if let Some(snapshot) = self
             .tools
             .draft_snapshot()
@@ -3202,6 +3358,20 @@ impl Application {
     /// when the filter hides its palette row. It never scrolls, and is
     /// dimmed while a pending change blocks placing. Returns the next free
     /// row.
+    /// The mode's rows above the scrolled rows: Place's filter and choice,
+    /// Terrain's rule, Sculpt's tool. Returns the next free row.
+    fn pinned_rows(&self, ui: &mut WorkspaceUi, mut y: u32) -> u32 {
+        match self.tools.mode() {
+            ToolMode::Place if !tools::object_palette(self.session.catalog()).is_empty() => {
+                y = self.filter_field(ui, y);
+                self.placing_row(ui, y)
+            }
+            ToolMode::Terrain => self.rule_row(ui, y),
+            ToolMode::Sculpt => self.sculpt_tool_row(ui, y),
+            _ => y,
+        }
+    }
+
     /// Terrain mode's current rule, above the scrolled rows so it is always
     /// on screen; pressing it moves to the next rule, as F does.
     fn rule_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
@@ -3222,6 +3392,34 @@ impl Application {
             Some(Control::TerrainRule(rule.next())),
             true,
             false,
+        );
+        y + TEXT_ROW_HEIGHT + ROW_GAP
+    }
+
+    /// Sculpt mode's tool and step, above the scrolled rows so they are
+    /// always on screen; pressing it moves to the next tool, as F does.
+    fn sculpt_tool_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
+        let tool = self.tools.sculpt_tool();
+        ui.widget(
+            Rect {
+                x: ui.sidebar_x(),
+                y,
+                width: ui.sidebar_width(),
+                height: TEXT_ROW_HEIGHT,
+            },
+            format!(
+                "Sculpt: {} by {}  F",
+                match tool {
+                    SculptTool::Raise => "Raise",
+                    SculptTool::Lower => "Lower",
+                },
+                self.tools.sculpt_step()
+            ),
+            Some(Control::SculptTool(tool.next())),
+            true,
+            // Always on screen, so it carries the active style even when
+            // the "Sculpt heights" row has scrolled away.
+            true,
         );
         y + TEXT_ROW_HEIGHT + ROW_GAP
     }
@@ -3367,6 +3565,27 @@ impl Application {
         if let Some(blocked) = &self.blocked {
             return blocked.status().into();
         }
+        if let Some(preview) = self.sculpt_preview() {
+            return format!(
+                "{}{}{}",
+                preview.status(),
+                if self
+                    .tools
+                    .stroke()
+                    .is_some_and(tilewright_editor_ui::brush::Stroke::capped)
+                {
+                    " Brush limit reached."
+                } else {
+                    ""
+                },
+                // The marks need no cell slots.
+                if preview.plan.is_ok() && self.preview_omitted {
+                    " Too many cells to preview."
+                } else {
+                    ""
+                }
+            );
+        }
         if let Some(stroke) = self.tools.stroke() {
             let changes = self
                 .session
@@ -3379,6 +3598,8 @@ impl Application {
                 StrokeTarget::Scatter { palette, seed } => {
                     format!("from palette {palette} (seed {seed})")
                 }
+                // Said by `sculpt_preview` above.
+                StrokeTarget::Heights { amount } => format!("by {amount}"),
             };
             return format!(
                 "Painting {} cells {target}, {changes} to change; release to review.{}{}",
@@ -3422,6 +3643,15 @@ impl Application {
                 (true, false) => "Height tint left out: too many cells for one frame.",
                 (false, true) => "Zone overlay and badges left out: too many cells for one frame.",
                 (false, false) => "Anchor and portal badges left out: too many for one frame.",
+            }
+            .into();
+        }
+        if self.overlay_unavailable() && self.tools.mode() == ToolMode::Sculpt {
+            // Sculpt marks need no cell slots: only the tints are missing.
+            return match (self.tools.heights_visible(), self.tools.zones_visible()) {
+                (true, true) => "Height tint and zone overlay unavailable for this view.",
+                (true, false) => HEIGHTS_UNAVAILABLE,
+                _ => "Zone overlay unavailable for this view.",
             }
             .into();
         }
@@ -3494,6 +3724,13 @@ impl Application {
                     ),
                 };
             }
+            SessionPhase::Ready if self.tools.mode() == ToolMode::Sculpt => {
+                return format!(
+                    "Ready. Drag to {} heights by {}.",
+                    self.tools.sculpt_tool().as_str(),
+                    self.tools.sculpt_step()
+                );
+            }
             SessionPhase::Ready => "Ready. Select an object or choose Terrain.",
             SessionPhase::Pending => "Review changes, then Accept or Cancel.",
             SessionPhase::Retaining => "Saving recovery information...",
@@ -3514,6 +3751,14 @@ impl Application {
         }
         if let Some(reason) = &self.notice {
             details.push(reason.clone());
+        }
+        // The status line may cut a refusal of the running sculpt stroke;
+        // the details give it whole.
+        if let Some(SculptPreview {
+            plan: Err(reason), ..
+        }) = self.sculpt_preview()
+        {
+            details.push(format!("Release prepares nothing: {reason}"));
         }
         let status = self.session.status();
         if status.phase == SessionPhase::Blocked {
@@ -3570,22 +3815,11 @@ impl Application {
             | Control::Move
             | Control::Terrain
             | Control::Zone
-            | Control::Anchor => {
-                self.tools.set_mode(match control {
-                    Control::Move => ToolMode::Move,
-                    Control::Terrain => ToolMode::Terrain,
-                    Control::Zone => ToolMode::Zone,
-                    Control::Anchor => ToolMode::Anchor,
-                    _ => ToolMode::Select,
-                });
-                self.forget_hover();
-                self.sidebar_scroll = 0;
-                Ok(())
-            }
-            Control::Place => {
-                self.forget_hover();
-                self.enter_place_mode()
-            }
+            | Control::Anchor
+            | Control::Place
+            | Control::Sculpt
+            | Control::SculptTool(_)
+            | Control::SculptStep(_) => self.mode_control(&control),
             Control::HeightOverlay => {
                 self.tools.toggle_heights();
                 Ok(())
@@ -3662,6 +3896,39 @@ impl Application {
                 self.draft_control(control)
             }
         }
+    }
+
+    /// The modes, and Sculpt mode's tool and step.
+    fn mode_control(&mut self, control: &Control) -> Result<()> {
+        let mode = match control {
+            Control::SculptTool(tool) => {
+                self.tools.set_sculpt_tool(*tool);
+                return Ok(());
+            }
+            Control::SculptStep(step) => {
+                return self
+                    .tools
+                    .set_sculpt_step(*step)
+                    .map_err(|error| error.to_string());
+            }
+            Control::Place => {
+                self.forget_hover();
+                return self.enter_place_mode();
+            }
+            Control::Sculpt => {
+                self.forget_hover();
+                return self.enter_sculpt_mode();
+            }
+            Control::Move => ToolMode::Move,
+            Control::Terrain => ToolMode::Terrain,
+            Control::Zone => ToolMode::Zone,
+            Control::Anchor => ToolMode::Anchor,
+            _ => ToolMode::Select,
+        };
+        self.tools.set_mode(mode);
+        self.forget_hover();
+        self.sidebar_scroll = 0;
+        Ok(())
     }
 
     /// The coordinate and field drafts: begin one, or review the open one.
@@ -4013,6 +4280,10 @@ impl Application {
         if let (Some(preview), Some(record)) = (self.fill_frame(), frame_record.as_object_mut()) {
             record.insert("fill_preview".into(), preview);
         }
+        // Only while a sculpt stroke runs, so other frames are unchanged.
+        if let (Some(preview), Some(record)) = (self.sculpt_frame(), frame_record.as_object_mut()) {
+            record.insert("sculpt_preview".into(), preview);
+        }
         // Only while a proposal is open, so other frames are unchanged.
         if let (Some(proposal), Some(record)) =
             (self.proposal_frame(), frame_record.as_object_mut())
@@ -4069,6 +4340,33 @@ impl Application {
             }
             (None, Some(Err(reason))) => record["refused"] = terminal_field(reason).into(),
             _ => {}
+        }
+        Some(record)
+    }
+
+    /// The frame evidence's `sculpt_preview` member: the running sculpt
+    /// stroke, what its release would change and leave out, or why it would
+    /// be refused.
+    fn sculpt_frame(&self) -> Option<serde_json::Value> {
+        let preview = self.sculpt_preview()?;
+        let mut record = serde_json::json!({
+            "amount": preview.amount,
+            "cells": preview.covered,
+        });
+        match &preview.plan {
+            Ok(counts) => {
+                record["changes"] = counts.changes.len().into();
+                record["at_end"] = counts.at_end.into();
+                record["missing"] = counts.missing.into();
+                record["first"] = counts
+                    .changes
+                    .iter()
+                    .take(8)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .into();
+            }
+            Err(reason) => record["refused"] = terminal_field(reason).into(),
         }
         Some(record)
     }
@@ -5604,7 +5902,10 @@ fn native_pointer_selection(
             app.tools.cancel();
             if app.tools.filling() {
                 app.fill_at(x, y)
-            } else if matches!(app.tools.mode(), ToolMode::Terrain | ToolMode::Zone) {
+            } else if matches!(
+                app.tools.mode(),
+                ToolMode::Terrain | ToolMode::Zone | ToolMode::Sculpt
+            ) {
                 app.begin_stroke(x, y)
             } else if app.tools.mode() == ToolMode::Place {
                 app.place_at(x, y)
@@ -5751,6 +6052,12 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         Keycode::K => app.control(Control::Anchor),
         Keycode::O => app.control(Control::ZoneOverlay),
         Keycode::H => app.control(Control::HeightOverlay),
+        Keycode::U => app.control(Control::Sculpt),
+        Keycode::F if app.tools.mode() == ToolMode::Sculpt => {
+            app.control(Control::SculptTool(app.tools.sculpt_tool().next()))
+        }
+        Keycode::_1 if app.tools.mode() == ToolMode::Sculpt => app.control(Control::SculptStep(1)),
+        Keycode::_8 if app.tools.mode() == ToolMode::Sculpt => app.control(Control::SculptStep(8)),
         Keycode::Slash | Keycode::KpDivide if app.tools.mode() == ToolMode::Place => {
             app.control(Control::PaletteFilter)
         }
@@ -5799,12 +6106,13 @@ fn view_key(app: &mut Application, key: Keycode) -> Result<()> {
     )
 }
 
-/// Whether the brush keys apply: Terrain mode, or Zone mode with the paint
-/// grant.
+/// Whether the brush keys apply: Terrain mode, Zone mode with the paint
+/// grant, or Sculpt mode (entered only with its grant).
 fn brushing(app: &Application) -> bool {
     match app.tools.mode() {
         ToolMode::Terrain => !app.tools.filling(),
         ToolMode::Zone => app.session.catalog().editing().zones.paint,
+        ToolMode::Sculpt => true,
         _ => false,
     }
 }
@@ -5900,7 +6208,11 @@ fn stroke_changes(app: &Application) -> Option<Vec<[i64; 2]>> {
 /// [`zones::PREVIEW_ALPHA`], twice the resting overlay's opacity (the
 /// default-zone row shows the plane default's tint, or no tint without a
 /// default), and [`zone_overlay`] leaves those cells out, so the preview
-/// replaces their resting tint rather than stacking on it.
+/// replaces their resting tint rather than stacking on it. A sculpt stroke
+/// marks the cells its release would change with
+/// [`crate::workspace_render::sculpt_overlay`]'s ringed centre marks, above
+/// all World content, which no height band, zone tint or highlight looks
+/// like.
 fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     if app.tools.stroke().is_none() {
         return fill_overlay(app);
@@ -5908,6 +6220,13 @@ fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     let (Some(stroke), Some(changes)) = (app.tools.stroke(), stroke_changes(app)) else {
         return Vec::new();
     };
+    if let StrokeTarget::Heights { .. } = stroke.target() {
+        return crate::workspace_render::sculpt_overlay(
+            &app.prepared,
+            &changes.into_iter().collect(),
+            cell_shape(app),
+        );
+    }
     if let StrokeTarget::Zone(zone) = stroke.target() {
         let default = app
             .session
@@ -6058,18 +6377,22 @@ fn badge_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
         return Vec::new();
     }
     let facts = app.anchor_view();
-    let shape = match app.session.world().profile().projection {
-        tilewright_source::Projection::Isometric { .. } => {
-            crate::workspace_render::CellShape::Diamond
-        }
-        tilewright_source::Projection::TopDown { .. } => crate::workspace_render::CellShape::Square,
-    };
     crate::workspace_render::badge_overlay(
         &app.prepared,
         &facts.anchor_tiles,
         &facts.portal_tiles,
-        shape,
+        cell_shape(app),
     )
+}
+
+/// The shape a cell's reference art shows in the World's projection.
+fn cell_shape(app: &Application) -> crate::workspace_render::CellShape {
+    match app.session.world().profile().projection {
+        tilewright_source::Projection::Isometric { .. } => {
+            crate::workspace_render::CellShape::Diamond
+        }
+        tilewright_source::Projection::TopDown { .. } => crate::workspace_render::CellShape::Square,
+    }
 }
 
 /// Compose the cached prepared World with `overlay` and the interface. If
@@ -6144,17 +6467,26 @@ fn compose_highlight_first(
 }
 
 fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {
-    // Height tints, zone tints, the proposal highlight and the stroke
-    // preview take the World's cell slots: each copy draws right after its
-    // tile's terrain, and copies sharing a slot draw in the order passed
-    // here, so a zone tint draws over a height tint, the highlight over
-    // both and the preview, passed last, over all of them. Badges take no cell slot: they sit in their own slot after the
-    // last World quad, above every tile and object, whatever order they are
-    // passed in.
+    // Height tints, zone tints, the proposal highlight and a terrain, zone
+    // or scatter stroke preview take the World's cell slots: each copy
+    // draws right after its tile's terrain, and copies sharing a slot draw
+    // in the order passed here, so a zone tint draws over a height tint,
+    // the highlight over both and that preview, passed last, over all of
+    // them. Badges and sculpt marks share one slot after the last World
+    // quad, above every tile and object; the marks are passed first, so
+    // the badges draw over them.
     let mut person = height_overlay(app);
     person.extend(zone_overlay(app));
+    let mut stroke = stroke_overlay(app);
+    if matches!(
+        app.tools
+            .stroke()
+            .map(tilewright_editor_ui::brush::Stroke::target),
+        Some(StrokeTarget::Heights { .. })
+    ) {
+        person.append(&mut stroke);
+    }
     person.extend(badge_overlay(app));
-    let stroke = stroke_overlay(app);
     let mut overlay = person.clone();
     overlay.extend(proposal_overlay(app));
     overlay.extend(stroke.iter().copied());

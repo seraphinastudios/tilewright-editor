@@ -83,7 +83,10 @@ outside this private-directory/advisory-lock model.
 
 The native window presents the prepared scene through the shared wgpu/SDL3
 adapter and remains open until the user closes it. A toolbar selects Select,
-Move, Terrain, Place or Zone mode and exposes Clear, Undo, Redo and Delete. Terrain mode
+Move, Terrain, Place or Zone mode and exposes Clear, Undo, Redo and Delete.
+Under a catalog that grants a [height range](#height-range), the sidebar's
+"Sculpt heights  U" row (or U) selects [Sculpt mode](#sculpt-mode); the
+toolbar is full at the minimum window width. Terrain mode
 paints with the drag brush described below, or fills and replaces with a click; deletion and placement are described after it. The inspector shows
 the selected object's identity, position and schema fields, or the selected
 cell and explicit terrain choices. Only profile-authorized scalar fields are
@@ -520,7 +523,8 @@ preview over both; turn the zones off to read the heights alone. The brush
 preview (white) and the proposal highlights (black) signal by lightness too,
 so on the tint a previewed or highlighted tile can read as a neighbouring
 band (a previewed tile lighter, a highlighted one darker); turn the tint off while painting or reviewing a
-proposal to read those marks. When the cells' draw order cannot be computed
+proposal to read those marks. Sculpt mode's preview is a centre mark
+instead, which no band looks like ([Sculpt mode](#sculpt-mode)). When the cells' draw order cannot be computed
 the status line says "Height tint unavailable for this view." (or names the
 height tint with the zone overlay and stroke preview when those are wanted
 too), and when the overlays would pass the scene
@@ -532,8 +536,9 @@ stored height and the layer's base: "Height: 39 (7 + base 32)" (layer ×
 `layer_height` + height, computed in 128-bit integers; a narrow sidebar cuts
 the line with "..." after the stacked height). A
 tile of a chunk that does not exist reads "Height: none, no chunk here". The
-desktop writes no heights yet (agents and proposals can, under a
-[height range](#height-range)), and nothing marks a slope "too steep": the profile's
+desktop writes heights only in [Sculpt mode](#sculpt-mode), under a
+[height range](#height-range) (agents and proposals can too), and nothing
+marks a slope "too steep": the profile's
 movement limits are only reported as stored (`overview`'s
 `profile.movement`), because the format does not define what they mean.
 
@@ -593,8 +598,9 @@ catalog that has it. The `catalog` command and MCP tool report it as
 `heights` (`min` and `max`), only when the catalog has it. The neutral
 sample has none.
 
-Under a range, an `adjust_heights` action (an agent's `edit` or a proposal
-step; the desktop's sculpt mode comes later) raises or lowers the covered
+Under a range, an `adjust_heights` action (an agent's `edit`, a proposal
+step, or a stroke of the desktop's [Sculpt mode](#sculpt-mode)) raises or
+lowers the covered
 cells of the active view by a flat amount, once each, and stops at the
 range's ends ([docs/ENGINE.md](ENGINE.md#raise-and-lower)). Hand test with
 the copy above, its catalog given `"heights": {"min": -8, "max": 32}`: in a
@@ -603,6 +609,113 @@ sandbox of it ([docs/SANDBOX.md](SANDBOX.md)), `edit` the action
 with its `expected`, then `accept`: `tile` at (3, 2) reports `height` 15,
 and the submitted proposal applied in the desktop shows the raised tile
 under H.
+
+#### Sculpt mode
+
+Under a catalog with a [height range](#height-range), the sidebar has a
+"Sculpt heights  U" row after the height rows, in every mode; it and U enter
+Sculpt mode. Without the range the row is not shown, and U is refused:
+"Sculpt is unavailable: the catalog does not grant height editing
+(editing.heights)." Entering the mode shows the [height tint](#heights);
+H still hides it there, for the ground art, and leaving the mode puts the
+tint back as it was before entering, whatever H did in between.
+
+A drag raises or lowers the heights of the cells it covers, by a flat step,
+once per stroke: the brush collects the cells exactly as the terrain brush
+does (the same square or circle, `[`, `]` and B, the same clipping to the
+view and 4,096-cell cap, and the same interruptions), and a cell the brush
+passes twice changes once. There is no falloff and nothing accumulates
+while dragging. The release prepares one `adjust_heights` action
+([docs/ENGINE.md](ENGINE.md#raise-and-lower)) with the stroke's cells and
+the signed step, for the ordinary Review, Accept or Cancel; during Review
+the tint shows the pending heights, and Undo and Redo take the whole stroke.
+
+The sidebar's rows: above the scrolled rows, "Sculpt: Raise by 8  F" names
+the tool and step (pressing it, or F, switches between Raise and Lower);
+then "Granted heights -64 to 64", the brush rows, "Raise: drag lifts each
+cell once" and "Lower: drag sinks each cell once", and "Step 1  1" and
+"Step 8  8" (keys 1 and 8). The tool and step are kept across modes. The
+status line reads "Ready. Drag to raise heights by 8." Later pull requests
+add flatten and smooth to the tool list.
+
+While dragging, before the release, each cell the release would change
+carries a mark: a magenta copy of the cell's flat shape at half its size
+about its centre, ringed by a light line inside a dark navy one, so the
+cell's own height band still shows around it. The ring is at least 40 CIE L*
+lighter or darker than every height band (tested), so the mark separates
+from the band by lightness, not by hue alone. Each ring line is 1.5 pixels,
+or a quarter of the mark's own size when that is less, so the ring stays
+inside its tile at every zoom; at the smallest zooms a mark too small for a
+ring shows as the magenta mark alone. No height band (which fills the whole
+tile, violet to pale yellow), zone tint, proposal highlight (darker, the
+whole tile) or badge (in a corner) looks like it. Marks draw where badges
+do, above all World content, with the badges over them: no object, nearer
+tile or tall art hides a mark, and while the stroke runs a mark can cover
+part of an object on its tile, or of an object or nearer tile in front of
+it. A mark sits on its own tile's ground, so read it by the ground around
+it, not by what it covers. Cells outside the window are counted in the
+status line but not marked. Each marked tile costs three quads however bent
+its ground. When a very large stroke, with the height tint and zones shown,
+would take the frame past what one frame can draw, all overlays (tint,
+zones, badges and marks) are left out for that frame and the status line
+ends "Too many cells to preview."; the release still prepares every cell.
+Turning the zones off (O, between strokes) or zooming in brings the marks
+back.
+The marked cells are the engine's own answer
+(`tilewright_editor_ui::sculpt::plan` on the committed World), the cells
+Accept writes. The status line says what the release would do: "Raising 37
+cells by 8, 35 to change, 2 at or above the top; release to review." Cells
+at or beyond the end the step moves toward ("at or above the top", "at or
+below the bottom") and cells of chunks that do not exist ("without a
+chunk") are left out and counted. When the engine would refuse the stroke,
+nothing is marked, the status line gives its words ("Lowering 2 cells by 1
+refused: cell (6, 0) has height 6, above the granted range -4 to 4: lowering
+it into the range needs an amount of at least 2"), the details repeat them
+whole ("Release prepares nothing: ..."), and the release is refused the same
+way and prepares nothing; avoid that cell, or use the larger step. A stroke
+that would change no cell is refused with the engine's count of the cells at
+the end and without a chunk. A release whose result cannot be drawn at the
+current view is cancelled, as for any edit ("Change refused: ..., Zoom out,
+or raise or lower by less."), and the mode carries on. While rendering
+pauses editing, a press is refused with the pause's reason. With a proposal
+open, the person's own strokes between steps are prepared and accepted like
+any other edit of theirs. A frame captured while a sculpt stroke runs has a
+`sculpt_preview` member: the signed `amount`, the covered `cells`, and either
+`changes`, `at_end`, `missing` and the `first` eight changed cells, or
+`refused` with the engine's message.
+
+The scripted demonstration has no sculpt step: the neutral sample grants no
+height range, and it stays that way. Hand test on a copy (every height of the
+sample is 0, so the tint shows nothing, "Heights: all 0, no tint", until the
+first Accept; for the look of the marks over many bands, give the copy
+heights as in the [Heights](#heights) hand test):
+
+1. Copy `crates/tilewright-editor-testkit/fixtures/prototype-neutral` to a
+   directory of your own. In the copy's `preview.jsonc`, add this line inside
+   `"editing": { ... }`, after its last member (put a comma after that
+   member):
+
+   ```json
+   "heights": {"min": -8, "max": 8}
+   ```
+
+   Provision the copy with `tools/provision-prototype.py --world <copy>` as
+   above, and press U: the pinned row reads "Sculpt: Raise by 1  F" and the
+   status line "Ready. Drag to raise heights by 1." Press 8.
+2. Drag from tile (1, 1) to (3, 1) with the 1x1 brush and keep the button
+   down: three magenta marks with dark and light rims appear, and the status
+   line reads "Raising 3 cells by 8, 3 to change; release to review."
+   Release: the review shows the chunk's new `height` rows. Press Enter: the
+   three tiles turn the lightest band ("Heights 0 to 8"), and the inspector,
+   on (1, 1) where the drag began, reads "Height: 8".
+3. Drag from (2, 1) to (4, 1) and hold: only (4, 1) is marked, and the status
+   line reads "Raising 3 cells by 8, 1 to change, 2 at or above the top;
+   release to review." Press Esc while holding, then release: nothing is
+   pending.
+4. Press F (the pinned row reads "Sculpt: Lower by 8  F"), then click tile
+   (1, 1): a click is a one-cell stroke, and the review shows its height
+   going from 8 to 0. Press Esc to cancel it. Press T: the tint goes off
+   again, as it was before U.
 
 ### Zones
 
@@ -1239,7 +1352,8 @@ capturing the live preview mid-gesture (`scatter-preview`; the status line
 names the seed), the pending review (`scatter`) and the accepted result
 (`scattered`); the brush and the terrain choice are restored. Its seed comes
 from the same seeded source as the placements' uids, so the drawn values
-are the same on every run. It is a
+are the same on every run. The sample grants no height range, so the
+demonstration does not sculpt ([Sculpt mode](#sculpt-mode)). It is a
 deterministic scripted demonstration,
 not a claim of human input. `--reference` produces composed workspace CPU
 reference evidence and

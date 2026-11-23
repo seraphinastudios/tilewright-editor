@@ -2198,6 +2198,9 @@ mod height_steps;
 
 #[path = "shared_field.rs"]
 mod shared_string_field;
+#[path = "sculpt_mode.rs"]
+mod sculpt_mode;
+
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]

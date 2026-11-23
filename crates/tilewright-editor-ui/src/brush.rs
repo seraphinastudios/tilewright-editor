@@ -4,8 +4,9 @@
 //! Terrain drag brush geometry and gesture accumulation. A stroke is local
 //! input only: it collects the cells one press-move-release gesture covers and
 //! leaves this module as a single [`Action::PaintStroke`] (terrain),
-//! [`Action::ScatterTerrain`] (a palette) or [`Action::PaintZones`] (zones). Session prepares it as one reviewed World
-//! `terrain.set` transaction; nothing is written here.
+//! [`Action::ScatterTerrain`] (a palette), [`Action::AdjustHeights`]
+//! (heights) or [`Action::PaintZones`] (zones). Session prepares it as one
+//! reviewed World `terrain.set` transaction; nothing is written here.
 use crate::{Action, tools::ToolError};
 use std::collections::BTreeSet;
 
@@ -133,6 +134,10 @@ pub enum StrokeTarget {
     /// A value of the catalog palette `palette` per cell, drawn with `seed`
     /// ([`crate::scatter`]), in the ground grid the stroke samples.
     Scatter { palette: String, seed: u32 },
+    /// Raise (`amount > 0`) or lower (`amount < 0`) each covered cell's
+    /// height once ([`crate::sculpt`]), in the `height` grid; the ground
+    /// grid the stroke samples only picks the cells.
+    Heights { amount: i32 },
 }
 
 /// One drag gesture from press to release. Samples are cells of one ground
@@ -273,6 +278,13 @@ impl Stroke {
                 cells,
                 palette,
                 seed,
+                expected: self.expected,
+            },
+            StrokeTarget::Heights { amount } => Action::AdjustHeights {
+                plane: self.plane,
+                layer: self.layer,
+                cells,
+                amount,
                 expected: self.expected,
             },
             StrokeTarget::Zone(zone) => Action::PaintZones {

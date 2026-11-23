@@ -792,7 +792,9 @@ impl Session {
     /// in memory and prepares nothing; release still revalidates the
     /// catalog and reloads the source, and an external change found then
     /// refuses the whole stroke. An error means the release would be
-    /// refused too, including a stroke that changes no cell.
+    /// refused too, including a stroke that changes no cell. A height
+    /// stroke's cells are [`crate::sculpt::plan`]'s, which its
+    /// [`Action::AdjustHeights`] dispatch prepares.
     pub fn stroke_changes(
         &self,
         stroke: &crate::brush::Stroke,
@@ -818,6 +820,19 @@ impl Session {
                 .into_iter()
                 .map(|(at, before, _)| (at, before))
                 .collect(),
+            crate::brush::StrokeTarget::Heights { amount } => {
+                return Ok(crate::sculpt::plan(
+                    self.history.document().world(),
+                    &self.catalog,
+                    stroke.plane(),
+                    stroke.layer(),
+                    &cells,
+                    *amount,
+                )?
+                .into_iter()
+                .map(|(at, _, _)| at)
+                .collect());
+            }
         };
         Ok(changes.into_iter().map(|(at, _)| at).collect())
     }

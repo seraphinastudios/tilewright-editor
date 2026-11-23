@@ -32,7 +32,42 @@ pub enum ToolMode {
     /// selected tile, move the chosen one there, or delete an unreferenced
     /// one.
     Anchor,
+    /// Raise or lower tile heights with the brush, by a flat step once per
+    /// stroke, when the catalog grants `editing.heights`. Entering it shows
+    /// the height tint; leaving it puts the tint back as it was.
+    Sculpt,
 }
+
+/// What a press-drag does in Sculpt mode. Kept across modes like the
+/// brush. Raise and lower are [`crate::sculpt`]'s `adjust_heights`; later
+/// tools join this list.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SculptTool {
+    #[default]
+    Raise,
+    Lower,
+}
+impl SculptTool {
+    pub const ALL: [Self; 2] = [Self::Raise, Self::Lower];
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Raise => "raise",
+            Self::Lower => "lower",
+        }
+    }
+    /// The next tool in [`Self::ALL`], wrapping (what F and the pinned
+    /// sidebar row choose).
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Raise => Self::Lower,
+            Self::Lower => Self::Raise,
+        }
+    }
+}
+
+/// The steps Sculpt mode offers: how far one stroke raises or lowers.
+pub const SCULPT_STEPS: [u16; 2] = [1, 8];
 
 /// What the zone brush paints.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -268,6 +303,21 @@ pub struct ToolState {
     /// What edits the inspector's string fields: the editor's own field
     /// unless the shared field was switched on.
     string_field: FieldImplementation,
+    /// Sculpt mode's tool and step, kept across modes.
+    sculpt: SculptTool,
+    sculpt_step: SculptStep,
+    /// While in Sculpt mode: whether the height tint showed before it was
+    /// entered, put back when it is left.
+    heights_before_sculpt: Option<bool>,
+}
+
+/// One of [`SCULPT_STEPS`]; the first by default.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SculptStep(u16);
+impl Default for SculptStep {
+    fn default() -> Self {
+        Self(SCULPT_STEPS[0])
+    }
 }
 
 /// The zones that may become the chosen zone's parent: the first
@@ -310,13 +360,50 @@ impl ToolState {
     }
     /// Switching tools ends any draft. Leaving Place mode also clears the
     /// palette filter, so Place always opens with the whole palette.
+    /// Entering Sculpt mode shows the height tint; leaving it puts the
+    /// tint back as it was before, whatever H did in between.
     pub fn set_mode(&mut self, mode: ToolMode) {
         self.cancel();
         self.parent_choices = None;
         if mode != ToolMode::Place {
             self.filter.clear();
         }
+        if mode == ToolMode::Sculpt && self.mode != ToolMode::Sculpt {
+            self.heights_before_sculpt = Some(self.show_heights);
+            self.show_heights = true;
+        } else if mode != ToolMode::Sculpt
+            && let Some(before) = self.heights_before_sculpt.take()
+        {
+            self.show_heights = before;
+        }
         self.mode = mode;
+    }
+    pub fn sculpt_tool(&self) -> SculptTool {
+        self.sculpt
+    }
+    pub fn set_sculpt_tool(&mut self, tool: SculptTool) {
+        self.sculpt = tool;
+    }
+    /// How far one stroke raises or lowers: one of [`SCULPT_STEPS`].
+    pub fn sculpt_step(&self) -> u16 {
+        self.sculpt_step.0
+    }
+    /// Choose the step; only [`SCULPT_STEPS`] are offered.
+    pub fn set_sculpt_step(&mut self, step: u16) -> Result<(), ToolError> {
+        if !SCULPT_STEPS.contains(&step) {
+            return Err(ToolError("Sculpt steps are 1 and 8"));
+        }
+        self.sculpt_step = SculptStep(step);
+        Ok(())
+    }
+    /// The signed amount a sculpt stroke records: the step, negative to
+    /// lower.
+    pub fn sculpt_amount(&self) -> i32 {
+        let step = i32::from(self.sculpt_step.0);
+        match self.sculpt {
+            SculptTool::Raise => step,
+            SculptTool::Lower => -step,
+        }
     }
     pub fn brush(&self) -> Brush {
         self.brush
@@ -1634,6 +1721,9 @@ impl ToolState {
         if self.mode == ToolMode::Zone {
             return self.begin_zone_stroke(inspector, cell, pending);
         }
+        if self.mode == ToolMode::Sculpt {
+            return self.begin_sculpt_stroke(inspector, cell, pending);
+        }
         if self.filling() {
             return Err(ToolError(
                 "The Fill and Replace rules click; they do not drag",
@@ -1725,6 +1815,54 @@ impl ToolState {
             StrokeTarget::Scatter {
                 palette: name,
                 seed,
+            },
+            self.brush,
+            stamp.revision,
+            stamp.generation,
+            bounds,
+        );
+        stroke.stamp([*x, *y]);
+        self.stroke = Some(stroke);
+        Ok(())
+    }
+    /// A sculpt stroke samples the ground cell mask like a terrain stroke;
+    /// its release raises or lowers the covered cells' heights by
+    /// [`Self::sculpt_amount`], fixed at the press.
+    fn begin_sculpt_stroke(
+        &mut self,
+        inspector: &Inspector<'_>,
+        cell: &SelectionKey,
+        pending: bool,
+    ) -> Result<(), ToolError> {
+        available(pending)?;
+        if inspector.catalog.editing().heights.is_none() {
+            return Err(ToolError(
+                "The catalog does not allow editing heights (editing.heights)",
+            ));
+        }
+        let stamp = inspector
+            .stamp
+            .as_ref()
+            .filter(|s| &s.key == cell)
+            .ok_or(ToolError("Sculpting requires the current inspected cell"))?;
+        let SelectionKey::Cell {
+            plane,
+            layer,
+            grid,
+            x,
+            y,
+        } = cell
+        else {
+            return Err(ToolError("Sculpting requires a cell"));
+        };
+        let (_, _, bounds) = inspector.catalog.view();
+        self.retire_draft();
+        let mut stroke = Stroke::begin(
+            plane.clone(),
+            *layer,
+            grid.clone(),
+            StrokeTarget::Heights {
+                amount: self.sculpt_amount(),
             },
             self.brush,
             stamp.revision,
