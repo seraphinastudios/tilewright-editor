@@ -828,6 +828,22 @@ fn the_guides_hand_test_reads_as_written() {
     route(&mut app, &key(Keycode::Return)).unwrap();
     assert!(sidebar_texts(&mut app).contains(&"Height: 8".to_owned()));
     assert_eq!(height(&app, 1, 3), 8);
+    // 6.
+    route(&mut app, &key(Keycode::F)).unwrap();
+    assert!(sidebar_texts(&mut app).contains(&"Sculpt: Smooth  F".to_owned()));
+    acknowledge_ui(&mut app);
+    drag(&mut app, [2, 2], &[[4, 2]]);
+    assert_eq!(marked(&mut app), BTreeSet::from([[2, 2], [3, 2], [4, 2]]));
+    assert_eq!(
+        app.status_label(),
+        "Smoothing 3 cells, 3 to change; release to review."
+    );
+    release(&mut app, [4, 2]).unwrap();
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Return)).unwrap();
+    assert!(sidebar_texts(&mut app).contains(&"Height: 3".to_owned()));
+    assert_eq!(height(&app, 3, 2), 2);
+    assert_eq!(height(&app, 4, 2), 1);
     route(&mut app, &key(Keycode::F)).unwrap();
     assert_eq!(app.tools.sculpt_tool(), SculptTool::Raise);
     assert!(app.tools.heights_visible());

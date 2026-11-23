@@ -53,12 +53,17 @@ fn open(root: &Path, actor: &str) -> Session {
 fn fixture_with(configure: impl FnOnce(&Path)) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     copy_tree(&fixture_world("prototype-neutral"), dir.path());
-    // One scatter palette and a height range, so every edit kind can be
-    // prepared.
+    // One scatter palette, a height range and one raised tile (5, 5) to
+    // smooth, so every edit kind can be prepared.
     edit_json(dir.path(), "preview.jsonc", |catalog| {
         catalog["editing"]["palettes"] = json!([{"name": "speckle", "grid": "floor",
             "entries": [{"value": "grass", "weight": 3}, {"value": "sand", "weight": 1}]}]);
         catalog["editing"]["heights"] = json!({"min": -16, "max": 16});
+    });
+    edit_json(dir.path(), "planes/main/layers/0/0_0.jsonc", |chunk| {
+        let mut rows = vec![vec![0; 32]; 32];
+        rows[5][5] = 8;
+        chunk["terrain"]["height"] = json!({ "rows": rows });
     });
     configure(dir.path());
     dir
@@ -118,6 +123,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         Action::ScatterTerrain { .. } => Some("ScatterTerrain"),
         Action::AdjustHeights { .. } => Some("AdjustHeights"),
         Action::FlattenHeights { .. } => Some("FlattenHeights"),
+        Action::SmoothHeights { .. } => Some("SmoothHeights"),
         Action::PaintZones { .. } => Some("PaintZones"),
         Action::Remove { .. } => Some("Remove"),
         Action::Place { .. } => Some("Place"),
@@ -138,7 +144,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         | Action::Reopen => None,
     }
 }
-const EDIT_KINDS: [&str; 19] = [
+const EDIT_KINDS: [&str; 20] = [
     "Move",
     "SetField",
     "Paint",
@@ -147,6 +153,7 @@ const EDIT_KINDS: [&str; 19] = [
     "ScatterTerrain",
     "AdjustHeights",
     "FlattenHeights",
+    "SmoothHeights",
     "PaintZones",
     "Remove",
     "Place",
@@ -226,6 +233,13 @@ fn edits(expected: [u8; 32]) -> Vec<Action> {
             layer: 0,
             cells: vec![[0, 0], [1, 0]],
             target: -3,
+            expected,
+        },
+        Action::SmoothHeights {
+            plane: main(),
+            layer: 0,
+            cells: vec![[4, 4], [5, 5]],
+            kernel: 1,
             expected,
         },
         Action::PaintZones {
@@ -875,6 +889,16 @@ fn granted_refusals(expected: [u8; 32]) -> Vec<(Action, RefusalCode)> {
                 layer: 0,
                 cells: vec![[0, 100]],
                 target: 2,
+                expected,
+            },
+            RefusalCode::ScopeOutsideView,
+        ),
+        (
+            Action::SmoothHeights {
+                plane: main_plane(),
+                layer: 0,
+                cells: vec![[0, 100]],
+                kernel: 1,
                 expected,
             },
             RefusalCode::ScopeOutsideView,

@@ -103,6 +103,14 @@ pub fn encode_action(action: &Action) -> Result<Value, ProposalError> {
             expected,
         } => json!({"kind": "flatten_heights", "plane": text(plane)?, "layer": layer,
             "cells": encode_cells(cells)?, "target": height_target(i64::from(*target))?, "expected": hex(expected)}),
+        Action::SmoothHeights {
+            plane,
+            layer,
+            cells,
+            kernel,
+            expected,
+        } => json!({"kind": "smooth_heights", "plane": text(plane)?, "layer": layer,
+            "cells": encode_cells(cells)?, "kernel": smooth_kernel(i64::from(*kernel))?, "expected": hex(expected)}),
         Action::PaintZones {
             plane,
             layer,
@@ -227,6 +235,7 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
         "scatter_terrain" => &["plane", "layer", "grid", "cells", "palette", "seed"],
         "adjust_heights" => &["plane", "layer", "cells", "amount"],
         "flatten_heights" => &["plane", "layer", "cells", "target"],
+        "smooth_heights" => &["plane", "layer", "cells", "kernel"],
         "paint_zones" => &["plane", "layer", "cells", "zone"],
         "remove" => &["uid"],
         "place" => &["plane", "layer", "x", "y", "proto"],
@@ -306,6 +315,13 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
             layer: fields.layer("layer")?,
             cells: fields.cells("cells")?,
             target: height_target(fields.integer("target")?)?,
+            expected,
+        },
+        "smooth_heights" => Action::SmoothHeights {
+            plane: fields.text("plane")?,
+            layer: fields.layer("layer")?,
+            cells: fields.cells("cells")?,
+            kernel: smooth_kernel(fields.integer("kernel")?)?,
             expected,
         },
         "paint_zones" => Action::PaintZones {
@@ -544,6 +560,21 @@ fn height_target(target: i64) -> Result<i32, ProposalError> {
         .ok()
         .filter(|target| tilewright_editor_ui::sculpt::check_target(*target).is_ok())
         .ok_or_else(|| invalid("a flatten target is an integer from -1024 to 1024"))
+}
+/// A smooth's kernel version: [`limits::SMOOTH_KERNEL`], the only one this
+/// editor knows. Another version is a rule this editor cannot apply or
+/// show, so a step holding one is refused as a whole proposal, as an
+/// unknown action kind is.
+fn smooth_kernel(kernel: i64) -> Result<u32, ProposalError> {
+    u32::try_from(kernel)
+        .ok()
+        .filter(|kernel| tilewright_editor_ui::sculpt::check_kernel(*kernel).is_ok())
+        .ok_or_else(|| {
+            invalid(format!(
+                "unknown smooth kernel; this editor knows kernel {}",
+                limits::SMOOTH_KERNEL
+            ))
+        })
 }
 
 /// The engine's rule for a stroke's cells (`stroke_cells` in the ui

@@ -40,21 +40,24 @@ pub enum ToolMode {
 
 /// What a press-drag does in Sculpt mode. Kept across modes like the
 /// brush. Raise and lower are [`crate::sculpt`]'s `adjust_heights`;
-/// flatten is its `flatten_heights`, to the height under the press.
+/// flatten is its `flatten_heights`, to the height under the press; smooth
+/// is its `smooth_heights`, with kernel [`crate::sculpt::SMOOTH_KERNEL`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SculptTool {
     #[default]
     Raise,
     Lower,
     Flatten,
+    Smooth,
 }
 impl SculptTool {
-    pub const ALL: [Self; 3] = [Self::Raise, Self::Lower, Self::Flatten];
+    pub const ALL: [Self; 4] = [Self::Raise, Self::Lower, Self::Flatten, Self::Smooth];
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Raise => "raise",
             Self::Lower => "lower",
             Self::Flatten => "flatten",
+            Self::Smooth => "smooth",
         }
     }
     /// The next tool in [`Self::ALL`], wrapping (what F and the pinned
@@ -64,13 +67,15 @@ impl SculptTool {
         match self {
             Self::Raise => Self::Lower,
             Self::Lower => Self::Flatten,
-            Self::Flatten => Self::Raise,
+            Self::Flatten => Self::Smooth,
+            Self::Smooth => Self::Raise,
         }
     }
     /// Whether the step (1 or 8) applies: to raise and lower, not to
-    /// flatten, whose stroke sets one height.
+    /// flatten, whose stroke sets one height, nor to smooth, whose kernel
+    /// has one fixed strength.
     pub const fn stepped(self) -> bool {
-        !matches!(self, Self::Flatten)
+        matches!(self, Self::Raise | Self::Lower)
     }
 }
 
@@ -405,12 +410,12 @@ impl ToolState {
         Ok(())
     }
     /// The signed amount a raise or lower stroke records: the step,
-    /// negative to lower (and for flatten, which records a target instead,
-    /// the step).
+    /// negative to lower (and for flatten and smooth, which record a
+    /// target or a kernel instead, the step).
     pub fn sculpt_amount(&self) -> i32 {
         let step = i32::from(self.sculpt_step.0);
         match self.sculpt {
-            SculptTool::Raise | SculptTool::Flatten => step,
+            SculptTool::Raise | SculptTool::Flatten | SculptTool::Smooth => step,
             SculptTool::Lower => -step,
         }
     }
@@ -1852,8 +1857,9 @@ impl ToolState {
     }
     /// A sculpt stroke samples the ground cell mask like a terrain stroke;
     /// its release raises or lowers the covered cells' heights by
-    /// [`Self::sculpt_amount`], fixed at the press, or flattens them to
-    /// `target`, sampled at the press (required for the Flatten tool).
+    /// [`Self::sculpt_amount`], fixed at the press, flattens them to
+    /// `target`, sampled at the press (required for the Flatten tool), or
+    /// smooths them with kernel [`crate::sculpt::SMOOTH_KERNEL`].
     fn begin_sculpt_stroke(
         &mut self,
         inspector: &Inspector<'_>,
@@ -1867,6 +1873,9 @@ impl ToolState {
             (SculptTool::Flatten, None) => {
                 return Err(ToolError("Flatten samples its target at the press"));
             }
+            (SculptTool::Smooth, _) => StrokeTarget::Smooth {
+                kernel: crate::sculpt::SMOOTH_KERNEL,
+            },
             _ => StrokeTarget::Heights {
                 amount: self.sculpt_amount(),
             },

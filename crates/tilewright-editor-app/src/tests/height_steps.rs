@@ -1,7 +1,8 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! A proposal's height steps (`adjust_heights`, `flatten_heights`): their
+//! A proposal's height steps (`adjust_heights`, `flatten_heights`,
+//! `smooth_heights`): their
 //! words, which count the cells the engine's own plan would change in the
 //! person's world, their map highlight, the step's cells, and the advice
 //! when their result cannot be drawn.
@@ -138,6 +139,74 @@ fn a_flatten_step_is_said_and_highlighted_by_its_cells() {
             app.session.catalog()
         ),
         "Flatten 2 cells to 0, not granted by this catalog (on main/0)"
+    );
+}
+
+#[test]
+fn a_smooth_step_is_said_and_highlighted_by_its_cells() {
+    let (_person, app) = person_application(hills);
+    let expected = super::proposal::revision(&app.session);
+    let smooth = |cells: Vec<[i64; 2]>| Action::SmoothHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells,
+        kernel: 1,
+        expected,
+    };
+    let words = |action: &Action| action_words(action, app.session.world(), app.session.catalog());
+    // (0, 0) and (1, 0) at 4 come down to 2 and 1, and (2, 0) beside
+    // them goes up to 1; (5, 5) among zeros is already even, so a stroke
+    // with it counts 3 of its 4 cells.
+    assert_eq!(
+        words(&smooth(vec![[0, 0], [1, 0], [2, 0]])),
+        "Smooth 3 cells, 3 to change (on main/0)"
+    );
+    assert_eq!(
+        words(&smooth(vec![[0, 0], [1, 0], [2, 0], [5, 5]])),
+        "Smooth 4 cells, 3 to change (on main/0)"
+    );
+    assert_eq!(
+        words(&smooth(vec![[5, 5]])),
+        "Smooth 1 cell, none to change (on main/0)"
+    );
+    assert_eq!(
+        words(&smooth(vec![[1, 1], [900, 1]])),
+        "Smooth 2 cells, some outside the view (on main/0)"
+    );
+    let highlight = Highlight::of(0, &smooth(vec![[0, 0], [3, 2]]), &app.session);
+    let tiles: Vec<(&str, [i64; 2])> = highlight
+        .tiles
+        .iter()
+        .map(|tile| (tile.role.key(), tile.at))
+        .collect();
+    assert_eq!(tiles, [("cell", [0, 0]), ("cell", [3, 2])]);
+    let (_plain, app) = person_application(|_| {});
+    assert_eq!(
+        action_words(
+            &smooth(vec![[0, 0], [1, 0]]),
+            app.session.world(),
+            app.session.catalog()
+        ),
+        "Smooth 2 cells, not granted by this catalog (on main/0)"
+    );
+}
+
+#[test]
+fn the_advice_for_an_undrawable_smooth_is_to_zoom_out() {
+    use crate::prototype::{undrawable_advice, undrawable_step_advice};
+    let smooth = Action::SmoothHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells: vec![[0, 0]],
+        kernel: 1,
+        expected: [0; 32],
+    };
+    // A person's own smooth has no amount to lessen; a proposal step's
+    // cells are the agent's.
+    assert_eq!(undrawable_advice(Some(&smooth)), "Zoom out.");
+    assert_eq!(
+        undrawable_step_advice(Some(&smooth)),
+        "Zoom out and prepare the step again."
     );
 }
 

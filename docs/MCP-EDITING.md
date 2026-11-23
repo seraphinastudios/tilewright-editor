@@ -166,7 +166,7 @@ made from, holds that art, and `render` sends its pixels to the client.
 `kind` and exactly that kind's members, every one present, `null` for an
 absent option, and `expected`, the sandbox revision it was made for
 (`state.revision`). The input schema says this as an `anyOf` with one
-choice per kind (19), each listing exactly its members as required, with
+choice per kind (20), each listing exactly its members as required, with
 `additionalProperties: false`, and at the action's root the list of kinds
 and the two members every kind has. It uses only keywords that draft-07
 and 2020-12 read alike: `anyOf` rather than `oneOf` (the kinds' consts
@@ -184,7 +184,10 @@ with `section: "palettes"`); `amount` (of `adjust_heights`) is an integer
 from -1,024 to -1 or from 1 to 1,024 (two `anyOf` choices, so the schema
 itself excludes 0) and needs the catalog's height range, which the
 `catalog` tool reports as `heights`; `target` (of `flatten_heights`) is an
-integer from -1,024 to 1,024 that the range must hold; a portal `target` is `null`, an anchor or a location; a field
+integer from -1,024 to 1,024 that the range must hold; `kernel` (of
+`smooth_heights`) is the integer 1, written as `minimum` and `maximum` 1
+so that `1.0` is admitted alike everywhere, and its description gives the
+rule; a portal `target` is `null`, an anchor or a location; a field
 `value` is any JSON value. The kind's `const` decides the
 choice, so a member of the wrong type fails the one choice that applies;
 there is no ambiguity of the kind the revision warns about for
@@ -196,7 +199,7 @@ crate's decoder, as the runner does. A test evaluates the schema sent in
 each member missing, an extra member and an unknown kind, and requires them
 to agree (more than 300 cases). To make them agree, the server rewrites a
 number with no fraction (`3.0`, `1e3`), which JSON Schema's `integer`
-admits, to the integer it is, in `x`, `y`, `layer`, `seed`, `amount`, a flatten's `target`, the cells and a
+admits, to the integer it is, in `x`, `y`, `layer`, `seed`, `amount`, `kernel`, a flatten's `target`, the cells and a
 location's `layer` and `at`, before decoding; a field `value` is never
 rewritten. What JSON Schema cannot say, the server still refuses, and a
 test holds each:

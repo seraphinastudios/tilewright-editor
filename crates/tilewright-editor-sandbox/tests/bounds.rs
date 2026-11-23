@@ -112,6 +112,9 @@ fn random_request_lines_each_get_exactly_one_well_formed_reply() {
             r#"{{"request":"edit","action":{{"kind":"flatten_heights","plane":"main","layer":0,"cells":[[0,1],[1,1]],"target":3,"expected":"{base}"}}}}"#
         ),
         format!(
+            r#"{{"request":"edit","action":{{"kind":"smooth_heights","plane":"main","layer":0,"cells":[[0,1],[1,1]],"kernel":1,"expected":"{base}"}}}}"#
+        ),
+        format!(
             r#"{{"request":"edit","action":{{"kind":"set_field","uid":"marker_1","field":"label","value":{{"a":[1,2.5,null,true]}},"expected":"{base}"}}}}"#
         ),
     ]

@@ -159,6 +159,7 @@ fn bases(revision: &str) -> Vec<Value> {
         json!({"kind": "scatter_terrain", "plane": "main", "layer": 0, "grid": "floor", "cells": [[0, 0], [0, 1]], "palette": "speckle", "seed": 1234}),
         json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": [[0, 0], [0, 1]], "amount": 8}),
         json!({"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": [[0, 0], [0, 1]], "target": -2}),
+        json!({"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": [[0, 0], [0, 1]], "kernel": 1}),
         json!({"kind": "paint_zones", "plane": "main", "layer": 0, "cells": [[0, 0]], "zone": null}),
         json!({"kind": "remove", "uid": "marker_1"}),
         json!({"kind": "place", "plane": "main", "layer": 0, "x": 1, "y": 1, "proto": "marker"}),
@@ -284,6 +285,15 @@ fn variations(base: &Value) -> Vec<Value> {
                 found.push(with(name, json!(-0.0)));
                 found.push(with(name, json!(7.5)));
                 found.push(with(name, json!("7")));
+                found.push(with(name, Value::Null));
+            }
+            "kernel" => {
+                for number in [0, 1, 2, -1, 4_294_967_297_i64] {
+                    found.push(with(name, json!(number)));
+                }
+                found.push(with(name, json!(1.0)));
+                found.push(with(name, json!(1.5)));
+                found.push(with(name, json!("1")));
                 found.push(with(name, Value::Null));
             }
             "value" => {

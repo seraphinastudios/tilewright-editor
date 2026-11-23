@@ -33,7 +33,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Sculpt: F raise, lower or flatten, 1 or 8 step (not for flatten) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill or replace | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -229,11 +229,12 @@ struct FillPreview {
 }
 
 /// What a running sculpt stroke's release would do, from the engine's own
-/// plan ([`tilewright_editor_ui::sculpt::plan`] or
-/// [`tilewright_editor_ui::sculpt::flatten_plan`] through
+/// plan ([`tilewright_editor_ui::sculpt::plan`],
+/// [`tilewright_editor_ui::sculpt::flatten_plan`] or
+/// [`tilewright_editor_ui::sculpt::smooth_plan`] through
 /// `Session::stroke_changes`) on the committed World.
 struct SculptPreview {
-    /// The stroke's signed amount, or its flatten target.
+    /// The stroke's signed amount, its flatten target, or smooth.
     goal: SculptGoal,
     /// How many cells the stroke covers.
     covered: usize,
@@ -241,18 +242,20 @@ struct SculptPreview {
     plan: std::result::Result<SculptCounts, String>,
 }
 
-/// What a sculpt stroke records: a raise or lower's signed amount, or a
-/// flatten's target, sampled at the press.
+/// What a sculpt stroke records: a raise or lower's signed amount, a
+/// flatten's target, sampled at the press, or a smooth's kernel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SculptGoal {
     Amount(i32),
     Target(i32),
+    Kernel(u32),
 }
 
 /// The covered cells of a sculpt stroke the engine would not refuse: those
 /// it changes, those it leaves out where they are (at or beyond the end of
-/// the range the amount moves toward, or already at the flatten target),
-/// and those in chunks that do not exist (left out too).
+/// the range the amount moves toward, already at the flatten target, or
+/// already even for a smooth), and those in chunks that do not exist (left
+/// out too).
 struct SculptCounts {
     changes: Vec<[i64; 2]>,
     at_end: usize,
@@ -284,6 +287,10 @@ impl SculptPreview {
             SculptGoal::Target(target) => (
                 format!("Flattening {} {cells} to {target}", self.covered),
                 "already there",
+            ),
+            SculptGoal::Kernel(_) => (
+                format!("Smoothing {} {cells}", self.covered),
+                "already even",
             ),
         };
         match &self.plan {
@@ -655,14 +662,16 @@ pub(crate) const UNDRAWABLE_CHANGE: &str =
 
 /// What to do after [`UNDRAWABLE_CHANGE`] refused `action`: for a height
 /// adjustment, adjust less steeply; for a flatten, flatten to a height
-/// nearer the tiles around it; for any other edit (or none known), zoom
-/// out or pan.
+/// nearer the tiles around it; for a smooth, which has no amount to lessen
+/// but can leave a stroke's edge steeper, zoom out; for any other edit (or
+/// none known), zoom out or pan.
 pub(crate) fn undrawable_advice(action: Option<&Action>) -> &'static str {
     match action {
         Some(Action::AdjustHeights { .. }) => "Zoom out, or raise or lower by less.",
         Some(Action::FlattenHeights { .. }) => {
             "Zoom out, or flatten to a height nearer the tiles around it."
         }
+        Some(Action::SmoothHeights { .. }) => "Zoom out.",
         _ => "Zoom out or pan and try again.",
     }
 }
@@ -673,9 +682,11 @@ pub(crate) fn undrawable_advice(action: Option<&Action>) -> &'static str {
 /// follow; any other step gets [`undrawable_advice`]'s.
 pub(crate) fn undrawable_step_advice(action: Option<&Action>) -> &'static str {
     match action {
-        Some(Action::AdjustHeights { .. } | Action::FlattenHeights { .. }) => {
-            "Zoom out and prepare the step again."
-        }
+        Some(
+            Action::AdjustHeights { .. }
+            | Action::FlattenHeights { .. }
+            | Action::SmoothHeights { .. },
+        ) => "Zoom out and prepare the step again.",
         _ => undrawable_advice(action),
     }
 }
@@ -1444,6 +1455,7 @@ impl Application {
         let goal = match *stroke.target() {
             StrokeTarget::Heights { amount } => SculptGoal::Amount(amount),
             StrokeTarget::Flatten { target } => SculptGoal::Target(target),
+            StrokeTarget::Smooth { kernel } => SculptGoal::Kernel(kernel),
             _ => return None,
         };
         let plan = self
@@ -1840,6 +1852,7 @@ impl Application {
                     SculptTool::Raise => "Raise: drag lifts each cell once",
                     SculptTool::Lower => "Lower: drag sinks each cell once",
                     SculptTool::Flatten => "Flatten: drag levels to the start tile",
+                    SculptTool::Smooth => "Smooth: drag evens out heights",
                 }
                 .into(),
                 Some(Control::SculptTool(tool)),
@@ -1847,7 +1860,8 @@ impl Application {
                 self.tools.sculpt_tool() == tool,
             ));
         }
-        // Flatten sets one height: the steps are dimmed and do nothing.
+        // Flatten sets one height and smooth has one strength: the steps
+        // are dimmed for them and do nothing.
         let stepped = self.tools.sculpt_tool().stepped();
         for step in tools::SCULPT_STEPS {
             rows.push((
@@ -3481,6 +3495,7 @@ impl Application {
                     format!("Sculpt: Flatten to {target}  F")
                 }
                 (SculptTool::Flatten, _) => "Sculpt: Flatten  F".to_owned(),
+                (SculptTool::Smooth, _) => "Sculpt: Smooth  F".to_owned(),
                 _ => format!(
                     "Sculpt: {} by {}  F",
                     if tool == SculptTool::Lower {
@@ -3677,6 +3692,7 @@ impl Application {
                 // Said by `sculpt_preview` above.
                 StrokeTarget::Heights { amount } => format!("by {amount}"),
                 StrokeTarget::Flatten { target } => format!("to {target}"),
+                StrokeTarget::Smooth { .. } => "smooth".into(),
             };
             return format!(
                 "Painting {} cells {target}, {changes} to change; release to review.{}{}",
@@ -3806,6 +3822,12 @@ impl Application {
                     && self.tools.sculpt_tool() == SculptTool::Flatten =>
             {
                 "Ready. Drag to flatten heights to the start tile's height."
+            }
+            SessionPhase::Ready
+                if self.tools.mode() == ToolMode::Sculpt
+                    && self.tools.sculpt_tool() == SculptTool::Smooth =>
+            {
+                "Ready. Drag to smooth heights toward their neighbours."
             }
             SessionPhase::Ready if self.tools.mode() == ToolMode::Sculpt => {
                 return format!(
@@ -4434,10 +4456,11 @@ impl Application {
         let preview = self.sculpt_preview()?;
         // Raise and lower keep their shape; a flatten names its target in
         // place of the amount, and its cells already there in place of
-        // those at the end.
+        // those at the end; a smooth its kernel, and its cells already even.
         let (goal, value, kept) = match preview.goal {
-            SculptGoal::Amount(amount) => ("amount", amount, "at_end"),
-            SculptGoal::Target(target) => ("target", target, "at_target"),
+            SculptGoal::Amount(amount) => ("amount", serde_json::json!(amount), "at_end"),
+            SculptGoal::Target(target) => ("target", serde_json::json!(target), "at_target"),
+            SculptGoal::Kernel(kernel) => ("kernel", serde_json::json!(kernel), "even"),
         };
         let mut record = serde_json::json!({
             goal: value,
@@ -6148,7 +6171,8 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         Keycode::F if app.tools.mode() == ToolMode::Sculpt => {
             app.control(Control::SculptTool(app.tools.sculpt_tool().next()))
         }
-        // Flatten sets one height: the step keys do nothing for it.
+        // Flatten sets one height and smooth has one strength: the step
+        // keys do nothing for them.
         Keycode::_1 | Keycode::_8
             if app.tools.mode() == ToolMode::Sculpt && !app.tools.sculpt_tool().stepped() =>
         {
@@ -6318,7 +6342,10 @@ fn stroke_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
     let (Some(stroke), Some(changes)) = (app.tools.stroke(), stroke_changes(app)) else {
         return Vec::new();
     };
-    if let StrokeTarget::Heights { .. } | StrokeTarget::Flatten { .. } = stroke.target() {
+    if let StrokeTarget::Heights { .. }
+    | StrokeTarget::Flatten { .. }
+    | StrokeTarget::Smooth { .. } = stroke.target()
+    {
         return crate::workspace_render::sculpt_overlay(
             &app.prepared,
             &changes.into_iter().collect(),
@@ -6580,7 +6607,11 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         app.tools
             .stroke()
             .map(tilewright_editor_ui::brush::Stroke::target),
-        Some(StrokeTarget::Heights { .. } | StrokeTarget::Flatten { .. })
+        Some(
+            StrokeTarget::Heights { .. }
+                | StrokeTarget::Flatten { .. }
+                | StrokeTarget::Smooth { .. }
+        )
     ) {
         person.append(&mut stroke);
     }

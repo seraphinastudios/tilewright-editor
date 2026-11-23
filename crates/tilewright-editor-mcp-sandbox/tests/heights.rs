@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! Raise, lower and flatten through the editing server: on a temporary copy of the
+//! Raise, lower, flatten and smooth through the editing server: on a temporary copy of the
 //! neutral sample with a height range and generated heights, `catalog`
 //! reports the range, `adjust_heights` prepares one change, `tile` shows the
 //! new heights after Accept, and the submitted proposal records the step
@@ -128,4 +128,37 @@ fn an_agent_flattens_heights_to_a_target_in_the_range() {
     assert_eq!(tile_height(&mut client, 1, 0), -4);
     let submitted = client.simple("submit");
     assert_eq!(submitted.ok()["proposal"]["steps"], 2);
+}
+
+#[test]
+fn an_agent_smooths_heights_toward_their_neighbours() {
+    let layout = Layout::new(hilly);
+    let mut client = layout.open(None);
+    // (3, 1) holds 2 on the sawtooth; the 5 × 5 around it (row -1 has no
+    // chunk, so weight 240) averages 398 / 240 = 1.66 below it, so 0.
+    // (3, 2) holds -3 and reads (3, 1)'s committed 2, not its new 0: 742
+    // / 256 = 2.9 above it, so 0.
+    let cells = json!([[3, 1], [3, 2]]);
+    client
+        .edit(json!({"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": cells, "kernel": 1}))
+        .ok();
+    client.simple("accept").ok();
+    assert_eq!(tile_height(&mut client, 3, 1), 0);
+    assert_eq!(tile_height(&mut client, 3, 2), 0);
+    // Only kernel 1 exists; 1.0 is 1.
+    for kernel in [json!(2), json!(0), json!("1"), json!(null)] {
+        client
+            .edit(json!({"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": cells, "kernel": kernel}))
+            .refused("proposal.invalid");
+    }
+    client
+        .edit(json!({"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": [[3, 2], [3, 3]], "kernel": 1.0}))
+        .ok();
+    client.simple("cancel").ok();
+    // Outside the view: refused.
+    client
+        .edit(json!({"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": [[3, 6]], "kernel": 1}))
+        .refused("scope.outside_view");
+    let submitted = client.simple("submit");
+    assert_eq!(submitted.ok()["proposal"]["steps"], 1);
 }
