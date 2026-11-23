@@ -905,11 +905,11 @@ fn cell_pixels(app: &mut Application) -> std::collections::BTreeMap<[i64; 2], [f
     pixels
 }
 
-#[test]
-fn a_large_stroke_on_bent_ground_keeps_the_tint_zones_and_marks() {
-    // #89's benchmark view: 64 x 64 tiles over four chunks of bent
-    // isometric 64 x 32 ground at zoom 0.25, zones shown.
-    let (_temporary, mut app) = zone_application(|root| {
+/// #89's benchmark view: 64 x 64 tiles over four chunks of bent isometric
+/// 64 x 32 ground at zoom 0.25, in Sculpt mode with zones shown and the
+/// 1x1 brush.
+fn benchmark_application() -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = zone_application(|root| {
         for (from, to) in [("0_0", [0, 1]), ("-1_0", [-1, 1])] {
             let path = |name: &str| root.join(format!("planes/main/layers/0/{name}.jsonc"));
             let mut chunk: serde_json::Value =
@@ -943,23 +943,28 @@ fn a_large_stroke_on_bent_ground_keeps_the_tint_zones_and_marks() {
     route(&mut app, &key(Keycode::O)).unwrap();
     app.tools.set_brush(Brush::default());
     acknowledge_ui(&mut app);
-    let pixels = cell_pixels(&mut app);
+    (temporary, app)
+}
+
+/// Press on the first of `cells` and drag through the next ones until the
+/// stroke covers 3,400 cells.
+fn sweep(app: &mut Application, pixels: &std::collections::BTreeMap<[i64; 2], [f32; 2]>) {
     let cells: Vec<[i64; 2]> = pixels.keys().copied().collect();
-    let start = pixels[&cells[0]];
-    crate::prototype::native_pointer(&mut app, start, BRUSH_WINDOW, BRUSH_WINDOW).unwrap();
+    crate::prototype::native_pointer(app, pixels[&cells[0]], BRUSH_WINDOW, BRUSH_WINDOW).unwrap();
     for cell in &cells[1..] {
-        crate::prototype::native_stroke_motion(
-            &mut app,
-            pixels[cell],
-            true,
-            BRUSH_WINDOW,
-            BRUSH_WINDOW,
-        )
-        .unwrap();
+        crate::prototype::native_stroke_motion(app, pixels[cell], true, BRUSH_WINDOW, BRUSH_WINDOW)
+            .unwrap();
         if app.tools.stroke().unwrap().len() >= 3400 {
             break;
         }
     }
+}
+
+#[test]
+fn a_large_stroke_on_bent_ground_keeps_the_tint_zones_and_marks() {
+    let (_temporary, mut app) = benchmark_application();
+    let pixels = cell_pixels(&mut app);
+    sweep(&mut app, &pixels);
     let covered = app.tools.stroke().unwrap().len();
     assert!(covered >= 3400, "{covered}");
     let presentation = crate::prototype::workspace_presentation(&mut app).unwrap();
@@ -979,39 +984,45 @@ fn a_large_stroke_on_bent_ground_keeps_the_tint_zones_and_marks() {
     assert!(!crate::prototype::height_overlay(&app).is_empty());
     assert!(!crate::prototype::zone_overlay(&app).is_empty());
     assert!(!app.status_label().contains("Too many cells"));
-    // Past the budget the tints give way first: the marks and badges stay,
-    // and the status line says what is hidden.
-    let count = |presentation: &crate::workspace_render::Presentation, colour: [f32; 4]| {
+    // Past the budget everything the person shows is left out for the
+    // frame, and the sculpt status says so.
+    let count = |presentation: &crate::workspace_render::Presentation| {
         presentation
             .scene
             .quads()
             .iter()
-            .filter(|quad| quad.color == colour)
+            .filter(|quad| quad.color == SCULPT_MARK)
             .count()
     };
+    assert_eq!(count(&presentation), changed);
     app.frame_limits.maximum_quads = presentation.scene.quads().len() - 1;
-    let kept = crate::prototype::workspace_presentation(&mut app).unwrap();
-    assert!(app.tints_omitted && !app.preview_omitted);
-    assert_eq!(count(&kept, SCULPT_MARK), changed);
-    assert!(kept.scene.quads().len() < presentation.scene.quads().len() - 1000);
-    let status = app.status_label();
-    assert!(
-        status.starts_with("Raising ")
-            && status
-                .ends_with("; release to review. Height tint and zones hidden: too many cells."),
-        "{status}"
-    );
-    // When even the marks do not fit, everything is left out.
-    app.frame_limits.maximum_quads = kept.scene.quads().len() - 1;
     let bare = crate::prototype::workspace_presentation(&mut app).unwrap();
-    assert!(app.preview_omitted && !app.tints_omitted);
-    assert_eq!(count(&bare, SCULPT_MARK), 0);
+    assert!(app.preview_omitted);
+    assert_eq!(count(&bare), 0);
     let status = app.status_label();
     assert!(
         status.starts_with("Raising ")
             && status.ends_with("; release to review. Too many cells to preview."),
         "{status}"
     );
+    // Released, the suffix goes with the stroke.
+    app.finish_stroke().unwrap();
+    assert!(app.tools.stroke().is_none());
+    crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert!(
+        !app.status_label().contains("Too many cells to preview"),
+        "{}",
+        app.status_label()
+    );
+    app.action(Action::Cancel).unwrap();
+    // With the zones off the same stroke's marks fit the same budget.
+    route(&mut app, &key(Keycode::O)).unwrap();
+    acknowledge_ui(&mut app);
+    sweep(&mut app, &pixels);
+    let shown = crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert!(!app.preview_omitted);
+    assert_eq!(count(&shown), engine(&app).len());
+    assert!(!app.status_label().contains("Too many"));
     app.frame_limits = tilewright_scene::SceneLimits::default();
     route(&mut app, &key(Keycode::Escape)).unwrap();
 }
@@ -1035,7 +1046,7 @@ fn rings_keep_their_width_and_stay_inside_their_tile_at_every_zoom() {
         ]
     };
     for (name, projection, shape) in fixtures {
-        for zoom in [0.25_f32, 1.0, 8.0] {
+        for zoom in [0.25_f32, 0.4, 0.8, 1.0, 8.0] {
             let (_temporary, mut app) = sculpt_application(|root| {
                 heights(root, -64, 64, |_, _| 0);
                 projection(root);
@@ -1110,7 +1121,12 @@ fn rings_keep_their_width_and_stay_inside_their_tile_at_every_zoom() {
                         assert!(((lr - ll) - (mr - ml) - 2.0 * 1.5).abs() < 0.01);
                     }
                 }
-                _ => assert!(ringed > 0, "{name} at {zoom}"),
+                // Where only the cap keeps the ring in the tile.
+                ("isometric 64x32" | "top-down 32", 0.4) | ("isometric 32x16", 0.8) => {
+                    assert!(ringed > 0, "{name} at {zoom}");
+                }
+                (_, 1.0) => assert!(ringed > 0, "{name} at {zoom}"),
+                _ => assert!(ringed + bare > 0, "{name} at {zoom}"),
             }
         }
     }
@@ -1183,8 +1199,8 @@ fn a_refused_stroke_says_nothing_about_the_budget() {
     drag(&mut app, [5, 0], &[[6, 0]]);
     // Whatever the last frame left out, a refused stroke's status line is
     // the engine's refusal alone.
-    for (omitted, tints) in [(true, false), (false, true)] {
-        (app.preview_omitted, app.tints_omitted) = (omitted, tints);
+    for omitted in [true, false] {
+        app.preview_omitted = omitted;
         let status = app.status_label();
         assert!(
             status.starts_with("Lowering 2 cells by 1 refused: "),

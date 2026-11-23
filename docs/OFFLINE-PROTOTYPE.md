@@ -574,11 +574,12 @@ part of an object on its tile, or of an object or nearer tile in front of
 it. A mark sits on its own tile's ground, so read it by the ground around
 it, not by what it covers. Cells outside the window are counted in the
 status line but not marked. Each marked tile costs three quads however bent
-its ground. When the overlays would pass the scene limits, the height tint
-and zone tints are left out first and the marks and badges kept; the status
-line then ends "Height tint and zones hidden: too many cells." (or "Height
-tint hidden: ..." without zones). Only when the marks still do not fit is
-everything left out, with "Too many cells to preview."
+its ground. When a very large stroke, with the height tint and zones shown,
+would take the frame past what one frame can draw, all overlays (tint,
+zones, badges and marks) are left out for that frame and the status line
+ends "Too many cells to preview."; the release still prepares every cell.
+Turning the zones off (O, between strokes) or zooming in brings the marks
+back.
 The marked cells are the engine's own answer
 (`tilewright_editor_ui::sculpt::plan` on the committed World), the cells
 Accept writes. The status line says what the release would do: "Raising 37
