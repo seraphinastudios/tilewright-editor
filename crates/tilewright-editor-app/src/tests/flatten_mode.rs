@@ -355,3 +355,51 @@ fn flatten_presses_are_refused_in_the_pauses_words_and_work_between_proposal_ste
     assert_eq!(height(app, 7, 5), 6);
     assert_eq!(app.tools.mode(), ToolMode::Sculpt);
 }
+
+#[test]
+fn changed_cells_this_view_does_not_draw_are_counted_not_marked_and_written() {
+    // Top-down, range -8 to 8: (3, 0) at i32::MAX and (4, 0) at 100000 are
+    // so far off that their tiles are not drawn; (1, 0) at 5 is.
+    let (temporary, mut app) = flatten_application(|root| {
+        heights(root, -8, 8, |x, y| match [x, y] {
+            [1, 0] => 5,
+            [3, 0] => i64::from(i32::MAX),
+            [4, 0] => 100_000,
+            _ => 0,
+        });
+    });
+    // Pressed at (2, 1), height 0; the 3 x 3 brush reaches row 0.
+    drag(&mut app, [2, 1], &[[3, 1]]);
+    let changes = engine(&app);
+    assert_eq!(changes, BTreeSet::from([[1, 0], [3, 0], [4, 0]]));
+    assert_eq!(marked(&mut app), BTreeSet::from([[1, 0]]));
+    assert_eq!(
+        app.status_label(),
+        "Flattening 12 cells to 0, 3 to change, 2 not drawn at this view, 9 already there; release to review."
+    );
+    app.capture("undrawn").unwrap();
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("evidence/undrawn.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        record["sculpt_preview"],
+        json!({"target": 0, "cells": 12, "changes": 3, "at_target": 9, "missing": 0,
+            "first": [[1, 0], [3, 0], [4, 0]],
+            "undrawn": {"count": 2, "first": [[3, 0], [4, 0]]}})
+    );
+    release(&mut app, [3, 1]).unwrap();
+    assert_eq!(
+        pending(&app),
+        BTreeSet::from([
+            ([1, 0], 5, 0),
+            ([3, 0], i64::from(i32::MAX), 0),
+            ([4, 0], 100_000, 0)
+        ])
+    );
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Return)).unwrap();
+    assert!(app.session.history().pending().is_none());
+    for x in [1, 3, 4] {
+        assert_eq!(height(&app, x, 0), 0, "{x}");
+    }
+}

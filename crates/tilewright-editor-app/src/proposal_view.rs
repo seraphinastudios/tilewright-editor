@@ -991,8 +991,9 @@ impl Application {
     /// never accepts it.
     pub(super) fn prepare_proposal_step(&mut self) -> Result<()> {
         self.refuse_while_paused()?;
-        // A height step gets its kind's advice if it cannot be drawn.
-        let advice = super::undrawable_advice(
+        // A height step gets advice the person can follow if it cannot
+        // be drawn.
+        let advice = super::undrawable_step_advice(
             self.proposal
                 .as_ref()
                 .and_then(|open| {

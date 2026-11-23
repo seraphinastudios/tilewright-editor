@@ -107,18 +107,28 @@ them.
   drag passes over. The release prepares one `flatten_heights` action with
   that target.
 - **A press on a tile without a chunk is refused** ("Flatten needs a
-  starting tile with ground: this tile has no map chunk."): there is no
+  starting tile with ground: tile (x, y) has no map chunk."): there is no
   height to sample.
 - **A press on a tile whose height is outside the range is refused**,
   naming the height and the range ("Flatten refused: this tile's height 30
   is outside the granted range -8 to 8; start on a tile inside it.").
   Clamping the target into the range was the alternative; it was not
   chosen because it would flatten to a height the person did not point at,
-  which is the one result that could surprise. Starting on an in-range
-  tile and dragging over the far one brings it back.
+  which is the one result that could surprise. A tile far outside the
+  range may not be drawn where it stands, so it cannot be pointed at:
+  start on an in-range neighbour and let the brush cover its cell (a 3 × 3
+  brush reaches it).
+- **Undrawn tiles are counted, not marked.** The live marks are the cells
+  Accept writes that this view draws. A changed cell whose tile is not
+  drawn (a height far outside the range) has no geometry to mark, and
+  none is invented: the status line adds "N not drawn at this view" and
+  the `sculpt_preview` evidence an `undrawn` member (`count`, `first`),
+  only when there are any. Raise and lower share the same code path.
 - **The undrawable-change advice** for a flatten is "Zoom out, or flatten
   to a height nearer the tiles around it.": what makes a flatten
-  undrawable is the step between the flattened cells and their neighbours.
+  undrawable is the step between the flattened cells and their neighbours. For a proposal step of either height kind, whose amount or target the
+  person cannot change, the advice is only "Zoom out and prepare the step
+  again."
 
 ## Not decided here
 

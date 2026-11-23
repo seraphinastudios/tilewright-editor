@@ -300,3 +300,76 @@ fn another_change_that_cannot_be_drawn_gets_no_height_advice() {
     assert!(app.session.history().pending().is_none());
     assert!(app.blocked.is_none());
 }
+
+/// A proposal of one `action(revision)` recorded on a copy of the steep
+/// world, prepared in the person's steep copy at zoom 8: cancelled with
+/// advice the person can follow, which for a height step is only to zoom
+/// out (its amount or target is the agent's).
+fn an_undrawable_height_step_says_only_to_zoom_out(action: impl FnOnce([u8; 32]) -> Action) {
+    use super::proposal::{AGENT, RECEIPT, accept, open_session, revision, scratch};
+    let agent = tempfile::tempdir_in(scratch()).unwrap();
+    let world = agent.path().join("world");
+    super::copy_private(
+        &tilewright_editor_testkit::fixture_world("prototype-neutral"),
+        &world,
+    );
+    steep(&world);
+    let mut session = open_session(&world, AGENT);
+    let step = action(revision(&session));
+    accept(&mut session, step);
+    let proposal = tilewright_editor_proposal::Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
+    let (_person, mut app) = person_application(steep);
+    app.view.camera.zoom = 8.0;
+    app.rebuild().unwrap();
+    let name = proposal.file_name();
+    app.open_proposal(Some((proposal, name))).unwrap();
+    super::acknowledge_ui(&mut app);
+    let error = app.prepare_proposal_step().unwrap_err();
+    assert_eq!(
+        error,
+        format!(
+            "{} Zoom out and prepare the step again. Renderer: invalid world view",
+            crate::prototype::UNDRAWABLE_CHANGE
+        )
+    );
+    assert!(app.session.history().pending().is_none());
+    assert!(app.blocked.is_none());
+}
+
+/// The high tiles of the half-built steep pattern.
+fn steep_high() -> Vec<[i64; 2]> {
+    (1..4_i64)
+        .flat_map(|x| (1..4_i64).map(move |y| [x, y]))
+        .filter(|&[x, y]| {
+            STEEP_HIGH[usize::try_from(y - 1).unwrap()][usize::try_from(x - 1).unwrap()] == 1
+        })
+        .collect()
+}
+
+#[test]
+fn an_undrawable_raise_step_says_only_to_zoom_out() {
+    an_undrawable_height_step_says_only_to_zoom_out(|expected| Action::AdjustHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells: steep_high(),
+        amount: 512,
+        expected,
+    });
+}
+
+#[test]
+fn an_undrawable_flatten_step_says_only_to_zoom_out() {
+    an_undrawable_height_step_says_only_to_zoom_out(|expected| Action::FlattenHeights {
+        plane: "main".into(),
+        layer: 0,
+        cells: steep_high(),
+        target: 512,
+        expected,
+    });
+}

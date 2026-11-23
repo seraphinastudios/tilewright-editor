@@ -591,8 +591,10 @@ table. If an edit's result cannot be drawn at the current view, the
 desktop cancels it and says so, with the renderer's reason ("Change
 refused: it cannot be drawn at this view, so it was cancelled.", then
 "Zoom out, or raise or lower by less." for a height adjustment, "Zoom
-out, or flatten to a height nearer the tiles around it." for a flatten and
-"Zoom out or pan and try again." for any other edit); editing continues. The
+out, or flatten to a height nearer the tiles around it." for a flatten,
+"Zoom out and prepare the step again." for a proposal's height step,
+whose amount or target the person cannot change, and "Zoom out or pan and
+try again." for any other edit); editing continues. The
 member is the same in catalog formats 1 and 2; a catalog without it loads
 and behaves exactly as before, and an editor from before it refuses a
 catalog that has it. The `catalog` command and MCP tool report it as
@@ -662,9 +664,11 @@ ground: tile (33, 1) has no map chunk."), and so is a press on a tile whose
 height is outside the granted range ("Flatten refused: this tile's height
 30 is outside the granted range -8 to 8; start on a tile inside it."):
 the target would not be granted, and clamping it into the range would
-flatten to a height nobody pointed at. Start on a tile inside the range
-and drag over the far one: a flatten brings any tile back into the range,
-however far outside it is.
+flatten to a height nobody pointed at. A flatten brings any tile back
+into the range, however far outside it is, but such a tile may not be
+drawn where it stands, so it cannot be pointed at: press on a neighbour
+inside the range and let the brush cover its cell (a 3 × 3 brush reaches
+it), then read the count in the status line.
 
 While dragging, before the release, each cell the release would change
 carries a mark: a magenta copy of the cell's flat shape at half its size
@@ -691,7 +695,11 @@ Turning the zones off (O, between strokes) or zooming in brings the marks
 back.
 The marked cells are the engine's own answer
 (`tilewright_editor_ui::sculpt::plan`, or `flatten_plan` for Flatten, on the
-committed World), the cells Accept writes. For Flatten the status line reads
+committed World): the cells Accept writes that this view draws. A changed
+cell whose tile is not drawn at this view (a height far outside the range,
+which only a flatten changes) has nothing to mark; the status line counts
+it ("…, 35 to change, 2 not drawn at this view; release to review.", only
+when there are any) and Accept writes it too. For Flatten the status line reads
 "Flattening 37 cells to 8, 35 to change, 2 already there; release to
 review.", cells already at the target being left out and counted. The status line says what the release would do: "Raising 37
 cells by 8, 35 to change, 2 at or above the top; release to review." Cells
@@ -714,7 +722,9 @@ any other edit of theirs. A frame captured while a sculpt stroke runs has a
 `sculpt_preview` member: the signed `amount`, the covered `cells`, and either
 `changes`, `at_end`, `missing` and the `first` eight changed cells, or
 `refused` with the engine's message. A Flatten stroke's has `target` in
-place of `amount` and `at_target` in place of `at_end`.
+place of `amount` and `at_target` in place of `at_end`. When some changed
+cells are not drawn, either kind's record also has `undrawn`: their `count`
+and the `first` eight.
 
 The scripted demonstration has no sculpt step: the neutral sample grants no
 height range, and it stays that way. Hand test on a copy (every height of the

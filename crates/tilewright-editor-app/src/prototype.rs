@@ -257,6 +257,9 @@ struct SculptCounts {
     changes: Vec<[i64; 2]>,
     at_end: usize,
     missing: usize,
+    /// The changes whose tiles this view does not draw, so no mark shows
+    /// them (a height far outside the range); Accept writes them too.
+    undrawn: Vec<[i64; 2]>,
 }
 
 impl SculptPreview {
@@ -292,8 +295,12 @@ impl SculptPreview {
                     .map(|(count, what)| format!(", {count} {what}"))
                     .collect();
                 let left = left.concat();
+                let undrawn = match counts.undrawn.len() {
+                    0 => String::new(),
+                    count => format!(", {count} not drawn at this view"),
+                };
                 format!(
-                    "{head}, {} to change{left}; release to review.",
+                    "{head}, {} to change{undrawn}{left}; release to review.",
                     counts.changes.len()
                 )
             }
@@ -657,6 +664,19 @@ pub(crate) fn undrawable_advice(action: Option<&Action>) -> &'static str {
             "Zoom out, or flatten to a height nearer the tiles around it."
         }
         _ => "Zoom out or pan and try again.",
+    }
+}
+
+/// What to do after [`UNDRAWABLE_CHANGE`] refused a proposal step of
+/// `action`: the person cannot change a recorded height step's amount or
+/// target, so for either height kind only zooming out is advice they can
+/// follow; any other step gets [`undrawable_advice`]'s.
+pub(crate) fn undrawable_step_advice(action: Option<&Action>) -> &'static str {
+    match action {
+        Some(Action::AdjustHeights { .. } | Action::FlattenHeights { .. }) => {
+            "Zoom out and prepare the step again."
+        }
+        _ => undrawable_advice(action),
     }
 }
 
@@ -1441,6 +1461,7 @@ impl Application {
                 });
                 SculptCounts {
                     at_end: stroke.len() - changes.len() - missing,
+                    undrawn: crate::workspace_render::undrawn_cells(&self.prepared, &changes),
                     changes,
                     missing,
                 }
@@ -4434,6 +4455,14 @@ impl Application {
                     .copied()
                     .collect::<Vec<_>>()
                     .into();
+                // Only when some change has no tile drawn, so every other
+                // record keeps its shape.
+                if !counts.undrawn.is_empty() {
+                    record["undrawn"] = serde_json::json!({
+                        "count": counts.undrawn.len(),
+                        "first": counts.undrawn.iter().take(8).copied().collect::<Vec<_>>(),
+                    });
+                }
             }
             Err(reason) => record["refused"] = terminal_field(reason).into(),
         }
