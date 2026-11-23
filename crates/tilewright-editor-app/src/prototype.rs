@@ -1722,7 +1722,7 @@ impl Application {
             for choice in tools::terrain_palette(self.session.catalog()) {
                 let active = self.tools.terrain_choice() == Some(&choice);
                 rows.push((
-                    format!("{} / {}", choice.grid, choice.prototype),
+                    tools::terrain_label(self.session.world(), &choice),
                     Some(Control::Palette {
                         grid: choice.grid,
                         prototype: choice.prototype,
@@ -3246,8 +3246,8 @@ impl Application {
     }
 
     /// The scrolled sidebar rows from logical `y` down. Text rows are
-    /// 26 px and Place palette rows, which carry their prototype's
-    /// thumbnail, are 40 px, each with a 2 px gap; only rows that fit whole,
+    /// 26 px and Place and terrain palette rows, which carry their
+    /// prototype's thumbnail, are 40 px, each with a 2 px gap; only rows that fit whole,
     /// gap included, are laid out. The scroll offset counts rows and stops where the last
     /// row is visible.
     /// Each sidebar row's swatch and swatch outline: a zone row's tint in
@@ -3316,7 +3316,12 @@ impl Application {
             .into_iter()
             .map(|(text, control, enabled, active)| {
                 let thumbnail = match &control {
-                    Some(Control::PlacePalette(proto)) => self
+                    Some(
+                        Control::PlacePalette(proto)
+                        | Control::Palette {
+                            prototype: proto, ..
+                        },
+                    ) => self
                         .session
                         .resources()
                         .prototype_texture(self.session.catalog(), proto),

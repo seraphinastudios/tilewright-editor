@@ -350,11 +350,13 @@
       "terrain_palette": [
         {
           "grid": "floor",
-          "value": "grass"
+          "value": "grass",
+          "terrain": "grass"
         },
         {
           "grid": "floor",
-          "value": "sand"
+          "value": "sand",
+          "terrain": "sand"
         }
       ],
       "terrain_palette_more": 0,

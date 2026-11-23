@@ -170,6 +170,78 @@ pub fn terrain_palette(catalog: &PreviewCatalog) -> Vec<TerrainChoice> {
         .collect()
 }
 
+/// What a terrain palette value is in the World format's terrain
+/// transitions (FORMAT.md section 13) on its grid: the palette names its
+/// rows by this, and the `catalog` report lists it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerrainName<'w> {
+    /// The value is the first prototype of the terrain with this id: what
+    /// a brush that paints the terrain writes.
+    Terrain(&'w str),
+    /// The value is another prototype of the terrain with this id: a
+    /// variant, which counts as the terrain where it is painted.
+    Variant(&'w str),
+    /// The grid is the terrain layer, but the value is in no terrain.
+    Unnamed,
+    /// The profile has no transitions or the grid is not its terrain
+    /// layer, so no value there is a terrain.
+    Ungoverned,
+}
+
+impl<'w> TerrainName<'w> {
+    /// The terrain the value counts as, if any.
+    #[must_use]
+    pub const fn terrain(self) -> Option<&'w str> {
+        match self {
+            Self::Terrain(id) | Self::Variant(id) => Some(id),
+            Self::Unnamed | Self::Ungoverned => None,
+        }
+    }
+}
+
+/// What `value` on ground grid `grid` is in `world`'s terrain transitions.
+pub fn terrain_name<'w>(world: &'w World, grid: &str, value: &str) -> TerrainName<'w> {
+    let profile = world.profile();
+    let Some(transitions) = profile.transitions.as_deref() else {
+        return TerrainName::Ungoverned;
+    };
+    if profile
+        .ground_layers
+        .get(transitions.terrain_layer())
+        .is_none_or(|layer| layer != grid)
+    {
+        return TerrainName::Ungoverned;
+    }
+    transitions
+        .terrains()
+        .iter()
+        .find_map(|terrain| {
+            let at = terrain.protos.iter().position(|proto| proto == value)?;
+            Some(if at == 0 {
+                TerrainName::Terrain(&terrain.id)
+            } else {
+                TerrainName::Variant(&terrain.id)
+            })
+        })
+        .unwrap_or(TerrainName::Unnamed)
+}
+
+/// The Terrain-mode palette row of `choice`: its grid, then the terrain it
+/// paints by the terrain's own id, with the value it writes when that
+/// differs; a variant names its terrain first, so a cut row still shows
+/// it; a value in no terrain on the terrain layer says so, and a value on
+/// another grid is named as it is.
+pub fn terrain_label(world: &World, choice: &TerrainChoice) -> String {
+    let (grid, value) = (&choice.grid, &choice.prototype);
+    match terrain_name(world, grid, value) {
+        TerrainName::Terrain(id) if id == value => format!("{grid} / {id}"),
+        TerrainName::Terrain(id) => format!("{grid} / {id} ({value})"),
+        TerrainName::Variant(id) => format!("{grid} / {id} variant: {value}"),
+        TerrainName::Unnamed => format!("{grid} / {value} (no terrain)"),
+        TerrainName::Ungoverned => format!("{grid} / {value}"),
+    }
+}
+
 /// The prototypes `editing.objects` lets the author place, sorted by
 /// prototype id. Only explicit grants appear.
 pub fn object_palette(catalog: &PreviewCatalog) -> Vec<&str> {

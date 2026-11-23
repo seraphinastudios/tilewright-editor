@@ -9,7 +9,10 @@ use crate::limits::{MAXIMUM_FIELDS, MAXIMUM_PROTOTYPES, MAXIMUM_TERRAIN_CHOICES,
 use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::Observed;
 use tilewright_editor_preview::{MAXIMUM_PALETTE_ENTRIES, MAXIMUM_PALETTES};
-use tilewright_editor_ui::{tools::palette_matches, zones};
+use tilewright_editor_ui::{
+    tools::{TerrainName, palette_matches, terrain_name},
+    zones,
+};
 
 pub const FORMAT: &str = "tilewright.editor-catalog/1";
 
@@ -98,7 +101,17 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
             "terrain_palette",
             terrain,
             MAXIMUM_TERRAIN_CHOICES,
-            |(grid, value)| Map::new().text("grid", grid).text("value", value).into(),
+            |(grid, value)| {
+                let row = Map::new().text("grid", grid).text("value", value);
+                // Only a value that is a terrain has the members, so the
+                // report of a world without transitions is unchanged.
+                match terrain_name(world, grid, value) {
+                    TerrainName::Terrain(id) => row.text("terrain", id),
+                    TerrainName::Variant(id) => row.text("terrain", id).with("variant", true),
+                    TerrainName::Unnamed | TerrainName::Ungoverned => row,
+                }
+                .into()
+            },
         )
         .paged(
             pager,
