@@ -133,6 +133,20 @@ pub enum Action {
         amount: i32,
         expected: [u8; 32],
     },
+    /// Flatten the tile heights of the covered cells of the active view to
+    /// `target`, in one reviewed `terrain.set` on the grid `height`
+    /// ([`crate::sculpt::flatten_plan`]). Needs `editing.heights` holding
+    /// `target`: each cell becomes `target`, wherever it was, and cells
+    /// already at it, or in chunks that do not exist, are left out; every
+    /// other cell expects its committed height. `target` is recorded, never
+    /// sampled, and at most [`crate::sculpt::MAXIMUM_TARGET`] either way.
+    FlattenHeights {
+        plane: String,
+        layer: i32,
+        cells: Vec<[i64; 2]>,
+        target: i32,
+        expected: [u8; 32],
+    },
     /// One zone brush gesture: every covered cell of the active view gets
     /// `zone`, or is emptied (`None`, the plane's default zone), in one
     /// reviewed `terrain.set` on the grid `zone`. Needs `editing.zones.paint`.
@@ -1243,6 +1257,7 @@ impl Session {
                     | Action::FillTerrain { .. }
                     | Action::ScatterTerrain { .. }
                     | Action::AdjustHeights { .. }
+                    | Action::FlattenHeights { .. }
                     | Action::PaintZones { .. }
                     | Action::Remove { .. }
                     | Action::Place { .. }
@@ -1494,6 +1509,29 @@ impl Session {
                 .map(|(at, before, after)| json!({"at":at,"value":after,"expect":before}))
                 .collect();
                 // One gesture, one operation, on the chunks' height grids.
+                self.prepare(
+                    expected,
+                    &json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":"height","cells":cells}),
+                )
+            }
+            Action::FlattenHeights {
+                plane,
+                layer,
+                cells,
+                target,
+                expected,
+            } => {
+                let cells: Vec<Value> = crate::sculpt::flatten_plan(
+                    self.history.document().world(),
+                    &self.catalog,
+                    &plane,
+                    layer,
+                    &cells,
+                    target,
+                )?
+                .into_iter()
+                .map(|(at, before, after)| json!({"at":at,"value":after,"expect":before}))
+                .collect();
                 self.prepare(
                     expected,
                     &json!({"op":"terrain.set","plane":plane,"layer":layer,"grid":"height","cells":cells}),
@@ -1770,6 +1808,7 @@ fn is_edit(action: &Action) -> bool {
         | Action::FillTerrain { .. }
         | Action::ScatterTerrain { .. }
         | Action::AdjustHeights { .. }
+        | Action::FlattenHeights { .. }
         | Action::PaintZones { .. }
         | Action::Remove { .. }
         | Action::Place { .. }

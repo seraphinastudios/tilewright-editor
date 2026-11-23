@@ -630,15 +630,23 @@ fn descriptor(arguments: &[String], name: &str) -> Result<PathBuf> {
 pub(crate) const UNDRAWABLE_CHANGE: &str =
     "Change refused: it cannot be drawn at this view, so it was cancelled.";
 
-/// The notice for a change [`UNDRAWABLE_CHANGE`] refused: what to do, which
-/// for a height adjustment is to adjust less steeply, and the renderer's own
-/// `reason`.
-pub(crate) fn undrawable_notice(heights: bool, reason: &str) -> String {
-    let advice = if heights {
-        "Zoom out, or raise or lower by less."
-    } else {
-        "Zoom out or pan and try again."
-    };
+/// What to do after [`UNDRAWABLE_CHANGE`] refused `action`: for a height
+/// adjustment, adjust less steeply; for a flatten, flatten to a height
+/// nearer the tiles around it; for any other edit (or none known), zoom
+/// out or pan.
+pub(crate) fn undrawable_advice(action: Option<&Action>) -> &'static str {
+    match action {
+        Some(Action::AdjustHeights { .. }) => "Zoom out, or raise or lower by less.",
+        Some(Action::FlattenHeights { .. }) => {
+            "Zoom out, or flatten to a height nearer the tiles around it."
+        }
+        _ => "Zoom out or pan and try again.",
+    }
+}
+
+/// The notice for a change [`UNDRAWABLE_CHANGE`] refused: what to do
+/// ([`undrawable_advice`]) and the renderer's own `reason`.
+pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
     format!("{UNDRAWABLE_CHANGE} {advice} Renderer: {reason}")
 }
 
@@ -774,9 +782,9 @@ impl Application {
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
-        let heights = matches!(action, Action::AdjustHeights { .. });
+        let advice = undrawable_advice(Some(&action));
         let paused_cancel = self.blocked.is_some() && self.session.history().pending().is_some();
-        let result = self.funnel(accept, false, heights, |app| {
+        let result = self.funnel(accept, false, advice, |app| {
             app.session
                 .dispatch(action, &mut app.recovery)
                 .map_err(|error| error.to_string())
@@ -803,7 +811,7 @@ impl Application {
         &mut self,
         accept: bool,
         prepare: bool,
-        heights: bool,
+        advice: &str,
         dispatch: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
         let records = self.recovery.records().len();
@@ -846,7 +854,7 @@ impl Application {
                 // or art changed on disk in between; `rebuild` has paused
                 // editing with that reason, and the funnel returns it.
                 if refreshed.is_ok() {
-                    let notice = undrawable_notice(heights, &reason);
+                    let notice = undrawable_notice(advice, &reason);
                     result = Err(notice.clone());
                     self.notice = Some(notice);
                 }

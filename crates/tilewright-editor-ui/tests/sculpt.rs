@@ -401,7 +401,7 @@ fn cells_far_outside_the_range_at_the_integer_extremes() {
     assert_eq!(error.code(), RefusalCode::TargetUnsupported);
     assert!(
         error.message().ends_with(
-            "it is 2147483642 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"
+            "it is 2147483642 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke, or flatten it to a height in the range"
         ),
         "{error}"
     );
@@ -409,7 +409,7 @@ fn cells_far_outside_the_range_at_the_integer_extremes() {
         .dispatch(adjust(&session, vec![[0, 0]], -1024), &mut records)
         .unwrap_err();
     assert!(
-        error.message().ends_with("it is 2147483641 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"),
+        error.message().ends_with("it is 2147483641 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke, or flatten it to a height in the range"),
         "{error}"
     );
 }
@@ -443,7 +443,7 @@ fn a_cell_more_than_one_adjustment_from_the_range_cannot_be_brought_in() {
     assert_eq!(error.code(), RefusalCode::TargetUnsupported);
     assert_eq!(
         error.message(),
-        "cell (1, 0) has height 1031, above the granted range -6 to 6: it is 1025 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke"
+        "cell (1, 0) has height 1031, above the granted range -6 to 6: it is 1025 from the range, more than one adjustment can move (1024), so this tool cannot bring it in; leave it out of the stroke, or flatten it to a height in the range"
     );
     assert!(session.history().pending().is_none());
 }

@@ -509,8 +509,9 @@ up to about ±129. [ADR 0006](../decisions/0006-catalog-heights.md) has the
 table. If an edit's result cannot be drawn at the current view, the
 desktop cancels it and says so, with the renderer's reason ("Change
 refused: it cannot be drawn at this view, so it was cancelled.", then
-"Zoom out, or raise or lower by less." for a height adjustment and "Zoom
-out or pan and try again." for any other edit); editing continues. The
+"Zoom out, or raise or lower by less." for a height adjustment, "Zoom
+out, or flatten to a height nearer the tiles around it." for a flatten and
+"Zoom out or pan and try again." for any other edit); editing continues. The
 member is the same in catalog formats 1 and 2; a catalog without it loads
 and behaves exactly as before, and an editor from before it refuses a
 catalog that has it. The `catalog` command and MCP tool report it as
@@ -528,6 +529,13 @@ sandbox of it ([docs/SANDBOX.md](SANDBOX.md)), `edit` the action
 with its `expected`, then `accept`: `tile` at (3, 2) reports `height` 15,
 and the submitted proposal applied in the desktop shows the raised tile
 under H.
+
+A `flatten_heights` action sets the covered cells to one recorded target
+height the range holds, wherever they were, also cells outside the range,
+which is how a tile too far outside for a raise or lower is brought back
+([docs/ENGINE.md](ENGINE.md#flatten)). In the same sandbox, `edit`
+`{"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": [[2, 2], [3, 2]], "target": -4}`
+with its `expected`, then `accept`: `tile` reports `height` -4 at both.
 
 #### Sculpt mode
 

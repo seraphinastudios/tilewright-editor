@@ -95,6 +95,14 @@ pub fn encode_action(action: &Action) -> Result<Value, ProposalError> {
             expected,
         } => json!({"kind": "adjust_heights", "plane": text(plane)?, "layer": layer,
             "cells": encode_cells(cells)?, "amount": height_amount(i64::from(*amount))?, "expected": hex(expected)}),
+        Action::FlattenHeights {
+            plane,
+            layer,
+            cells,
+            target,
+            expected,
+        } => json!({"kind": "flatten_heights", "plane": text(plane)?, "layer": layer,
+            "cells": encode_cells(cells)?, "target": height_target(i64::from(*target))?, "expected": hex(expected)}),
         Action::PaintZones {
             plane,
             layer,
@@ -218,6 +226,7 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
         "fill_terrain" => &["plane", "layer", "grid", "x", "y", "proto", "contiguous"],
         "scatter_terrain" => &["plane", "layer", "grid", "cells", "palette", "seed"],
         "adjust_heights" => &["plane", "layer", "cells", "amount"],
+        "flatten_heights" => &["plane", "layer", "cells", "target"],
         "paint_zones" => &["plane", "layer", "cells", "zone"],
         "remove" => &["uid"],
         "place" => &["plane", "layer", "x", "y", "proto"],
@@ -290,6 +299,13 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
             layer: fields.layer("layer")?,
             cells: fields.cells("cells")?,
             amount: height_amount(fields.integer("amount")?)?,
+            expected,
+        },
+        "flatten_heights" => Action::FlattenHeights {
+            plane: fields.text("plane")?,
+            layer: fields.layer("layer")?,
+            cells: fields.cells("cells")?,
+            target: height_target(fields.integer("target")?)?,
             expected,
         },
         "paint_zones" => Action::PaintZones {
@@ -518,6 +534,16 @@ fn height_amount(amount: i64) -> Result<i32, ProposalError> {
         .ok()
         .filter(|amount| tilewright_editor_ui::sculpt::check_amount(*amount).is_ok())
         .ok_or_else(|| invalid("a height amount is an integer from -1024 to 1024, not 0"))
+}
+/// A flatten's target height: an integer at most
+/// [`limits::HEIGHT_TARGET`] either way, the engine's rule. Whether the
+/// catalog's range holds it is the engine's question when the step is
+/// prepared, not the reader's.
+fn height_target(target: i64) -> Result<i32, ProposalError> {
+    i32::try_from(target)
+        .ok()
+        .filter(|target| tilewright_editor_ui::sculpt::check_target(*target).is_ok())
+        .ok_or_else(|| invalid("a flatten target is an integer from -1024 to 1024"))
 }
 
 /// The engine's rule for a stroke's cells (`stroke_cells` in the ui

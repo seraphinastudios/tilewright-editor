@@ -326,6 +326,12 @@ pub(super) fn step_tiles<'a>(
             cells,
             ..
         }
+        | Action::FlattenHeights {
+            plane,
+            layer,
+            cells,
+            ..
+        }
         | Action::PaintZones {
             plane,
             layer,
@@ -985,16 +991,17 @@ impl Application {
     /// never accepts it.
     pub(super) fn prepare_proposal_step(&mut self) -> Result<()> {
         self.refuse_while_paused()?;
-        // A height step gets the height advice if it cannot be drawn.
-        let heights = self
-            .proposal
-            .as_ref()
-            .and_then(|open| {
-                let next = open.progress.as_ref()?.next();
-                open.proposal.steps().get(next)
-            })
-            .is_some_and(|step| matches!(step.action(), Action::AdjustHeights { .. }));
-        self.funnel(false, true, heights, |app| {
+        // A height step gets its kind's advice if it cannot be drawn.
+        let advice = super::undrawable_advice(
+            self.proposal
+                .as_ref()
+                .and_then(|open| {
+                    let next = open.progress.as_ref()?.next();
+                    open.proposal.steps().get(next)
+                })
+                .map(|step| step.action()),
+        );
+        self.funnel(false, true, advice, |app| {
             let Some(open) = app.proposal.as_mut() else {
                 return Err("no proposal is open".into());
             };
@@ -1654,21 +1661,35 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             // refuse for another reason.
             let plan =
                 tilewright_editor_ui::sculpt::plan(world, catalog, plane, *layer, cells, *amount);
-            let effect = match plan {
-                Ok(changes) => format!(", {} to change", changes.len()),
-                Err(error) if error.code() == tilewright_editor_ui::RefusalCode::ChangeNone => {
-                    ", none to change".to_owned()
-                }
-                Err(_) if catalog.editing().heights.is_none() => {
-                    ", not granted by this catalog".to_owned()
-                }
-                Err(_) => String::new(),
-            };
             format!(
-                "{} {} by {}{effect}{} (on {}/{layer})",
+                "{} {} by {}{}{} (on {}/{layer})",
                 if *amount < 0 { "Lower" } else { "Raise" },
                 cells_words(cells.len()),
                 amount.unsigned_abs(),
+                height_effect(plan, catalog.editing().heights.is_some()),
+                outside(catalog, plane, *layer, cells),
+                shown(plane)
+            )
+        }
+        Action::FlattenHeights {
+            plane,
+            layer,
+            cells,
+            target,
+            ..
+        } => {
+            let plan = tilewright_editor_ui::sculpt::flatten_plan(
+                world, catalog, plane, *layer, cells, *target,
+            );
+            // A range that does not hold the target does not grant it.
+            let granted = catalog
+                .editing()
+                .heights
+                .is_some_and(|grant| grant.contains(*target));
+            format!(
+                "Flatten {} to {target}{}{} (on {}/{layer})",
+                cells_words(cells.len()),
+                height_effect(plan, granted),
                 outside(catalog, plane, *layer, cells),
                 shown(plane)
             )
@@ -1962,6 +1983,26 @@ fn object_outside(world: &World, catalog: &PreviewCatalog, uid: &str) -> &'stati
     }
 }
 
+/// What a height step's `plan` in the person's world says it does: how
+/// many cells it changes, none, that the catalog does not grant it (when
+/// not `granted`), or nothing when the engine would refuse for another
+/// reason.
+fn height_effect(
+    plan: std::result::Result<
+        Vec<tilewright_editor_ui::sculpt::HeightChange>,
+        tilewright_editor_ui::SessionError,
+    >,
+    granted: bool,
+) -> String {
+    match plan {
+        Ok(changes) => format!(", {} to change", changes.len()),
+        Err(error) if error.code() == tilewright_editor_ui::RefusalCode::ChangeNone => {
+            ", none to change".to_owned()
+        }
+        Err(_) if !granted => ", not granted by this catalog".to_owned(),
+        Err(_) => String::new(),
+    }
+}
 /// ", some outside the view" when any of `cells` is.
 fn outside(catalog: &PreviewCatalog, plane: &str, layer: i32, cells: &[[i64; 2]]) -> &'static str {
     if cells

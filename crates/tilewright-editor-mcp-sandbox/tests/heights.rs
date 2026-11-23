@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! Raise and lower through the editing server: on a temporary copy of the
+//! Raise, lower and flatten through the editing server: on a temporary copy of the
 //! neutral sample with a height range and generated heights, `catalog`
 //! reports the range, `adjust_heights` prepares one change, `tile` shows the
 //! new heights after Accept, and the submitted proposal records the step
@@ -93,4 +93,39 @@ fn without_the_grant_the_catalog_reports_no_range_and_the_edit_is_refused() {
     client
         .edit(json!({"kind": "adjust_heights", "plane": "main", "layer": 0, "cells": [[0, 0]], "amount": 1}))
         .refused("grant.missing");
+}
+
+#[test]
+fn an_agent_flattens_heights_to_a_target_in_the_range() {
+    let layout = Layout::new(hilly);
+    let mut client = layout.open(None);
+    // (0, 0) holds -3, (2, 0) -1, (3, 0) 0, (6, 0) 3; flatten to 2.
+    let cells = json!([[0, 0], [2, 0], [3, 0], [6, 0]]);
+    client
+        .edit(json!({"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": cells, "target": 2}))
+        .ok();
+    client.simple("accept").ok();
+    for x in [0, 2, 3, 6] {
+        assert_eq!(tile_height(&mut client, x, 0), 2);
+    }
+    // Every cell already at the target: nothing to change.
+    client
+        .edit(json!({"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": cells, "target": 2.0}))
+        .refused("change.none");
+    // Outside the range -4 to 4: not granted; past 1,024: invalid.
+    client
+        .edit(json!({"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": cells, "target": 5}))
+        .refused("grant.missing");
+    client
+        .edit(json!({"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": cells, "target": 1025}))
+        .refused("proposal.invalid");
+    // The range's end, written as a whole number in floating point.
+    client
+        .edit(json!({"kind": "flatten_heights", "plane": "main", "layer": 0, "cells": [[0, 0], [1, 0]], "target": -4.0}))
+        .ok();
+    client.simple("accept").ok();
+    assert_eq!(tile_height(&mut client, 0, 0), -4);
+    assert_eq!(tile_height(&mut client, 1, 0), -4);
+    let submitted = client.simple("submit");
+    assert_eq!(submitted.ok()["proposal"]["steps"], 2);
 }

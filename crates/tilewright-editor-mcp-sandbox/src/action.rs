@@ -12,7 +12,7 @@ use tilewright_jsonc::Value;
 
 /// Every action kind and its members besides `kind` and `expected`, in
 /// the decoder's order. Each member's schema is [`member`]'s.
-pub const KINDS: [(&str, &[&str]); 18] = [
+pub const KINDS: [(&str, &[&str]); 19] = [
     ("move", &["uid", "x", "y"]),
     ("set_field", &["uid", "field", "value"]),
     ("paint", &["plane", "layer", "grid", "x", "y", "proto"]),
@@ -29,6 +29,7 @@ pub const KINDS: [(&str, &[&str]); 18] = [
         &["plane", "layer", "grid", "cells", "palette", "seed"],
     ),
     ("adjust_heights", &["plane", "layer", "cells", "amount"]),
+    ("flatten_heights", &["plane", "layer", "cells", "target"]),
     ("paint_zones", &["plane", "layer", "cells", "zone"]),
     ("remove", &["uid"]),
     ("place", &["plane", "layer", "x", "y", "proto"]),
@@ -94,6 +95,10 @@ fn member(kind: &str, name: &str) -> String {
             limits::OBJECT_KEYS,
             limits::FIELD_VALUE_BYTES
         ),
+        "target" if kind == "flatten_heights" => format!(
+            r#"{{"type":"integer","minimum":-{0},"maximum":{0},"description":"The height to flatten each cell to. Needs the catalog's editing.heights range (the catalog tool reports it as heights), and target must lie in it. Each cell becomes target, wherever it was, also a cell outside the range, which is how one is brought back into it. Cells already at target, and cells of map chunks that do not exist, are left out."}}"#,
+            limits::HEIGHT_TARGET
+        ),
         "target" => format!(
             r#"{{"anyOf":[{{"type":"null"}},{{"type":"object","properties":{{"kind":{{"const":"anchor"}},"plane":{0},"anchor":{0}}},"required":["kind","plane","anchor"],"additionalProperties":false}},{{"type":"object","properties":{{"kind":{{"const":"location"}},"plane":{0},"layer":{1},"at":{2}}},"required":["kind","plane","layer","at"],"additionalProperties":false}}],"description":"Where the portal leads, or null to clear it."}}"#,
             text(),
@@ -158,7 +163,8 @@ pub fn action_schema() -> String {
 /// `integer` admits them, so that the decoder, which reads integers as
 /// written, takes what the schema takes. Only the members that are
 /// integers in every action are rewritten: `x`, `y`, `layer`, `seed`,
-/// `amount`, the cells of `cells`, and a portal target's `layer` and `at`; a field `value`
+/// `amount`, a flatten's `target`, the cells of `cells`, and a portal
+/// target's `layer` and `at`; a field `value`
 /// is never touched, so it is recorded as written.
 pub fn normalized(action: &Value) -> Value {
     let mut action = action.clone();
@@ -172,6 +178,8 @@ pub fn normalized(action: &Value) -> Value {
                     }
                 }
                 "target" => {
+                    // A flatten's target height, or a portal's target.
+                    whole(&mut member.value);
                     if let Value::Object { members, .. } = &mut member.value {
                         for member in members {
                             match member.key.as_str() {
@@ -244,6 +252,9 @@ mod tests {
         let action = parse(
             r#"{"x":3.0,"y":-0.0,"layer":1e0,"cells":[[1.0,2]],"target":{"layer":2.0,"at":[4.0,5.0],"plane":1.0},"value":7.0,"uid":1.5,"other":2.0}"#,
         );
+        // A flatten's target height.
+        let flatten = normalized(parse(r#"{"target":-8.0}"#).root());
+        assert_eq!(flatten.get("target").unwrap().as_i64(), Some(-8));
         let rewritten = normalized(action.root());
         for (pointer, integer) in [
             ("/x", Some(3)),
