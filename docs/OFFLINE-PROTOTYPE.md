@@ -155,13 +155,13 @@ invalidate earlier masks.
 ### Shared string field
 
 `--shared-string-field` (given to `tools/provision-prototype.py`, which records
-`"string_field": "tilewright-ui 0.1.0"` in the receipt and passes the flag to
+`"string_field": "tilewright-ui 0.1.1"` in the receipt and passes the flag to
 the editor) switches the inspector's **string** fields to the shared text
-field of `tilewright-ui` 0.1.0, drawn by `tilewright-ui-render` with the
+field of `tilewright-ui` 0.1.1, drawn by `tilewright-ui-render` with the
 editor's own text system and font pack. It is off by default; without it
 nothing changes, and the frame records and images of a session are
 byte-identical. With it, each frame record carries the same
-`"string_field": "tilewright-ui 0.1.0"` member and the editor prints it at
+`"string_field": "tilewright-ui 0.1.1"` member and the editor prints it at
 start.
 
 Only string field drafts change hands. Numbers, booleans and references,
@@ -171,44 +171,45 @@ messages, stored line breaks as the same markers (now drawn by the shared
 field), the same keys, clipboard and input method events, and Enter or
 Review hands the engine the same `SetField` with the shared field's
 committed text. The arrows step the caret with the shared field's own
-`step_caret`, which steps over a marker's zero-width space in one press. Its
-text is 20 px rather than 18 px, so in mixed-direction text an arrow or a
-click can land on another visual stop (or the same position with another
+`step_caret`, which steps over a marker's zero-width space in one press;
+every press beside a marker moves the caret, as in the editor's own field.
+Its text is 20 px rather than 18 px, so in mixed-direction text an arrow or
+a click can land on another visual stop (or the same position with another
 side) than in the editor's own field.
 
 The field looks different: a taller row (52 px, so the rows below move down
-22 px), its own dark box, a white caret and preedit underline, a narrower text
-area, and its own **Apply** button beside the text, which reviews exactly as
-Review does. Apply is drawn with its label at the top left, and looks active
-even when Review is disabled (clicking it then gives Review's refusal):
-`tilewright-ui` 0.1.0 offers no control over either.
+22 px), its own dark box inset in the row, and a white caret and preedit
+underline. It has no button of its own: the shared field's Apply control is
+switched off, its text area takes the row's whole width, and Enter or the
+editor's Review control reviews, as with the editor's own field.
 
-Known limitation: next to a stored-break marker one arrow press can do
-nothing. In `Trail⏎mar⏎ker¶` (stored as `Trail\nmar\u{2028}ker\u{2029}`),
-Left from End reaches position 9 (before the second marker) with its fifth
-press; the sixth press does nothing, and the seventh moves on. At the field's 20 px text the two sides of that position
-are a fraction of a pixel apart, and `tilewright-ui-render` 0.1.0 counts the
-step between them as a move. The fix is planned for `tilewright-ui-render`
-0.1.1. If the shared field cannot be drawn (a structural refusal from its
-renderer), editing pauses with the draft kept. Esc, which discards the draft,
-recovers; if the cause is the frame budget, zooming in also does.
+The shared field is composed into the editor's frame under the editor's own
+scene limits, quads and raster samples both. The editor fits its own frame
+to leave room for the field's quads; `tilewright-ui-render` 0.1.1 does not
+report the field's raster samples, so a field that would take the frame past
+the sample limit is refused instead. If the shared field cannot be drawn
+(such a refusal, or a structural refusal from its renderer), editing pauses
+with the draft kept. Esc discards the draft; a second Esc, a zoom or a pan
+then ends the pause (if the cause is the frame budget, zooming in avoids it
+next time).
 
 What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints
-`string field: tilewright-ui 0.1.0 (opt-in)`. Select a marker and click its
+`string field: tilewright-ui 0.1.1 (opt-in)`. Select a marker and click its
 `label` row.
 
-1. **Looks.** The field is taller, with a dark box, a white caret and a blue
-   Apply button. Every row below stays reachable, in a 720×480 window too
-   (scroll the sidebar with the mouse wheel).
+1. **Looks.** The field is taller, with a dark box and a white caret, and has
+   no button of its own: its text runs the width of the row. Every row below
+   stays reachable, in a 720×480 window too (scroll the sidebar with the
+   mouse wheel).
 2. **Typing and paste.** Type, paste a short text and a long one. Pasting two
    lines is refused with "Input exceeds byte budget or contains control
    characters or line breaks" and leaves the field as it was.
 3. **Long value.** Type past the box's width: the caret and the newest
    letters stay visible. Press Home, then hold Right: the text scrolls along.
 4. **Line breaks.** Use a value that has them (for example `Trail⏎mar⏎ker¶`).
-   The markers show; Left and Right cross each marker (expect the one press
-   that does nothing, above); Backspace after a marker removes exactly one
+   The markers show; Left and Right cross each marker, and every press moves
+   the caret; Backspace after a marker removes exactly one
    break; a click on the left or right half of a marker puts the caret on
    that side.
 5. **Copy across a break.** Select across a marker, copy, and paste into a
@@ -222,11 +223,12 @@ session with `--shared-string-field`; the terminal prints
 8. **Right-to-left.** Hebrew or Arabic with digits: Left, Right, Home, End,
    Shift with the arrows, clicks and Shift-clicks. Some back-and-forth in
    mixed text is known, in the editor's own field too.
-9. **Review.** Enter, Review and Apply each show the same pending change.
+9. **Review.** Enter and Review each show the same pending change. A click
+   at the right end of the field places the caret; it does not review.
    Accept, then Undo: the label returns exactly.
 10. **Unsupported text.** Paste a character the font pack lacks: the hint
-    says "Unsupported text; cannot review", Apply still looks active, and
-    clicking it refuses with the same reason.
+    says "Unsupported text; cannot review", and Enter and Review refuse with
+    the same reason.
 11. **Scaling.** At 125 % or 150 % display scaling the caret, clicks and the
     candidate window line up with the text.
 12. **Esc and the other fields.** Esc discards the draft. Numbers,

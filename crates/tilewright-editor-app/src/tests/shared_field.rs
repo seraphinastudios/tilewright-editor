@@ -146,7 +146,7 @@ fn a_frame_using_a_reserved_identity_or_another_text_system_is_refused_not_drawn
         .prepare(&mut app.text, &shared, draft, &app.ui)
         .unwrap()
         .unwrap()
-        .attach(&mut presentation)
+        .attach(&mut presentation, tilewright_scene::SceneLimits::default())
         .unwrap_err();
     assert!(error.contains("reserved"), "{error}");
     // Grow the atlas on the lent system, then lend another one: its atlas
@@ -352,97 +352,98 @@ fn both_fields_turn_the_same_sdl_events_into_the_same_draft_and_review() {
     assert!(events > 150 && reviews > 10, "{events} {reviews}");
 }
 
-/// The caret after each of `presses` Left presses from End.
-fn lefts_from_end(app: &mut Application, presses: usize) -> Vec<usize> {
+/// The caret after each of `presses` presses of `arrow`, from `from`.
+fn presses(app: &mut Application, from: Keycode, arrow: Keycode, presses: usize) -> Vec<usize> {
     let mut input = crate::native_input::NativeInput::new(7);
     let mut clipboard = String::new();
-    route(
-        app,
-        &mut input,
-        &input_key(7, Keycode::End, false),
-        &mut clipboard,
-    )
-    .unwrap();
+    route(app, &mut input, &input_key(7, from, false), &mut clipboard).unwrap();
     (0..presses)
         .map(|_| {
-            route(
-                app,
-                &mut input,
-                &input_key(7, Keycode::Left, false),
-                &mut clipboard,
-            )
-            .unwrap();
+            route(app, &mut input, &input_key(7, arrow, false), &mut clipboard).unwrap();
             app.tools.draft_snapshot().unwrap().selection.focus.byte
         })
         .collect()
 }
 
-/// A known limitation of the shared field, pinned so that moving to a
-/// release with the fix has to update it on purpose. At its 20 px text the
-/// renderer gives committed position 9 of this value two caret stops a
-/// float apart (x 97.700005 and 97.7), and `step_caret` in
-/// tilewright-ui-render 0.1.0 treats the affinity-only step between them
-/// as a stop: one Left press there does nothing. The editor's own field,
-/// at 18 px, is not affected. To be fixed in tilewright-ui-render 0.1.1.
+/// Every arrow press beside a stored-break marker moves the caret, in both
+/// fields and both directions. At its 20 px text the renderer gives
+/// committed position 9 of this value two caret stops a float apart (x
+/// 97.700005 and 97.7); tilewright-ui-render 0.1.0 took the step between
+/// them for a move, so one Left press there did nothing. 0.1.1 counts them
+/// as one place.
 #[test]
-fn known_limitation_one_left_press_next_to_a_marker_does_nothing_in_the_shared_field() {
+fn the_shared_field_visits_every_position_beside_a_marker_with_no_press_that_does_nothing() {
     let stored = "Trail\nmar\u{2028}ker\u{2029}";
-    for (implementation, expected) in [
-        (FieldImplementation::Editor, vec![15, 14, 13, 12, 9, 8, 7]),
-        (FieldImplementation::Shared, vec![15, 14, 13, 12, 9, 9, 8]),
-    ] {
+    let left = vec![15, 14, 13, 12, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+    let right = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14, 15, 18];
+    for implementation in FieldImplementation::ALL {
         let (_temporary, mut app) = labelled(implementation, stored, (960, 640));
         app.control(Control::Field("label".into())).unwrap();
         acknowledge_ui(&mut app);
-        assert_eq!(lefts_from_end(&mut app, 7), expected, "{implementation:?}");
+        assert_eq!(
+            app.tools.shared_draft().is_some(),
+            implementation == FieldImplementation::Shared
+        );
+        assert_eq!(
+            presses(&mut app, Keycode::End, Keycode::Left, left.len()),
+            left,
+            "{implementation:?}"
+        );
+        assert_eq!(
+            presses(&mut app, Keycode::Home, Keycode::Right, right.len()),
+            right,
+            "{implementation:?}"
+        );
     }
-}
-
-/// The pending change, file by file.
-fn pending(app: &Application) -> Option<Vec<(String, Option<String>)>> {
-    app.session.history().pending().map(|pending| {
-        pending
-            .changed()
-            .map(|file| (file.path.clone(), file.after.clone()))
-            .collect()
-    })
 }
 
 #[test]
-fn the_shared_apply_button_reviews_exactly_as_review_does() {
-    // A label to review, then one with a character the font pack lacks,
-    // which Review refuses.
-    for typed in ["Applied", "a\u{10ffff}"] {
-        let [(_one, mut clicked), (_two, mut reviewed)] = [0, 1].map(|_| {
-            let (temporary, mut app) =
-                labelled(FieldImplementation::Shared, "Trail marker", (960, 640));
-            app.control(Control::Field("label".into())).unwrap();
-            app.tools.select_all().unwrap();
-            app.tools.input(typed).unwrap();
-            acknowledge_ui(&mut app);
-            (temporary, app)
-        });
-        let submit = clicked
-            .displayed_text
-            .as_ref()
-            .and_then(|geometry| geometry.shared.as_ref())
-            .and_then(|shared| shared.submit)
-            .unwrap();
-        let centre = [
-            submit.x + submit.width / 2.0,
-            submit.y + submit.height / 2.0,
-        ];
-        let by_click =
-            crate::prototype::native_pointer(&mut clicked, centre, (960, 640), (320, 240));
-        let by_review = reviewed.control(Control::ApplyDraft);
-        assert_eq!(by_click, by_review, "{typed:?}");
-        assert_eq!(pending(&clicked), pending(&reviewed), "{typed:?}");
-        assert_eq!(pending(&clicked).is_some(), typed == "Applied");
-        if typed != "Applied" {
-            assert!(by_click.unwrap_err().contains("glyph"));
-            assert_eq!(clicked.tools.draft_text(), Some(typed), "the draft is kept");
-        }
-    }
+fn the_shared_field_has_no_button_of_its_own_and_its_text_takes_the_row() {
+    let (_temporary, mut app) = labelled(FieldImplementation::Shared, "Trail marker", (960, 640));
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(&mut app);
+    let presentation = crate::prototype::workspace_presentation(&mut app).unwrap();
+    let row = app.ui.shared_field.unwrap();
+    // The shared layout has no submit control: neither its hit region nor
+    // its paint.
+    let shared = app.tools.shared_draft().unwrap().snapshot();
+    let layout = tilewright_ui::layout_in_with(
+        &shared,
+        tilewright_ui::Viewport::new(960.0, 640.0, 1.0).unwrap(),
+        tilewright_ui::Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 52.0,
+        },
+        tilewright_ui::Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 960.0,
+            height: 640.0,
+        },
+        &crate::shared_field::layout_options(),
+    )
+    .unwrap();
+    assert!(
+        layout
+            .hits
+            .iter()
+            .all(|hit| hit.widget.id != tilewright_ui::SUBMIT)
+    );
+    // The drawn text area runs on past where the 80 px Apply button, 8 px
+    // inside the row's right edge, used to start.
+    let clip = presentation.editable.unwrap().clip;
+    #[allow(clippy::cast_precision_loss)]
+    let button = (row.x + row.width) as f32 - 8.0 - 80.0;
+    assert!(clip.x + clip.width > button + 40.0, "{clip:?} in {row:?}");
+    // A press where the button was edits the text; it does not review.
+    let at = [button + 40.0, clip.y + clip.height / 2.0];
+    crate::prototype::native_pointer(&mut app, at, (960, 640), (320, 240)).unwrap();
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(app.tools.draft_text(), Some("Trail marker"));
+    let caret = app.tools.draft_snapshot().unwrap().selection.focus.byte;
+    assert_eq!(caret, "Trail marker".len());
 }
 
 #[test]
@@ -491,7 +492,12 @@ fn the_frame_leaves_room_for_the_shared_field_before_the_highlight() {
     app.refresh_ui();
     match crate::prototype::workspace_presentation(app) {
         Ok(presentation) => assert!(presentation.scene.quads().len() < total),
-        Err(error) => assert!(error.contains("LimitExceeded"), "{error}"),
+        // The editor's own frame is what does not fit, not the field: its
+        // quads were set aside.
+        Err(error) => assert!(
+            error.contains("LimitExceeded") && !error.starts_with("shared field"),
+            "{error}"
+        ),
     }
     assert!(app.tools.shared_draft().is_some(), "the draft is kept");
     // The editor's share alone, with the field compiled first, is what was
@@ -530,5 +536,105 @@ fn the_field_follows_its_row_when_the_frame_is_laid_out_again() {
     assert!(
         clip.y >= top && clip.y + clip.height <= bottom,
         "the field is drawn in its new row {row:?}, not at {clip:?}"
+    );
+}
+
+/// The raster samples drawing `quads` takes, found with the scene
+/// library's own check.
+fn raster_samples(scene: &tilewright_scene::SceneBundle, quads: &[tilewright_scene::Quad]) -> u64 {
+    let fits = |samples| {
+        tilewright_scene::SceneBundle::from_quads(
+            scene.revision(),
+            scene.clock_millis(),
+            scene.viewport(),
+            scene.clear_color(),
+            quads.iter().copied(),
+            tilewright_scene::SceneLimits {
+                maximum_raster_samples: samples,
+                ..tilewright_scene::SceneLimits::default()
+            },
+        )
+        .is_ok()
+    };
+    let (mut low, mut high) = (
+        0,
+        tilewright_scene::SceneLimits::default().maximum_raster_samples,
+    );
+    assert!(fits(high));
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if fits(middle) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    low
+}
+
+#[test]
+fn the_composed_frame_keeps_to_the_editors_own_raster_sample_limit() {
+    let (_temporary, mut app) = labelled(FieldImplementation::Shared, "Trail marker", (960, 640));
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(&mut app);
+    let full = crate::prototype::workspace_presentation(&mut app).unwrap();
+    let quads = full.scene.quads();
+    let total = raster_samples(&full.scene, quads);
+    let editor: Vec<_> = quads
+        .iter()
+        .copied()
+        .filter(|quad| quad.semantic_id.0 < SHARED_FIRST_SEMANTIC)
+        .collect();
+    let own = raster_samples(&full.scene, &editor);
+    assert!(editor.len() < quads.len() && own < total, "{own} {total}");
+    // Exactly enough: drawn whole.
+    app.frame_limits.maximum_raster_samples = total;
+    let fitted = crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert_eq!(fitted.scene.quads(), quads);
+    // One sample less: the editor's own frame still fits, but the field
+    // would take it over the editor's limit, so it is refused and editing
+    // pauses with the draft kept. The crate reports no sample count, so
+    // the field's samples are not set aside beforehand.
+    app.frame_limits.maximum_raster_samples = total - 1;
+    let error = crate::prototype::workspace_presentation(&mut app)
+        .err()
+        .unwrap();
+    assert!(
+        error.starts_with("shared field") && error.contains("LimitExceeded"),
+        "{error}"
+    );
+    assert_eq!(app.tools.draft_text(), Some("Trail marker"));
+    assert!(app.session.history().pending().is_none());
+    // The native loop pauses on that refusal. The first Esc discards the
+    // draft, and the next frame draws, but the pause stays; a second Esc
+    // ends it (as a zoom or a pan would).
+    app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::Present,
+        &error,
+    ));
+    let paused = "Editing paused: the frame could not be shown.";
+    let mut input = crate::native_input::NativeInput::new(7);
+    let mut clipboard = String::new();
+    let escape = input_key(7, Keycode::Escape, false);
+    route(&mut app, &mut input, &escape, &mut clipboard).unwrap();
+    assert!(app.tools.shared_draft().is_none(), "the draft is discarded");
+    crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert_eq!(app.status_label(), paused);
+    let _ = route(&mut app, &mut input, &escape, &mut clipboard);
+    assert!(app.blocked.is_none());
+    assert_ne!(app.status_label(), paused);
+    // Back within the limit, the field is drawn again.
+    app.frame_limits = tilewright_scene::SceneLimits::default();
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(&mut app);
+    let again = crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert!(
+        again
+            .scene
+            .quads()
+            .iter()
+            .any(|quad| quad.semantic_id.0 >= SHARED_FIRST_SEMANTIC)
     );
 }

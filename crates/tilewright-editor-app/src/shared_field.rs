@@ -7,12 +7,15 @@
 //! `tilewright_editor_ui::field_input`); here its state is laid out in the
 //! sidebar row, compiled by `tilewright-ui-render`'s `UiCompiler` with the
 //! editor's own text system lent for each call, and composed into the
-//! editor's frame. Its geometry then serves pointer selection, caret steps
-//! and the input method area in place of the editor's own.
+//! editor's frame under the editor's own scene limits. Its geometry then
+//! serves pointer selection, caret steps and the input method area in place
+//! of the editor's own. The field is laid out without the shared crate's
+//! submit control: the editor's own Review control and Enter review.
 use crate::workspace_render::{EditableGeometry, Presentation};
 use crate::workspace_ui::{Rect, WorkspaceUi};
 use tilewright_editor_ui::field_input::{SharedInput, editor_snapshot};
 use tilewright_render_ui::{TextSystem, UiRect};
+use tilewright_scene::SceneLimits;
 use tilewright_ui_render::{CompiledFrame, Error, Namespace, UiCompiler, UiLimits};
 
 type Result<T> = std::result::Result<T, String>;
@@ -34,16 +37,22 @@ pub const SHARED_FIRST_SEMANTIC: u32 = 0xf000_0000;
 const _: () =
     assert!(SHARED_ATLAS_RESOURCE != u64::MAX && SHARED_SOLID_RESOURCE != SHARED_ATLAS_RESOURCE);
 
-/// The logical height of the shared field's row: its composer and Apply
-/// button with the shared layout's insets.
+/// The logical height of the shared field's row: its composer with the
+/// shared layout's insets.
 pub const ROW_HEIGHT: u32 = 52;
 
 /// The shared field's pointer geometry, beside the editor's own terms.
 #[derive(Clone, Debug)]
 pub struct SharedGeometry {
     pub text: tilewright_ui_render::TextGeometry,
-    /// The shared field's own Apply button, in logical coordinates.
-    pub submit: Option<tilewright_ui::Rect>,
+}
+
+/// The shared layout's options: the single field without its own submit
+/// control, so the composer takes the row's whole inner width.
+pub fn layout_options() -> tilewright_ui::LayoutOptions {
+    let mut options = tilewright_ui::LayoutOptions::default();
+    options.submit_control = false;
+    options
 }
 
 pub struct SharedField {
@@ -74,7 +83,7 @@ impl SharedField {
         shared: &SharedInput,
         ui: &WorkspaceUi,
         bounds: Rect,
-    ) -> Result<(CompiledFrame, Option<tilewright_ui::Rect>)> {
+    ) -> Result<CompiledFrame> {
         let logical = ui.logical_size();
         #[allow(clippy::cast_precision_loss)]
         let viewport = tilewright_ui::Viewport::new(
@@ -84,23 +93,17 @@ impl SharedField {
         )
         .map_err(|error| format!("shared field: {error}"))?;
         let snapshot = shared.snapshot();
-        let layout = tilewright_ui::layout_in(
+        let layout = tilewright_ui::layout_in_with(
             &snapshot,
             viewport,
             neutral(bounds),
             neutral(ui.logical_sidebar),
+            &layout_options(),
         )
         .map_err(|error| format!("shared field: {error}"))?;
-        let submit = layout
-            .hits
-            .iter()
-            .find(|hit| hit.widget.id == tilewright_ui::SUBMIT)
-            .map(|hit| hit.bounds);
-        let frame = self
-            .compiler
+        self.compiler
             .compile(text, &snapshot, &layout, [ui.size.0, ui.size.1])
-            .map_err(refusal)?;
-        Ok((frame, submit))
+            .map_err(refusal)
     }
 
     /// Compile the field in the row the sidebar reserved, before the
@@ -117,21 +120,8 @@ impl SharedField {
         let Some(bounds) = ui.shared_field else {
             return Ok(None);
         };
-        let (frame, submit) = self.compile(text, shared, ui, bounds)?;
-        // `CompiledFrame` has no quad count in 0.1.0: its standalone scene
-        // holds exactly its quads.
-        let quads = frame
-            .standalone([0.0; 4])
-            .map_err(refusal)?
-            .scene
-            .quads()
-            .len();
-        Ok(Some(PreparedField {
-            frame,
-            submit,
-            draft,
-            quads,
-        }))
+        let frame = self.compile(text, shared, ui, bounds)?;
+        Ok(Some(PreparedField { frame, draft }))
     }
 
     /// The current state's geometry, for a caret step: its shared
@@ -143,10 +133,10 @@ impl SharedField {
         ui: &WorkspaceUi,
         draft: u64,
     ) -> Result<EditableGeometry> {
-        let (frame, submit) = self.compile(text, shared, ui, bounds(ui))?;
+        let frame = self.compile(text, shared, ui, bounds(ui))?;
         frame
             .editable()
-            .and_then(|geometry| geometry_for(geometry, submit, draft))
+            .and_then(|geometry| geometry_for(geometry, draft))
             .ok_or_else(|| "shared field: no editable text".into())
     }
 }
@@ -154,30 +144,33 @@ impl SharedField {
 /// The field compiled for this frame, not yet drawn.
 pub struct PreparedField {
     frame: CompiledFrame,
-    submit: Option<tilewright_ui::Rect>,
     draft: u64,
-    quads: usize,
 }
 
 impl PreparedField {
     /// How many quads drawing the field adds to the frame.
     pub fn quads(&self) -> usize {
-        self.quads
+        self.frame.quad_count()
     }
 
     /// Draw the field over the editor's composed frame and hand its
-    /// geometry to the input paths.
-    pub fn attach(self, presentation: &mut Presentation) -> Result<()> {
+    /// geometry to the input paths. The composed frame is checked against
+    /// the editor's own `limits`: its quads (the editor's frame was fitted
+    /// to leave [`PreparedField::quads`] free) and its raster samples. The
+    /// shared crate does not report the field's samples, so they cannot be
+    /// set aside beforehand; a field that takes the frame past them is
+    /// refused here, not drawn, and editing pauses with the draft kept.
+    pub fn attach(self, presentation: &mut Presentation, limits: SceneLimits) -> Result<()> {
         let composed = self
             .frame
-            .compose(&presentation.scene, presentation.resources.clone())
+            .compose_with_limits(&presentation.scene, presentation.resources.clone(), limits)
             .map_err(refusal)?;
         presentation.scene = composed.scene;
         presentation.resources = composed.resources;
         presentation.editable = self
             .frame
             .editable()
-            .and_then(|geometry| geometry_for(geometry, self.submit, self.draft));
+            .and_then(|geometry| geometry_for(geometry, self.draft));
         Ok(())
     }
 }
@@ -198,7 +191,6 @@ fn bounds(ui: &WorkspaceUi) -> Rect {
 /// not the editable field.
 fn geometry_for(
     geometry: &tilewright_ui_render::TextGeometry,
-    submit: Option<tilewright_ui::Rect>,
     draft: u64,
 ) -> Option<EditableGeometry> {
     let snapshot = editor_snapshot(geometry.snapshot.as_ref()?, draft);
@@ -215,7 +207,6 @@ fn geometry_for(
         snapshot,
         shared: Some(SharedGeometry {
             text: geometry.clone(),
-            submit,
         }),
     })
 }
