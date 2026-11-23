@@ -771,6 +771,8 @@ fn a_sculpt_stroke_releases_one_adjustment_by_the_signed_step() {
             .into_iter()
             .collect();
         let action = tools.finish_stroke(generation, false).unwrap().unwrap();
+        // The release ends the stroke, so nothing previews it any more.
+        assert!(tools.stroke().is_none());
         assert_eq!(
             action,
             Action::AdjustHeights {
