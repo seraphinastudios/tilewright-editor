@@ -162,8 +162,8 @@ reads every height, and the range and the view from the catalog, each
 time the step is prepared ([docs/ENGINE.md](ENGINE.md#smooth)). Under a
 catalog whose range and view read the same heights around the stroke, the
 same world gives the same transaction and the step applies; under one
-whose range or view changes any result (the view decides which neighbours
-along its edge are read), the step diverges; without a range it is
+whose range or view changes any result (the view decides which cells
+within two tiles of its edge are read), the step diverges; without a range it is
 refused with `proposal.step_refused` and the engine's grant.missing. A
 `kernel` other than 1, or not an integer, is `proposal.invalid` when the
 proposal is read, as an unknown action kind is: the reader cannot know

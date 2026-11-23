@@ -150,10 +150,10 @@ pub enum Action {
     /// Smooth the tile heights of the covered cells of the active view with
     /// smooth kernel `kernel`, in one reviewed `terrain.set` on the grid
     /// `height` ([`crate::sculpt::smooth_plan`]). Needs `editing.heights`:
-    /// each cell becomes the rounded weighted mean of its own and its read
-    /// neighbours' committed heights, each clamped into the range
-    /// ([`crate::sculpt::smoothed`]); a neighbour is read inside the active
-    /// view and in a chunk that exists. Cells already even, or in chunks
+    /// each cell becomes the rounded weighted mean of the committed heights
+    /// of the 5 × 5 tiles centred on it, each clamped into the range
+    /// ([`crate::sculpt::smoothed`]); a tile is read inside the active view
+    /// and in a chunk that exists. Cells already even, or in chunks
     /// that do not exist, are left out; every other cell expects its
     /// committed height. Only [`crate::sculpt::SMOOTH_KERNEL`] exists.
     SmoothHeights {

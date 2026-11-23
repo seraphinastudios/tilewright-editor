@@ -154,11 +154,16 @@ fn a_smooth_step_is_said_and_highlighted_by_its_cells() {
         expected,
     };
     let words = |action: &Action| action_words(action, app.session.world(), app.session.catalog());
-    // (0, 0) and (1, 0) at 4 come down to 3 and 2, and (2, 0) beside
-    // them goes up to 1; (5, 5) among zeros is already even.
+    // (0, 0) and (1, 0) at 4 come down to 2 and 1, and (2, 0) beside
+    // them goes up to 1; (5, 5) among zeros is already even, so a stroke
+    // with it counts 3 of its 4 cells.
     assert_eq!(
         words(&smooth(vec![[0, 0], [1, 0], [2, 0]])),
         "Smooth 3 cells, 3 to change (on main/0)"
+    );
+    assert_eq!(
+        words(&smooth(vec![[0, 0], [1, 0], [2, 0], [5, 5]])),
+        "Smooth 4 cells, 3 to change (on main/0)"
     );
     assert_eq!(
         words(&smooth(vec![[5, 5]])),

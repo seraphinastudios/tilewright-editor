@@ -128,11 +128,13 @@ fn f_reaches_smooth_after_flatten_and_goes_back_to_raise_and_the_steps_do_nothin
 }
 
 /// A 3 x 3 stroke over the spike at (2, 2), in the projection `prepare`
-/// sets up: the spike comes down to (4 × 8) / 16 = 2, its four edge
-/// neighbours up to (2 × 8) / 16 = 1, and its diagonal ones stay at 0
-/// (8 / 16, an exact half, toward their own height). The marks are
-/// exactly those, the release prepares exactly those, Accept writes them,
-/// and undo and redo take the whole stroke.
+/// sets up: the spike comes down to (36 × 8) / 256 = 1.1, so 1, its four
+/// edge neighbours go up to (24 × 8) / 256 = 0.75, so 1, and its diagonal
+/// (3, 3) stays at 0 ((16 × 8) / 256, an exact half, toward its own
+/// height), while the diagonals nearer the view's edge read less weight
+/// (225 for (1, 1), 240 for (1, 3) and (3, 1)) and go up to 1. The marks
+/// are exactly those, the release prepares exactly those, Accept writes
+/// them, and undo and redo take the whole stroke.
 fn smooth_previews_and_applies(prepare: impl FnOnce(&Path)) {
     let (temporary, mut app) = smooth_application(|root| {
         spike(root);
@@ -142,10 +144,13 @@ fn smooth_previews_and_applies(prepare: impl FnOnce(&Path)) {
     let original = fs::read(&chunk).unwrap();
     drag(&mut app, [2, 2], &[]);
     let changed = BTreeMap::from([
+        ([1, 1], (0, 1)),
         ([1, 2], (0, 1)),
+        ([1, 3], (0, 1)),
         ([2, 1], (0, 1)),
-        ([2, 2], (8, 2)),
+        ([2, 2], (8, 1)),
         ([2, 3], (0, 1)),
+        ([3, 1], (0, 1)),
         ([3, 2], (0, 1)),
     ]);
     let cells: BTreeSet<[i64; 2]> = changed.keys().copied().collect();
@@ -154,7 +159,7 @@ fn smooth_previews_and_applies(prepare: impl FnOnce(&Path)) {
     assert_eq!(marks(&mut app).len(), 3 * cells.len());
     assert_eq!(
         app.status_label(),
-        "Smoothing 9 cells, 5 to change, 4 already even; release to review."
+        "Smoothing 9 cells, 8 to change, 1 already even; release to review."
     );
     assert!(sidebar_texts(&mut app).contains(&"Sculpt: Smooth  F".to_owned()));
     release(&mut app, [2, 2]).unwrap();
@@ -167,7 +172,7 @@ fn smooth_previews_and_applies(prepare: impl FnOnce(&Path)) {
     for (&[x, y], &(_, after)) in &changed {
         assert_eq!(i64::from(height(&app, x, y)), after, "({x}, {y})");
     }
-    assert_eq!(height(&app, 1, 1), 0);
+    assert_eq!(height(&app, 3, 3), 0);
     // The inspector line follows.
     app.action(Action::Select {
         generation: app.view.frame_revision,
@@ -180,18 +185,14 @@ fn smooth_previews_and_applies(prepare: impl FnOnce(&Path)) {
         },
     })
     .unwrap();
-    assert!(sidebar_texts(&mut app).contains(&"Height: 2".to_owned()));
-    for (history, shown) in [(Keycode::Z, 8), (Keycode::Y, 2)] {
+    assert!(sidebar_texts(&mut app).contains(&"Height: 1".to_owned()));
+    for (history, shown) in [(Keycode::Z, 8), (Keycode::Y, 1)] {
         route(&mut app, &key(history)).unwrap();
         acknowledge_ui(&mut app);
         route(&mut app, &key(Keycode::Return)).unwrap();
         assert_eq!(height(&app, 2, 2), shown);
-        assert_eq!(height(&app, 2, 1), i32::from(shown == 2));
+        assert_eq!(height(&app, 2, 1), i32::from(shown == 1));
     }
-    // Smoothed again, the ground evens out further.
-    acknowledge_ui(&mut app);
-    drag(&mut app, [2, 2], &[]);
-    assert!(engine(&app).contains(&[2, 2]));
 }
 
 #[test]
@@ -218,12 +219,12 @@ impl Random {
 #[test]
 fn random_strokes_mark_prepare_and_write_the_same_cells() {
     let (_temporary, mut app) = smooth_application(|root| {
-        heights(root, -6, 6, |x, y| (x * 5 + y * 3) % 9 - 4);
+        heights(root, -16, 16, |x, y| ((x * 5 + y * 3) % 9 - 4) * 3);
         wide_isometric(root);
     });
     let mut random = Random(0x0dd_ba11);
     let mut applied = 0;
-    for round in 0..8 {
+    for round in 0..12 {
         let radius = random.below(3);
         app.tools.set_brush(Brush {
             shape: if random.below(2) == 0 {
@@ -297,7 +298,7 @@ fn cells_without_a_chunk_and_already_even_are_counted() {
         "Smoothing 9 cells, 4 to change, 2 already even, 3 without a chunk; release to review."
     );
     release(&mut app, [31, 2]).unwrap();
-    assert_eq!(height(&app, 31, 2), 2);
+    assert_eq!(height(&app, 31, 2), 1);
 }
 
 #[test]
@@ -327,8 +328,8 @@ fn a_running_smooth_stroke_is_recorded_in_the_frame_evidence() {
     app.capture("during").unwrap();
     assert_eq!(
         read("during")["sculpt_preview"],
-        json!({"kernel": 1, "cells": 9, "changes": 5, "even": 4, "missing": 0,
-            "first": [[1, 2], [2, 1], [2, 2], [2, 3], [3, 2]]})
+        json!({"kernel": 1, "cells": 9, "changes": 8, "even": 1, "missing": 0,
+            "first": [[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3], [3, 1], [3, 2]]})
     );
     release(&mut app, [2, 2]).unwrap();
     app.capture("after").unwrap();
@@ -339,7 +340,7 @@ fn a_running_smooth_stroke_is_recorded_in_the_frame_evidence() {
 fn changed_cells_this_view_does_not_draw_are_counted_not_marked_and_written() {
     // Top-down, range -8 to 8: (3, 0) at i32::MAX and (4, 0) at 100000 are
     // so far off that their tiles are not drawn; each reads as 8, the
-    // range's end, and comes down to 4.
+    // range's end, and comes down to 3.
     let (temporary, mut app) = smooth_application(|root| {
         heights(root, -8, 8, |x, y| match [x, y] {
             [1, 0] => 5,
@@ -372,11 +373,11 @@ fn changed_cells_this_view_does_not_draw_are_counted_not_marked_and_written() {
         json!({"count": 2, "first": [[3, 0], [4, 0]]})
     );
     release(&mut app, [3, 1]).unwrap();
-    assert_eq!(pending(&app)[&[3, 0]], (i64::from(i32::MAX), 4));
+    assert_eq!(pending(&app)[&[3, 0]], (i64::from(i32::MAX), 3));
     acknowledge_ui(&mut app);
     route(&mut app, &key(Keycode::Return)).unwrap();
-    assert_eq!(height(&app, 3, 0), 4);
-    assert_eq!(height(&app, 4, 0), 4);
+    assert_eq!(height(&app, 3, 0), 3);
+    assert_eq!(height(&app, 4, 0), 3);
 }
 
 #[test]
@@ -392,12 +393,74 @@ fn the_persons_own_smooth_between_proposal_steps_is_allowed() {
     app.tools.set_sculpt_tool(SculptTool::Smooth);
     app.tools.set_brush(Brush::default());
     acknowledge_ui(app);
-    // (7, 5) at 28 in the view's corner, beside 24s to its west: (1 × -4
-    // + 2 × -4) / 9 = -1.33, so 27.
+    // (7, 5) at 28 in the view's corner reads columns 5 to 7 (20, 24,
+    // 28) of rows 3 to 5, weight 121: (-8 × 11 - 4 × 44) / 121 = -2.2
+    // below it, so 26.
     drag(app, [7, 5], &[]);
     release(app, [7, 5]).unwrap();
     assert_eq!(state(app), State::OtherPending);
     acknowledge_ui(app);
     route(app, &key(Keycode::Return)).unwrap();
-    assert_eq!(height(app, 7, 5), 27);
+    assert_eq!(height(app, 7, 5), 26);
+}
+
+#[test]
+fn a_raised_cliff_smooths_over_two_strokes_and_then_rests() {
+    // docs/OFFLINE-PROTOTYPE.md, Sculpt mode: the sample with the range -8
+    // to 8. Raise by 8 with a 7 x 7 brush, clicked on (7, 2): columns 4 to
+    // 7 of the 8 x 6 view rise to 8. Then Smooth, the same brush dragged
+    // from (3, 2) to (4, 2), which covers the whole view.
+    let (_temporary, mut app) = sculpt_application(|root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["heights"] = json!({"min": -8, "max": 8});
+        });
+    });
+    app.tools.set_brush(Brush::default());
+    for _ in 0..3 {
+        route(&mut app, &key(Keycode::RightBracket)).unwrap();
+    }
+    assert!(sidebar_texts(&mut app).contains(&"Brush: square 7x7".to_owned()));
+    route(&mut app, &key(Keycode::_8)).unwrap();
+    acknowledge_ui(&mut app);
+    drag(&mut app, [7, 2], &[]);
+    release(&mut app, [7, 2]).unwrap();
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Return)).unwrap();
+    let rows = |app: &Application| -> Vec<Vec<i32>> {
+        (0..6)
+            .map(|y| (0..8).map(|x| height(app, x, y)).collect())
+            .collect()
+    };
+    assert_eq!(rows(&app), vec![vec![0, 0, 0, 0, 8, 8, 8, 8]; 6]);
+    for _ in 0..3 {
+        route(&mut app, &key(Keycode::F)).unwrap();
+    }
+    assert_eq!(app.tools.sculpt_tool(), SculptTool::Smooth);
+    for (status, after) in [
+        (
+            "Smoothing 48 cells, 12 to change, 36 already even; release to review.",
+            [0, 0, 0, 2, 6, 8, 8, 8],
+        ),
+        (
+            "Smoothing 48 cells, 24 to change, 24 already even; release to review.",
+            [0, 0, 1, 3, 5, 7, 8, 8],
+        ),
+    ] {
+        acknowledge_ui(&mut app);
+        drag(&mut app, [3, 2], &[[4, 2]]);
+        assert_eq!(app.status_label(), status);
+        release(&mut app, [4, 2]).unwrap();
+        acknowledge_ui(&mut app);
+        route(&mut app, &key(Keycode::Return)).unwrap();
+        assert_eq!(rows(&app), vec![after.to_vec(); 6]);
+    }
+    // At rest: a third stroke changes nothing.
+    acknowledge_ui(&mut app);
+    drag(&mut app, [3, 2], &[[4, 2]]);
+    assert_eq!(
+        app.status_label(),
+        "Smoothing 48 cells refused: smooth changes no cell: 48 covered cells already even, 0 in map chunks that do not exist (painting terrain there creates them)"
+    );
+    assert!(release(&mut app, [4, 2]).is_err());
+    assert_eq!(rows(&app), vec![vec![0, 0, 1, 3, 5, 7, 8, 8]; 6]);
 }

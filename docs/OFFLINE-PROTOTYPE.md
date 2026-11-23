@@ -624,12 +624,13 @@ which is how a tile too far outside for a raise or lower is brought back
 with its `expected`, then `accept`: `tile` reports `height` -4 at both.
 
 A `smooth_heights` action moves each covered cell toward the weighted mean
-of the committed heights around it, inside the view, with the fixed rule
-`kernel` 1 ([docs/ENGINE.md](ENGINE.md#smooth)). In the same sandbox,
-`edit` `{"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": [[3, 2]], "kernel": 1}`
-with its `expected`, then `accept`: (3, 2), at -4 among neighbours from -4
-to 11, reads 116 / 16 = 7.25 above itself on average, so `tile` reports
-`height` 3.
+of the committed heights of the 5 × 5 tiles centred on it, inside the
+view, with the fixed rule `kernel` 1 ([docs/ENGINE.md](ENGINE.md#smooth)).
+In the same sandbox, `edit`
+`{"kind": "smooth_heights", "plane": "main", "layer": 0, "cells": [[3, 2]], "kernel": 1}`
+with its `expected`, then `accept`: (3, 2), at -4 among heights from -4 to
+15, reads 2228 / 256 = 8.7 above itself on average, so `tile` reports
+`height` 5.
 
 #### Sculpt mode
 
@@ -682,22 +683,35 @@ it), then read the count in the status line.
 
 The fourth tool, Smooth (F after Flatten; F again goes back to Raise),
 evens out the heights of the cells a drag covers: each moves toward the
-weighted mean of its own height and its eight neighbours' (the four that
-share an edge weigh twice the diagonal ones, the cell itself four times),
-rounded to a whole height, an exact half toward where the cell was. The
-heights read are the committed ones, never another cell's new height, so
-the result does not depend on the order or extent of the drag; neighbours
-outside the stroke are read too, but not those outside the view or in
-chunks that do not exist. Every height read counts as if clamped into the
-granted range, so a smooth never writes outside it, and a tile far
-outside it is brought in. The release prepares one `smooth_heights`
+weighted mean of the 5 × 5 tiles centred on it, reaching two tiles out
+(weights 1, 4, 6, 4, 1 across times 1, 4, 6, 4, 1 down, so the cell itself
+36 of 256), rounded to a whole height, an exact half toward where the cell
+was. The heights read are the committed ones, never another cell's new
+height, so the result does not depend on the order or extent of the drag;
+tiles outside the stroke are read too, but not those outside the view or
+in chunks that do not exist, so cells within two tiles of the view's edge
+depend on where the view ends. Every height read counts as if clamped
+into the granted range, so a smooth never writes outside it, and a tile
+far outside it is brought in. The release prepares one `smooth_heights`
 action ([docs/ENGINE.md](ENGINE.md#smooth)) with kernel 1, the only
 version of that rule. Its row reads "Smooth: drag evens out heights", the
 pinned row "Sculpt: Smooth  F", and the status line "Ready. Drag to smooth
 heights toward their neighbours." It has one fixed strength: the step
-rows are dimmed and keys 1 and 8 do nothing for it, and a second stroke
-smooths further. Smoothing comes to rest where neighbours differ by about
-2 or less; a straight step of 2 is already even.
+rows are dimmed and keys 1 and 8 do nothing for it; a second stroke
+smooths further until the ground rests. A cell is "already even" when it
+is within half a unit of the weighted mean it reads: what decides that is
+how sharply the slope bends, not how large a step is, and an even slope of
+any steepness is kept (except within two tiles of the view's edge, where
+the mean is one-sided). A step of 1 is already even and a step of 2
+becomes 0, 1, 1, 2. A raise of 8 smoothed once becomes 0, 2, 6, 8, a
+second time 0, 1, 3, 5, 7, 8, and then rests. To see it on a copy with the
+range -8 to 8: in Raise by 8 with a 7x7 brush (`]` three times from the
+1x1), click tile (7, 2): columns 4 to 7 rise to 8. Press F three times
+for Smooth and drag from (3, 2) to (4, 2): "Smoothing 48 cells, 12 to
+change, 36 already even"; after Enter every row reads 0, 0, 0, 2, 6, 8,
+8, 8 (the inspector shows each tile's height). The same drag again: "24 to change, 24 already
+even", then 0, 0, 1, 3, 5, 7, 8, 8. A third: "Smoothing 48 cells refused:
+smooth changes no cell: 48 covered cells already even, ...".
 
 While dragging, before the release, each cell the release would change
 carries a mark: a magenta copy of the cell's flat shape at half its size
@@ -800,14 +814,12 @@ heights as in the [Heights](#heights) hand test):
    Release and press Enter: the inspector, on (1, 1), still reads "Height:
    8", and (1, 3) now has the lightest band too.
 6. Press F (the pinned row reads "Sculpt: Smooth  F"). Drag from (2, 2) to
-   (4, 2) with the 1x1 brush and hold: (2, 2) and (3, 2) are marked, and
-   the status line reads "Smoothing 3 cells, 2 to change, 1 already even;
-   release to review." (4, 2) touches the raised tiles only at a corner:
-   its mean is exactly half a step above it, and a half rounds toward the
-   cell's own height. Release and press Enter: the inspector, on (2, 2),
-   reads "Height: 3" (five raised neighbours: 56 / 16 = 3.5, rounded
-   toward 0), and (3, 2) reads 1. Press F to go back to Raise, then T: the
-   tint goes off again, as it was before U.
+   (4, 2) with the 1x1 brush and hold: all three are marked, and the
+   status line reads "Smoothing 3 cells, 3 to change; release to review."
+   (4, 2) moves too: the raised tiles two tiles away count. Release and
+   press Enter: the inspector, on (2, 2), reads "Height: 3" (its 5 × 5
+   mean is 768 / 256 = 3 exactly), (3, 2) reads 2 and (4, 2) 1. Press F to
+   go back to Raise, then T: the tint goes off again, as it was before U.
 
 ### Zones
 

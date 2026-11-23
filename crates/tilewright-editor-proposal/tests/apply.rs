@@ -1379,8 +1379,9 @@ fn a_smooth_step_replays_where_the_view_reads_the_same_neighbours() {
     assert_eq!(action["kind"], "smooth_heights");
     assert_eq!(action["kernel"], 1);
     let mut records = Records::default();
-    // The same view, and one that grows only away from the stroke (rows 1
-    // to 3 read rows 0 to 4): the same transaction, applied.
+    // The same view, and ones that differ only out of the stroke's reach
+    // (rows 1 to 3 read rows -1 to 5; row 6 is three tiles from row 3,
+    // and row -1 has no chunk): the same transaction, applied.
     for bounds in [[0, 0, 8, 6], [0, 0, 8, 7], [0, -1, 8, 8]] {
         let copy = viewed(bounds, true);
         let mut person = open(copy.path(), PERSON);
@@ -1391,10 +1392,10 @@ fn a_smooth_step_replays_where_the_view_reads_the_same_neighbours() {
         person.dispatch(Action::Accept, &mut records).unwrap();
         assert_eq!(person.history().document().revision(), proposal.result());
     }
-    // A view that ends above row 4, starts below row 0 or takes in column
-    // 8 reads other neighbours along its edge: another transaction, so
-    // diverged.
-    for bounds in [[0, 0, 8, 4], [0, 1, 8, 5], [0, 0, 9, 6]] {
+    // A view that leaves out row 0, one tile from row 1, or takes in
+    // column 8, one tile from column 7, or columns 8 and 9: another
+    // transaction along its edge, so diverged. (Two tiles out: below.)
+    for bounds in [[0, 1, 8, 5], [0, 0, 9, 6], [0, 0, 10, 6]] {
         let copy = viewed(bounds, true);
         let mut person = open(copy.path(), PERSON);
         let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
@@ -1476,4 +1477,70 @@ fn a_forged_smooth_step_is_invalid_refused_or_diverged() {
         assert_eq!(error.engine_code(), engine);
         assert!(person.history().pending().is_none());
     }
+}
+
+/// Heights 12 in columns 2 and 7, 0 elsewhere, the range -16 to 16 and
+/// the view `bounds`.
+fn two_columns(bounds: [i64; 4]) -> tempfile::TempDir {
+    world(|root| {
+        let rows: Vec<Vec<i64>> = (0..32)
+            .map(|_| {
+                (0..32)
+                    .map(|x| if x == 2 || x == 7 { 12 } else { 0 })
+                    .collect()
+            })
+            .collect();
+        common::edit_json(root, "planes/main/layers/0/0_0.jsonc", |chunk| {
+            chunk["terrain"]["height"] = json!({ "rows": rows });
+        });
+        common::edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["heights"] = json!({"min": -16, "max": 16});
+            catalog["view"]["bounds"] = json!(bounds);
+        });
+    })
+}
+
+#[test]
+fn a_smooth_step_diverges_where_the_view_moves_two_tiles_from_a_cell() {
+    // Recorded in the view 0..7 × 0..6: a smooth of columns 3 to 5, rows 1
+    // to 3. Column 5 reads up to column 7, two tiles away, which this view
+    // leaves out: column 5 is even, column 4 takes 1 from column 2 two
+    // tiles away, column 3 takes 3 from column 2 beside it.
+    let agent_world = two_columns([0, 0, 7, 6]);
+    let mut session = sandbox(agent_world.path());
+    let mut records = Records::default();
+    let expected = revision(&session);
+    let cells: Vec<[i64; 2]> = (3..6).flat_map(|x| (1..4).map(move |y| [x, y])).collect();
+    accept(
+        &mut session,
+        Action::SmoothHeights {
+            plane: "main".into(),
+            layer: 0,
+            cells,
+            kernel: 1,
+            expected,
+        },
+        &mut records,
+    );
+    let proposal = Proposal::from_session(&session, EDITOR, RECEIPT, None).unwrap();
+    // A view one row taller reads nothing new within reach: applied.
+    let copy = two_columns([0, 0, 7, 7]);
+    let mut person = open(copy.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap();
+    person.dispatch(Action::Accept, &mut records).unwrap();
+    assert_eq!(person.history().document().revision(), proposal.result());
+    // A view one column wider takes in column 7, two tiles from column 5
+    // and from no other covered cell: column 5 now moves, so diverged.
+    let copy = two_columns([0, 0, 8, 6]);
+    let mut person = open(copy.path(), PERSON);
+    let (mut progress, _) = Progress::begin(&proposal, &person).unwrap();
+    let untouched = Untouched::of(&person, copy.path());
+    let error = progress
+        .prepare_step(&proposal, &mut person, &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalStepDiverged);
+    untouched.check(&person, copy.path(), "two tiles wider");
 }

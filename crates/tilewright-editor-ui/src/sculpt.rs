@@ -385,34 +385,52 @@ pub fn check_kernel(kernel: u32) -> Result<(), SessionError> {
     Ok(())
 }
 
-/// The offsets of a cell's eight neighbours, in row order, each with its
-/// kernel-1 weight: 2 when it shares an edge with the cell, 1 when
-/// diagonal. The cell itself weighs [`SMOOTH_CENTRE`].
-pub const SMOOTH_NEIGHBOURS: [([i64; 2], i64); 8] = [
-    ([-1, -1], 1),
-    ([0, -1], 2),
-    ([1, -1], 1),
-    ([-1, 0], 2),
-    ([1, 0], 2),
-    ([-1, 1], 1),
-    ([0, 1], 2),
-    ([1, 1], 1),
-];
-/// The kernel-1 weight of the cell itself.
-pub const SMOOTH_CENTRE: i64 = 4;
+/// The kernel-1 weights along one axis, for offsets -2 to 2: the binomial
+/// 1, 4, 6, 4, 1. A cell `(dx, dy)` away weighs the product of its two
+/// axes' weights, so the cell itself weighs 36 and all 25 weigh 256.
+pub const SMOOTH_AXIS: [i64; 5] = [1, 4, 6, 4, 1];
 
-/// Kernel 1 for one cell of stored height `height` whose neighbours, in
-/// [`SMOOTH_NEIGHBOURS`]' order, hold `around` (`None`: not read, because
-/// outside the active view or in a chunk that does not exist), under
-/// `grant` (frozen, see `decisions/0008-smooth-heights.md`): every height
-/// read, the cell's own included, is clamped into the range; the new
-/// height is the cell's clamped height `h` plus the weighted sum of the
-/// read neighbours' differences from `h`, divided by the total weight
-/// read, rounded to the nearest integer with an exact half toward zero.
-/// The result always lies in the range; the cell changes when it differs
-/// from `height`.
+/// The 24 cells around a cell that kernel 1 reads, up to two tiles away
+/// either way, in row order (`dy`, then `dx`, each from -2 to 2), each
+/// with its weight ([`SMOOTH_AXIS`]' product). The cell itself weighs
+/// [`SMOOTH_CENTRE`].
+pub const SMOOTH_NEIGHBOURS: [([i64; 2], i64); 24] = smooth_neighbours();
+/// The kernel-1 weight of the cell itself.
+pub const SMOOTH_CENTRE: i64 = SMOOTH_AXIS[2] * SMOOTH_AXIS[2];
+
+const fn smooth_neighbours() -> [([i64; 2], i64); 24] {
+    let mut found = [([0, 0], 0); 24];
+    let (mut index, mut dy) = (0, 0);
+    while dy < 5 {
+        let mut dx = 0;
+        while dx < 5 {
+            if dx != 2 || dy != 2 {
+                // Both are below 5, so these casts are exact.
+                #[allow(clippy::cast_possible_wrap)]
+                let offset = [dx as i64 - 2, dy as i64 - 2];
+                found[index] = (offset, SMOOTH_AXIS[dx] * SMOOTH_AXIS[dy]);
+                index += 1;
+            }
+            dx += 1;
+        }
+        dy += 1;
+    }
+    found
+}
+
+/// Kernel 1 for one cell of stored height `height` whose 24 surrounding
+/// cells, in [`SMOOTH_NEIGHBOURS`]' order, hold `around` (`None`: not
+/// read, because outside the active view or in a chunk that does not
+/// exist), under `grant` (frozen, see `decisions/0008-smooth-heights.md`):
+/// every height read, the cell's own included, is clamped into the range;
+/// the new height is the cell's clamped height `h` plus the weighted sum of
+/// the read cells' differences from `h`, divided by the total weight read
+/// (the centre's included), rounded to the nearest integer with an exact
+/// half toward zero, that is toward `h`. The result always lies between
+/// the smallest and largest clamped height read, so in the range; the cell
+/// changes when it differs from `height`.
 #[must_use]
-pub fn smoothed(height: i32, around: [Option<i32>; 8], grant: HeightGrant) -> i32 {
+pub fn smoothed(height: i32, around: [Option<i32>; 24], grant: HeightGrant) -> i32 {
     let clamp = |value: i32| i64::from(value.clamp(grant.min, grant.max));
     let own = clamp(height);
     let (mut sum, mut weight) = (0_i64, SMOOTH_CENTRE);
@@ -450,7 +468,7 @@ pub struct SmoothCounts {
 /// [`Action::SmoothHeights`](crate::Action::SmoothHeights) prepares, and
 /// what a proposal step's words and the desktop's live preview count. Every
 /// height read is a committed one, never another cell's new height, so the
-/// order of `cells` does not change any result. A neighbour is read only
+/// order of `cells` does not change any result. A cell up to two tiles away is read only
 /// inside the active view and in a chunk that exists.
 ///
 /// # Errors
@@ -618,10 +636,14 @@ mod tests {
         }
     }
 
-    /// Neighbours in [`super::SMOOTH_NEIGHBOURS`]' order: corners at 0, 2,
-    /// 5, 7; edges at 1, 3, 4, 6.
-    fn ring(corner: Option<i32>, edge: Option<i32>) -> [Option<i32>; 8] {
-        [corner, edge, corner, edge, edge, corner, edge, corner]
+    /// The 24 cells around a cell, in [`super::SMOOTH_NEIGHBOURS`]' order,
+    /// from `at(dx, dy)`.
+    fn around(at: impl Fn(i64, i64) -> Option<i32>) -> [Option<i32>; 24] {
+        super::SMOOTH_NEIGHBOURS.map(|([dx, dy], _)| at(dx, dy))
+    }
+    /// Every cell around at `value`.
+    fn all(value: i32) -> [Option<i32>; 24] {
+        around(|_, _| Some(value))
     }
     const WIDE: HeightGrant = HeightGrant {
         min: -100,
@@ -629,73 +651,106 @@ mod tests {
     };
 
     #[test]
-    fn smoothing_takes_the_weighted_mean_of_the_cell_and_its_neighbours() {
+    fn the_weights_are_the_binomial_one_four_six_four_one_squared() {
+        let weight = |dx: i64, dy: i64| {
+            super::SMOOTH_NEIGHBOURS
+                .iter()
+                .find(|(offset, _)| *offset == [dx, dy])
+                .map(|(_, weight)| *weight)
+        };
+        assert_eq!(super::SMOOTH_CENTRE, 36);
+        assert_eq!(weight(0, 0), None);
+        assert_eq!(weight(1, 0), Some(24));
+        assert_eq!(weight(0, -1), Some(24));
+        assert_eq!(weight(1, 1), Some(16));
+        assert_eq!(weight(2, 0), Some(6));
+        assert_eq!(weight(-2, 1), Some(4));
+        assert_eq!(weight(2, -2), Some(1));
+        let total: i64 = super::SMOOTH_NEIGHBOURS.iter().map(|(_, w)| w).sum();
+        assert_eq!(total + super::SMOOTH_CENTRE, 256);
+    }
+
+    #[test]
+    fn smoothing_takes_the_weighted_mean_of_the_five_by_five_around() {
         // Even ground stays.
-        assert_eq!(smoothed(5, ring(Some(5), Some(5)), WIDE), 5);
-        // A pit among 16s: (4 * 0 + 12 * 16) / 16 = 12; a spike: 4.
-        assert_eq!(smoothed(0, ring(Some(16), Some(16)), WIDE), 12);
-        assert_eq!(smoothed(16, ring(Some(0), Some(0)), WIDE), 4);
-        assert_eq!(smoothed(-16, ring(Some(0), Some(0)), WIDE), -4);
-        // Edges weigh 2, corners 1: (4 * 0 + 8 * 8 + 4 * 0) / 16 = 4, and
-        // (4 * 0 + 0 + 4 * 8) / 16 = 2.
-        assert_eq!(smoothed(0, ring(Some(0), Some(8)), WIDE), 4);
-        assert_eq!(smoothed(0, ring(Some(8), Some(0)), WIDE), 2);
-        // Nearest integer: 3 / 16 rounds to 0, 9 / 16 to 1; and below 0.
-        let one_corner = |value| [Some(value), None, None, None, None, None, None, None];
-        // Weight 4 + 1 = 5: 3 / 5 = 0.6 rounds to 1, 2 / 5 = 0.4 to 0.
-        assert_eq!(smoothed(0, one_corner(3), WIDE), 1);
-        assert_eq!(smoothed(0, one_corner(2), WIDE), 0);
-        assert_eq!(smoothed(0, one_corner(-3), WIDE), -1);
-        assert_eq!(smoothed(0, one_corner(-2), WIDE), 0);
+        assert_eq!(smoothed(5, all(5), WIDE), 5);
+        // A spike of 16 among zeros: 36 × 16 / 256 = 2.25, so 2; a pit
+        // of 0 among 16s: 220 × 16 / 256 = 13.75, so 14; and below 0.
+        assert_eq!(smoothed(16, all(0), WIDE), 2);
+        assert_eq!(smoothed(0, all(16), WIDE), 14);
+        assert_eq!(smoothed(-16, all(0), WIDE), -2);
+        assert_eq!(smoothed(0, all(-16), WIDE), -14);
+        // Two tiles away counts: only (2, 0) and (-2, 0) at 8, weight 6
+        // each: 96 / 256 = 0.375, so 0; at 16, 0.75, so 1.
+        let far = |value| around(|dx, dy| Some(if dy == 0 && dx.abs() == 2 { value } else { 0 }));
+        assert_eq!(smoothed(0, far(8), WIDE), 0);
+        assert_eq!(smoothed(0, far(16), WIDE), 1);
+        // One edge neighbour alone, weight 24 (total 60): 10 → 4, 5 → 2.
+        let one = |value| around(|dx, dy| (dx == 1 && dy == 0).then_some(value));
+        assert_eq!(smoothed(0, one(10), WIDE), 4);
+        assert_eq!(smoothed(0, one(5), WIDE), 2);
+        assert_eq!(smoothed(0, one(-10), WIDE), -4);
     }
 
     #[test]
     fn an_exact_half_rounds_toward_the_cells_own_height() {
-        // Two corners read, weight 6: differences 1 and 2 make 3 / 6 = 0.5.
-        let two = |a, b| [Some(a), None, Some(b), None, None, None, None, None];
-        assert_eq!(smoothed(0, two(1, 2), WIDE), 0);
-        assert_eq!(smoothed(0, two(-1, -2), WIDE), 0);
-        // 9 / 6 = 1.5: one step, not two, either way.
-        assert_eq!(smoothed(0, two(4, 5), WIDE), 1);
-        assert_eq!(smoothed(0, two(-4, -5), WIDE), -1);
-        // The same around 5 and -5: the mean 5.5 stays 5, -5.5 stays -5
-        // (floor would give -6, half away from zero 6 and -6).
-        assert_eq!(smoothed(5, two(6, 7), WIDE), 5);
-        assert_eq!(smoothed(-5, two(-6, -7), WIDE), -5);
-        assert_eq!(smoothed(6, two(5, 4), WIDE), 6);
-        assert_eq!(smoothed(-6, two(-5, -4), WIDE), -6);
-        // All eight read: edges at 1, corners at 0 make 8 / 16 = 0.5.
-        assert_eq!(smoothed(0, ring(Some(0), Some(1)), WIDE), 0);
-        assert_eq!(smoothed(1, ring(Some(1), Some(0)), WIDE), 1);
+        // Only (2, 0) and (-2, 0) read, weight 6 each (total 48):
+        // differences 1 and 3 make 24 / 48 = 0.5; 5 and 7, 1.5.
+        let pair = |a, b| {
+            around(|dx, dy| match (dx, dy) {
+                (2, 0) => Some(a),
+                (-2, 0) => Some(b),
+                _ => None,
+            })
+        };
+        assert_eq!(smoothed(0, pair(1, 3), WIDE), 0);
+        assert_eq!(smoothed(0, pair(-1, -3), WIDE), 0);
+        assert_eq!(smoothed(0, pair(5, 7), WIDE), 1);
+        assert_eq!(smoothed(0, pair(-5, -7), WIDE), -1);
+        // The same around 5 and -5: 5.5 stays 5, -5.5 stays -5 (floor
+        // would give -6, half away from zero 6 and -6).
+        assert_eq!(smoothed(5, pair(6, 8), WIDE), 5);
+        assert_eq!(smoothed(-5, pair(-6, -8), WIDE), -5);
+        assert_eq!(smoothed(6, pair(5, 3), WIDE), 6);
+        assert_eq!(smoothed(-6, pair(-5, -3), WIDE), -6);
+        // All 24 read: 1 on the four edge neighbours (4 × 24) and on two
+        // diagonal ones (2 × 16) makes 128 / 256 = 0.5.
+        let half = around(|dx, dy| {
+            Some(i32::from(
+                dx.abs() + dy.abs() == 1 || (dx == dy && dx.abs() == 1),
+            ))
+        });
+        assert_eq!(smoothed(0, half, WIDE), 0);
+        let mirrored = half.map(|value| value.map(|value| 1 - value));
+        assert_eq!(smoothed(1, mirrored, WIDE), 1);
     }
 
     #[test]
-    fn neighbours_not_read_are_left_out_of_the_weight() {
+    fn cells_not_read_are_left_out_of_the_weight() {
         // Nothing read: the cell keeps its height.
-        assert_eq!(smoothed(7, [None; 8], WIDE), 7);
-        // One edge at 12, weight 6: 24 / 6 = 4.
-        let edge = [None, Some(12), None, None, None, None, None, None];
-        assert_eq!(smoothed(0, edge, WIDE), 4);
-        // Counted as 0 instead, it would be 24 / 16, rounded to 2.
-        assert_ne!(smoothed(0, edge, WIDE), 2);
+        assert_eq!(smoothed(7, [None; 24], WIDE), 7);
+        // One edge neighbour at 12, weight 24 of 60: 4.8, so 5.
+        let edge = around(|dx, dy| (dx == 0 && dy == 1).then_some(12));
+        assert_eq!(smoothed(0, edge, WIDE), 5);
+        // Counted as 0 instead, it would be 288 / 256, rounded to 1.
+        assert_ne!(smoothed(0, edge, WIDE), 1);
     }
 
     #[test]
     fn every_height_read_is_clamped_into_the_range() {
         let range = HeightGrant { min: -8, max: 8 };
-        // One edge neighbour far above: it counts as 8, so 16 / 16 = 1.
-        let mut around = ring(Some(0), Some(0));
-        around[1] = Some(1000);
-        assert_eq!(smoothed(0, around, range), 1);
-        around[1] = Some(-1000);
-        assert_eq!(smoothed(0, around, range), -1);
+        // One edge neighbour far above: it counts as 8, so 192 / 256 = 0.75.
+        let spiked = |value| around(|dx, dy| Some(if (dx, dy) == (1, 0) { value } else { 0 }));
+        assert_eq!(smoothed(0, spiked(1000), range), 1);
+        assert_eq!(smoothed(0, spiked(-1000), range), -1);
         // A cell outside the range is read as its end, so it moves in.
-        assert_eq!(smoothed(30, [None; 8], range), 8);
-        assert_eq!(smoothed(-30, ring(Some(-8), Some(-8)), range), -8);
-        assert_eq!(smoothed(30, ring(Some(0), Some(0)), range), 2);
+        assert_eq!(smoothed(30, [None; 24], range), 8);
+        assert_eq!(smoothed(-30, all(-8), range), -8);
+        // 36 × 8 / 256 = 1.125.
+        assert_eq!(smoothed(30, all(0), range), 1);
         // The range's ends are results.
-        assert_eq!(smoothed(8, ring(Some(8), Some(8)), range), 8);
-        assert_eq!(smoothed(-8, ring(Some(-8), Some(-8)), range), -8);
+        assert_eq!(smoothed(8, all(8), range), 8);
+        assert_eq!(smoothed(-8, all(-8), range), -8);
     }
 
     #[test]
@@ -704,18 +759,12 @@ mod tests {
             min: i32::MIN,
             max: i32::MAX,
         };
-        // (4 * MAX + 12 * MIN) / 16 = -2^30 - 0.25.
+        // (36 × MAX + 220 × MIN) / 256 = -1,543,503,872.14.
+        assert_eq!(smoothed(i32::MAX, all(i32::MIN), wide), -1_543_503_872);
+        assert_eq!(smoothed(i32::MIN, all(i32::MAX), wide), 1_543_503_871);
+        assert_eq!(smoothed(i32::MAX, [None; 24], wide), i32::MAX);
         assert_eq!(
-            smoothed(i32::MAX, ring(Some(i32::MIN), Some(i32::MIN)), wide),
-            -1_073_741_824
-        );
-        assert_eq!(
-            smoothed(i32::MIN, ring(Some(i32::MAX), Some(i32::MAX)), wide),
-            1_073_741_823
-        );
-        assert_eq!(smoothed(i32::MAX, [None; 8], wide), i32::MAX);
-        assert_eq!(
-            smoothed(i32::MIN, [None; 8], HeightGrant { min: -8, max: 8 }),
+            smoothed(i32::MIN, [None; 24], HeightGrant { min: -8, max: 8 }),
             -8
         );
     }

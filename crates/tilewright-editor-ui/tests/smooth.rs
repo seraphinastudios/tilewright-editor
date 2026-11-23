@@ -155,11 +155,12 @@ fn height(session: &Session, [x, y]: [i64; 2]) -> i32 {
 
 /// ADR 0008's kernel 1, written from its text and sharing no code with
 /// the engine. Per covered cell with a chunk: the sum `S` of weight ×
-/// clamped height over the cell (4) and its read neighbours (2 on an edge,
-/// 1 on a corner; read when inside `bounds` and with a chunk), and the
-/// weight `W` read; the new height is the integer nearest `S / W`, an
-/// exact half going to the one nearer the cell's clamped height. Cells
-/// whose new height is their stored one are left out.
+/// clamped height over the 5 × 5 cells centred on it (weight
+/// `b[dx] × b[dy]` with `b` = 1, 4, 6, 4, 1; a cell other than the centre
+/// read when inside `bounds` and with a chunk), and the weight `W` read;
+/// the new height is the integer nearest `S / W`, an exact half going to
+/// the one nearer the cell's clamped height. Cells whose new height is
+/// their stored one are left out.
 fn reference(
     cells: &[[i64; 2]],
     (min, max): (i32, i32),
@@ -167,7 +168,6 @@ fn reference(
     stored: impl Fn([i64; 2]) -> Option<i32>,
 ) -> Planned {
     let inside = |[x, y]: [i64; 2]| x >= bx && x < bx + width && y >= by && y < by + tall;
-    let clamp = |value: i32| i64::from(value.max(min).min(max));
     let mut changes = Vec::new();
     let mut counts = SmoothCounts::default();
     for &[x, y] in cells {
@@ -175,29 +175,10 @@ fn reference(
             counts.missing += 1;
             continue;
         };
-        let (mut sum, mut weight) = (4 * clamp(own), 4);
-        for dy in -1..=1_i64 {
-            for dx in -1..=1_i64 {
-                let at = [x + dx, y + dy];
-                if (dx, dy) == (0, 0) || !inside(at) {
-                    continue;
-                }
-                if let Some(read) = stored(at) {
-                    let w = if dx == 0 || dy == 0 { 2 } else { 1 };
-                    sum += w * clamp(read);
-                    weight += w;
-                }
-            }
-        }
-        let low = sum.div_euclid(weight);
-        // Below the midpoint of low and low + 1, or on it with the cell's
-        // own height at or below low: low; otherwise low + 1.
-        let new = match (2 * sum).cmp(&((2 * low + 1) * weight)) {
-            std::cmp::Ordering::Less => low,
-            std::cmp::Ordering::Equal if clamp(own) <= low => low,
-            std::cmp::Ordering::Equal | std::cmp::Ordering::Greater => low + 1,
-        };
-        let new = i32::try_from(new).unwrap();
+        let new = reference_cell(own, (min, max), |dx, dy| {
+            let at = [x + dx, y + dy];
+            if inside(at) { stored(at) } else { None }
+        });
         if new == own {
             counts.even += 1;
         } else {
@@ -208,6 +189,141 @@ fn reference(
         Err(RefusalCode::ChangeNone)
     } else {
         Ok((changes, counts))
+    }
+}
+
+/// The reference's new height for one cell of height `own` whose cell
+/// `(dx, dy)` away reads `read(dx, dy)` (`None`: not read).
+fn reference_cell(own: i32, (min, max): (i32, i32), read: impl Fn(i64, i64) -> Option<i32>) -> i32 {
+    let clamp = |value: i32| i64::from(value.max(min).min(max));
+    let binomial = |offset: i64| [1, 4, 6, 4, 1][usize::try_from(offset + 2).unwrap()];
+    let (mut sum, mut weight) = (36 * clamp(own), 36);
+    for dy in -2..=2_i64 {
+        for dx in -2..=2_i64 {
+            if (dx, dy) == (0, 0) {
+                continue;
+            }
+            if let Some(value) = read(dx, dy) {
+                let w = binomial(dx) * binomial(dy);
+                sum += w * clamp(value);
+                weight += w;
+            }
+        }
+    }
+    let low = sum.div_euclid(weight);
+    // Below the midpoint of low and low + 1, or on it with the cell's own
+    // height at or below low: low; otherwise low + 1.
+    let new = match (2 * sum).cmp(&((2 * low + 1) * weight)) {
+        std::cmp::Ordering::Less => low,
+        std::cmp::Ordering::Equal if clamp(own) <= low => low,
+        std::cmp::Ordering::Equal | std::cmp::Ordering::Greater => low + 1,
+    };
+    i32::try_from(new).unwrap()
+}
+
+#[test]
+fn single_cells_match_the_reference_exhaustively_on_a_small_domain() {
+    // Every own height -1 to 1 and every assignment of the 8 cells one
+    // tile away from {not read, -1, 0, 1}, under the cells two tiles away
+    // not read, all at 1, or alternately -2 and not read, and under the
+    // ranges -1 to 1 and 0 to 1 (so -1 and -2 are clamped).
+    let outer: [fn(i64, i64) -> Option<i32>; 3] = [
+        |_, _| None,
+        |_, _| Some(1),
+        |dx, dy| ((dx + dy).rem_euclid(2) == 0).then_some(-2),
+    ];
+    let mut checked = 0_u64;
+    for range in [(-1, 1), (0, 1)] {
+        let grant = tilewright_editor_preview::HeightGrant {
+            min: range.0,
+            max: range.1,
+        };
+        for far in outer {
+            for own in -1..=1 {
+                for code in 0..4_u32.pow(8) {
+                    let inner = |dx: i64, dy: i64| -> Option<i32> {
+                        let index = [
+                            (-1, -1),
+                            (0, -1),
+                            (1, -1),
+                            (-1, 0),
+                            (1, 0),
+                            (-1, 1),
+                            (0, 1),
+                            (1, 1),
+                        ]
+                        .iter()
+                        .position(|&offset| offset == (dx, dy))
+                        .unwrap();
+                        match code / 4_u32.pow(u32::try_from(index).unwrap()) % 4 {
+                            0 => None,
+                            digit => Some(i32::try_from(digit).unwrap() - 2),
+                        }
+                    };
+                    let at = |dx: i64, dy: i64| {
+                        if dx.abs() == 2 || dy.abs() == 2 {
+                            far(dx, dy)
+                        } else {
+                            inner(dx, dy)
+                        }
+                    };
+                    let engine = sculpt::smoothed(
+                        own,
+                        sculpt::SMOOTH_NEIGHBOURS.map(|([dx, dy], _)| at(dx, dy)),
+                        grant,
+                    );
+                    assert_eq!(
+                        engine,
+                        reference_cell(own, range, at),
+                        "{own} {code} {range:?}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 2 * 3 * 3 * 65_536);
+}
+
+#[test]
+fn single_cells_match_the_reference_at_the_extremes() {
+    // Random heights from small to the 32-bit extremes, random ranges up to
+    // the whole 32-bit range, and random cells not read.
+    let mut random = Random(0x0123_4567_89ab_cdef);
+    let pick = |random: &mut Random| -> i32 {
+        match random.below(6) {
+            0 => i32::MAX,
+            1 => i32::MIN,
+            2 => i32::try_from(random.below(2001) - 1000).unwrap(),
+            3 => i32::try_from(random.below(1 << 32) - (1 << 31)).unwrap(),
+            _ => i32::try_from(random.below(7) - 3).unwrap(),
+        }
+    };
+    for _ in 0..200_000 {
+        let (a, b) = (pick(&mut random), pick(&mut random));
+        let grant = tilewright_editor_preview::HeightGrant {
+            min: a.min(b),
+            max: a.max(b),
+        };
+        let own = pick(&mut random);
+        let around: Vec<Option<i32>> = (0..24)
+            .map(|_| (random.below(4) != 0).then(|| pick(&mut random)))
+            .collect();
+        let at = |dx: i64, dy: i64| {
+            let index = usize::try_from((dy + 2) * 5 + dx + 2).unwrap();
+            around[if index > 12 { index - 1 } else { index }]
+        };
+        let engine = sculpt::smoothed(
+            own,
+            sculpt::SMOOTH_NEIGHBOURS.map(|([dx, dy], _)| at(dx, dy)),
+            grant,
+        );
+        assert_eq!(
+            engine,
+            reference_cell(own, (grant.min, grant.max), at),
+            "{own} {around:?} {grant:?}"
+        );
+        assert!(grant.contains(engine));
     }
 }
 
@@ -329,55 +445,64 @@ fn each_cell_reads_committed_heights_only_so_the_stroke_does_not_matter() {
 
 #[test]
 fn a_hand_computed_patch() {
-    // Range -6 to 6, view 0..4 × 0..4 over chunk 0_0; heights 0 but for
-    // a spike of 6 at (1, 1) and a pit of -6 at (2, 2), and -1 at (0, 3).
+    // Range -8 to 8, view 0..7 × 0..7 over chunk 0_0; heights 0 but for
+    // a spike of 8 at (1, 1) and a pit of -8 at (4, 4).
     let (_dir, session) = fixture_with(|root| {
+        grant(root, -8, 8);
         set_heights(root, |at| match at {
-            [1, 1] => 6,
-            [2, 2] => -6,
-            [0, 3] => -1,
+            [1, 1] => 8,
+            [4, 4] => -8,
             _ => 0,
         });
-        view(root, [0, 0, 4, 4]);
+        view(root, [0, 0, 7, 7]);
     });
-    let cells: Vec<[i64; 2]> = (0..4).flat_map(|x| (0..4).map(move |y| [x, y])).collect();
+    let cells: Vec<[i64; 2]> = (0..7).flat_map(|x| (0..7).map(move |y| [x, y])).collect();
     let (changes, counts) = plan(&session, &cells).unwrap();
-    // (1, 1): (4 × 6 + 1 × -6) / 16 = 1.125 → 1. (2, 2): -1.125 → -1.
-    // (0, 0), a view corner: weight 4 + 2 + 2 + 1 = 9, (1 × 6) / 9 =
-    // 0.67 → 1. (1, 0): weight 12, (2 × 6) / 12 = 1.
-    // (2, 1): weight 16, (2 × 6 + 2 × -6) / 16 = 0; (1, 2) the same.
-    // (3, 3), a corner: (1 × -6) / 9 = -0.67 → -1.
-    // (0, 3): weight 9, own -1: 5 × (0 - -1) / 9 = 0.56 → one up, to 0.
-    // Exact halves stay: (2, 0) (1 × 6) / 12, (3, 1) (1 × -6) / 12, and
-    // (0, 2) (1 × 6 + 2 × -1) / 12 = 0.33 → 0.
+    // The pit, all 25 read: (36 × -8) / 256 = -1.125, so -1. Its edge
+    // neighbours: (24 × -8) / 256 = -0.75, so -1; its diagonal ones,
+    // (16 × -8) / 256 = -0.5 exactly, stay at 0 (a half goes toward the
+    // cell's own height); two away, (6 × -8) / 256, stay too.
+    // The spike near the view's corner reads fewer cells: (1, 1) itself
+    // loses row and column -1, weight 256 - 16 - 16 + 1 = 225: (-189 × 8)
+    // / 225 = -6.72 below it, so 8 - 7 = 1. Its diagonal (0, 0) reads
+    // weight 121: (16 × 8) / 121 = 1.06, so 1, where (2, 2), with the pit
+    // two away, reads (16 × 8 - 1 × 8) / 256 = 0.47 and stays. The pit's
+    // diagonal (5, 5) loses column 7, weight 225: (16 × -8) / 225 = -0.57,
+    // so -1; (3, 3), like (2, 2), stays.
     assert_eq!(
         changes,
         [
             ([0, 0], 0, 1),
             ([0, 1], 0, 1),
-            ([0, 3], -1, 0),
+            ([0, 2], 0, 1),
             ([1, 0], 0, 1),
-            ([1, 1], 6, 1),
-            ([1, 3], 0, -1),
-            ([2, 2], -6, -1),
-            ([2, 3], 0, -1),
-            ([3, 2], 0, -1),
-            ([3, 3], 0, -1),
+            ([1, 1], 8, 1),
+            ([1, 2], 0, 1),
+            ([2, 0], 0, 1),
+            ([2, 1], 0, 1),
+            ([3, 4], 0, -1),
+            ([3, 5], 0, -1),
+            ([4, 3], 0, -1),
+            ([4, 4], -8, -1),
+            ([4, 5], 0, -1),
+            ([5, 3], 0, -1),
+            ([5, 4], 0, -1),
+            ([5, 5], 0, -1),
         ]
     );
     assert_eq!(
         counts,
         SmoothCounts {
-            even: 6,
+            even: 33,
             missing: 0
         }
     );
 }
 
 #[test]
-fn neighbours_outside_the_view_and_in_missing_chunks_are_left_out() {
-    // (0, 31) at 0; west of it (-1, *) at 12 in chunk -1_0; south of it no
-    // chunk; range wide enough to read 12 as stored.
+fn cells_outside_the_view_and_in_missing_chunks_are_left_out() {
+    // (0, 31) at 0; west of it, x -1 and -2, at 12 in chunk -1_0; south
+    // of it, rows 32 and 33, no chunk; range wide enough to read 12.
     let heights = |at: [i64; 2]| if at[0] < 0 { 12 } else { 0 };
     let in_view = |bounds| {
         let (_dir, session) = fixture_with(|root| {
@@ -390,14 +515,20 @@ fn neighbours_outside_the_view_and_in_missing_chunks_are_left_out() {
     // The view starts at x 0: the 12s are not read, and the missing chunk
     // below is not read as 0 either, so the cell is even.
     assert_eq!(in_view([0, 28, 4, 6]), Err(RefusalCode::ChangeNone));
-    // The view takes in x -1: two 12s, (-1, 30) a corner and (-1, 31) an
-    // edge, 36 over the weight read, 4 + 1 + 2 + 1 + 2 + 2 = 12 (row 32
-    // has no chunk): 3.
+    // The view takes in x -1, one tile away: rows 29 to 31 of that column
+    // weigh 4 × (1 + 4 + 6) = 44, so 528 over the weight read, 165 (rows
+    // 32 and 33 have no chunk): 3.2, so 3.
     assert_eq!(
         in_view([-1, 28, 4, 6]),
         Ok((vec![([0, 31], 0, 3)], SmoothCounts::default()))
     );
-    // Counted as 0, the missing row would give 36 / 16, rounded to 2.
+    // It takes in x -2 as well, two tiles away: 1 × 11 more, 660 / 176 =
+    // 3.75, so 4. Counted as 0, the missing rows would give 660 / 256,
+    // rounded to 3.
+    assert_eq!(
+        in_view([-2, 28, 5, 6]),
+        Ok((vec![([0, 31], 0, 4)], SmoothCounts::default()))
+    );
 }
 
 #[test]
@@ -412,24 +543,22 @@ fn every_height_read_is_clamped_and_cells_outside_the_range_come_in() {
         });
         view(root, [0, 0, 8, 6]);
     });
-    let (changes, _) = plan(&session, &[[0, 0], [1, 0], [4, 3], [5, 3], [6, 3]]).unwrap();
-    // (0, 0) reads as 6 among (1, 0) as -6 and zeros: (24 - 12) / 9 = 1.33.
-    // (1, 0): (-24 + 6) / 12 = -1.5 → -1, toward its own -6.
-    // (4, 3): (2 × 6) / 16 = 0.75 → 1, not 1000's pull.
-    // (5, 3): (4 × 6 + 2 × -6) / 16 = 0.75 → 1. (6, 3): (-24 + 12) / 16.
+    let (changes, counts) = plan(&session, &[[0, 0], [1, 0], [4, 3], [5, 3], [6, 3]]).unwrap();
+    // Range -6 to 6. (0, 0) reads as 6, (1, 0) beside it as -6: (0, 0)
+    // gives 6 - 654 / 121 = 0.6, so 1; (1, 0) gives -6 + 918 / 165 =
+    // -0.44, so 0. (5, 3) and (6, 3) come down to 0 among zeros. (4, 3)
+    // reads 1000 as 6 and -30 as -6: 108 / 256, so it stays at 0, where
+    // reading 1000 as stored would raise it by 90.
     assert_eq!(
         changes,
         [
             ([0, 0], i32::MAX, 1),
-            ([1, 0], i32::MIN, -1),
-            ([4, 3], 0, 1),
-            ([5, 3], 1000, 1),
-            ([6, 3], -30, -1),
+            ([1, 0], i32::MIN, 0),
+            ([5, 3], 1000, 0),
+            ([6, 3], -30, 0),
         ]
     );
-    for (_, _, after) in changes {
-        assert!((-6..=6).contains(&after));
-    }
+    assert_eq!(counts.even, 1);
 }
 
 #[test]
@@ -575,11 +704,13 @@ fn a_height_that_would_stack_past_32_bits_on_a_far_layer_is_refused() {
             serde_json::from_slice(&fs::read(root.join(CHUNK)).unwrap()).unwrap();
         chunk["layer"] = json!(far);
         chunk["objects"] = json!([]);
-        // A 4 at (1, 0) beside zeros: (0, 0) becomes 2 × 4 / 9 = 0.89 → 1,
-        // and (1, 1) 1 × 4 / 16 → 0; (2, 0) 2 × 4 / 12 = 0.67 → 1.
+        // A 4 at (1, 0) beside zeros: (0, 0) becomes (24 × 4) / 121 =
+        // 0.79, so 1. Rows 3 to 5, columns 3 to 7 at 8.
         let mut rows = vec![vec![0; 32]; 32];
         rows[0][1] = 4;
-        rows[5][5] = 8;
+        for row in &mut rows[3..6] {
+            row[3..8].fill(8);
+        }
         chunk["terrain"]["height"] = json!({ "rows": rows });
         fs::write(
             directory.join("0_0.jsonc"),
@@ -601,8 +732,8 @@ fn a_height_that_would_stack_past_32_bits_on_a_far_layer_is_refused() {
     };
     session.dispatch(on(vec![[0, 0]]), &mut records).unwrap();
     session.dispatch(Action::Cancel, &mut records).unwrap();
-    // (5, 5) at 8 reads as 6 (the range's end) among zeros, with row 6
-    // outside the view: weight 12, (4 × 6) / 12 = 2.
+    // (5, 5) at 8 reads as 6, the range's end, and so does every cell it
+    // reads (rows 6 and 7 are outside the view): it becomes 6.
     let error = session
         .dispatch(on(vec![[5, 5]]), &mut records)
         .unwrap_err();
@@ -610,7 +741,7 @@ fn a_height_that_would_stack_past_32_bits_on_a_far_layer_is_refused() {
     assert_eq!(
         error.message(),
         format!(
-            "cell (5, 5): height 2 on layer {far} would stack past the 32-bit range the preview draws"
+            "cell (5, 5): height 6 on layer {far} would stack past the 32-bit range the preview draws"
         )
     );
     assert!(session.history().pending().is_none());
@@ -677,8 +808,8 @@ fn an_accepted_smooth_undoes_and_redoes_exactly_and_smooths_further_when_repeate
 #[cfg(target_os = "linux")]
 #[test]
 fn a_smooth_to_all_zeros_removes_the_grid_and_undo_restores_it() {
-    // One height of 1 at (0, 0): (4 × 1) / 9 = 0.44 → 0, and its
-    // neighbours 1 or 2 / 12 or 16 → 0: every height returns to 0.
+    // One height of 1 at (3, 3): (36 × 1) / 256 = 0.14, so 0; (2, 2)
+    // beside it reads (16 × 1) / 256 and stays: every height is 0 again.
     let dir = tempfile::tempdir().unwrap();
     copy_tree(&fixture_world("prototype-neutral"), dir.path());
     grant(dir.path(), -8, 8);
@@ -700,32 +831,42 @@ fn a_smooth_to_all_zeros_removes_the_grid_and_undo_restores_it() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn a_neighbour_changed_on_disk_after_review_refuses_the_accept() {
-    // The smooth writes only chunk 0_0, and reads its west neighbours in
-    // chunk -1_0, which the transaction does not touch. A change there
-    // between Review and Accept is caught by the whole-World check.
-    let (dir, mut session) = fixture_with(|root| {
-        set_heights(root, |at| if at[0] < 0 { 6 } else { 0 });
-        view(root, [-2, 0, 8, 6]);
-    });
-    let mut records = Records::default();
-    let cells: Vec<[i64; 2]> = (0..6).map(|y| [0, y]).collect();
-    session
-        .dispatch(smooth(&session, cells.clone()), &mut records)
-        .unwrap();
-    let pending = pending_cells(&session);
-    assert!(
-        pending
-            .iter()
-            .all(|(at, _, after)| at[0] == 0 && *after > 0)
-    );
-    let west = fs::read(dir.path().join(WEST)).unwrap();
-    set_chunk(dir.path(), WEST, -32, |_| -6);
-    let chunk = fs::read(dir.path().join(CHUNK)).unwrap();
-    let error = session.dispatch(Action::Accept, &mut records).unwrap_err();
-    assert_eq!(error.code(), RefusalCode::SourceChanged, "{error}");
-    // Nothing was written.
-    assert_eq!(fs::read(dir.path().join(CHUNK)).unwrap(), chunk);
-    assert_ne!(fs::read(dir.path().join(WEST)).unwrap(), west);
-    assert!(records.0.is_empty());
+fn a_cell_read_changed_on_disk_after_review_refuses_the_accept() {
+    // The smooth writes only chunk 0_0, and reads cells one and two tiles
+    // west in chunk -1_0, which the transaction does not touch. A change
+    // there between Review and Accept is caught by the whole-World check.
+    // Column 0 reads x -1 and -2; column 1 reads only x -1, two away.
+    for column in [0, 1] {
+        let (dir, mut session) = fixture_with(|root| {
+            grant(root, -64, 64);
+            set_heights(root, |at| if at[0] < 0 { 40 } else { 0 });
+            view(root, [-2, 0, 8, 6]);
+        });
+        let mut records = Records::default();
+        let cells: Vec<[i64; 2]> = (0..6).map(|y| [column, y]).collect();
+        session
+            .dispatch(smooth(&session, cells), &mut records)
+            .unwrap();
+        let pending = pending_cells(&session);
+        assert_eq!(pending.len(), 6, "{column}");
+        assert!(
+            pending
+                .iter()
+                .all(|(at, _, after)| at[0] == column && *after > 0)
+        );
+        let west = fs::read(dir.path().join(WEST)).unwrap();
+        set_chunk(
+            dir.path(),
+            WEST,
+            -32,
+            |at| if at[0] == -1 { -40 } else { 40 },
+        );
+        let chunk = fs::read(dir.path().join(CHUNK)).unwrap();
+        let error = session.dispatch(Action::Accept, &mut records).unwrap_err();
+        assert_eq!(error.code(), RefusalCode::SourceChanged, "{error}");
+        // Nothing was written.
+        assert_eq!(fs::read(dir.path().join(CHUNK)).unwrap(), chunk);
+        assert_ne!(fs::read(dir.path().join(WEST)).unwrap(), west);
+        assert!(records.0.is_empty());
+    }
 }

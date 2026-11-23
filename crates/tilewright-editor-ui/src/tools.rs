@@ -1857,8 +1857,9 @@ impl ToolState {
     }
     /// A sculpt stroke samples the ground cell mask like a terrain stroke;
     /// its release raises or lowers the covered cells' heights by
-    /// [`Self::sculpt_amount`], fixed at the press, or flattens them to
-    /// `target`, sampled at the press (required for the Flatten tool).
+    /// [`Self::sculpt_amount`], fixed at the press, flattens them to
+    /// `target`, sampled at the press (required for the Flatten tool), or
+    /// smooths them with kernel [`crate::sculpt::SMOOTH_KERNEL`].
     fn begin_sculpt_stroke(
         &mut self,
         inspector: &Inspector<'_>,
