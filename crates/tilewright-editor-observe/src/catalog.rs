@@ -101,17 +101,7 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
             "terrain_palette",
             terrain,
             MAXIMUM_TERRAIN_CHOICES,
-            |(grid, value)| {
-                let row = Map::new().text("grid", grid).text("value", value);
-                // Only a value that is a terrain has the members, so the
-                // report of a world without transitions is unchanged.
-                match terrain_name(world, grid, value) {
-                    TerrainName::Terrain(id) => row.text("terrain", id),
-                    TerrainName::Variant(id) => row.text("terrain", id).with("variant", true),
-                    TerrainName::Unnamed | TerrainName::Ungoverned => row,
-                }
-                .into()
-            },
+            |(grid, value)| terrain_choice(world, grid, value),
         )
         .paged(
             pager,
@@ -138,6 +128,20 @@ pub fn report_paged(observed: &Observed, filter: Option<&str>, pager: &dyn Pager
         ),
         None => report,
     }
+}
+
+/// A `terrain_palette` entry: its grid and value, and, for a value in a
+/// terrain of the world's transitions, `terrain` and, for a variant,
+/// `variant`. Only such a value has the members, so the report of a world
+/// without transitions is unchanged.
+fn terrain_choice(world: &tilewright_source::World, grid: &str, value: &str) -> Node {
+    let row = Map::new().text("grid", grid).text("value", value);
+    match terrain_name(world, grid, value) {
+        TerrainName::Terrain(id) => row.text("terrain", id),
+        TerrainName::Variant(id) => row.text("terrain", id).with("variant", true),
+        TerrainName::Unnamed | TerrainName::Ungoverned => row,
+    }
+    .into()
 }
 
 /// `palettes`, the catalog's `editing.palettes` kept by name, after the
