@@ -457,9 +457,10 @@ Terrain mode's fourth rule, **Road** ("Rule: Road  F"), draws a road by its
 points: each click on a tile of the view adds a point, and the road is the
 brush stamped along the straight cell line from each point to the next,
 exactly as a drag stamps between its pointer samples (the same code, so a
-drag pressed on the first point and moved through the others in the same
-order covers the same cells; the line rule depends on direction, so the
-order of the clicks decides which cells). The width and shape are the
+drag whose pointer samples land on exactly these tiles, in this order,
+covers the same cells; a drag by hand also samples the tiles in between,
+and may cover others. The line rule depends on direction, so the order of
+the clicks decides which cells). The width and shape are the
 brush's (`[`, `]` and `B`; odd widths 1 to 17, square or disc; the disc
 keeps a diagonal road as wide as a straight one); the corridor is clipped
 to the view and capped at 4,096 cells, as a stroke is. The road lays the
@@ -478,20 +479,30 @@ Keys while a road is drawn, before the global keys:
   cancelled and the mode stays.
 - `[`, `]` and `B` change the corridor, and the preview follows; H, O, pans
   and zooms keep the points, which are tiles, not pixels.
-- F (another rule), a mode key or button (T included), and a terrain or
-  palette of another grid end the road, and the status line says so. A
-  terrain or palette of the same grid keeps it.
-- Z, Y, R, Delete and, with a proposal open, G are refused until the road
-  is finished or dropped, so nothing else is prepared while it is drawn.
+- F (another rule), a key or button of another mode, and a terrain or
+  palette of another grid end the road, and the status line says so ("Road
+  dropped: the rule changed; nothing was prepared.", and likewise for the
+  mode and the grid; Esc gives "Road dropped; nothing was prepared."). T or
+  the Terrain button in Terrain mode, and a terrain or palette of the same
+  grid, keep it.
+- Every other control that would prepare an edit or open a draft or a pick
+  step is refused with "Finish the road with Enter or drop it with Esc
+  first." and laid out disabled: Undo, Redo, Delete, the inspector's
+  position, field and portal controls of an object selected before, and the
+  proposal's controls; so are the keys Z, Y, R, Delete and, with a proposal
+  open, G. So nothing else is prepared while a road is drawn.
 
 A road needs two points: with one, Enter prepares nothing and the road
 stays. A click on the last point adds none. A click that hits no tile of
 the view adds nothing and says so; it never picks a nearby tile. The road
-does not select anything. While a change is pending or editing is paused a
-click adds no point, refused in the words a brush press gets, and Enter
-prepares nothing; Esc and Backspace still work. Keys typed into an open
-text draft go to the draft, never to the road, and a road never takes text
-input. With neither a terrain nor a palette chosen a click is refused as a
+does not select anything. While a change is pending a click adds no point,
+refused in the words a brush press gets. While editing is paused clicks,
+Enter and Backspace are refused in the pause's words and the road's marks
+are not drawn; Esc still drops it. A road and a text draft never exist
+together: the first road point ends an open draft, and no draft opens while
+a road is drawn, so a road never takes text input. An open portal pick
+step takes the next tile click, as it always does, so no road begins until
+it is ended (Esc ends it first). With neither a terrain nor a palette chosen a click is refused as a
 brush press is. A window losing focus keeps the road.
 
 While a road is drawn its points are marked with ringed amber centre marks
@@ -1547,7 +1558,8 @@ from the same seeded source as the placements' uids, so the drawn values
 are the same on every run. It then draws a road: with sand, the Road rule
 and a one-cell brush it clicks (0,1), (3,1) and (3,5) (`road-preview`,
 whose JSON has a `road` member with the points, the brush, the covered and
-changed cells), presses Enter (`road`, pending) and accepts (`road-built`);
+changed cells, or, while editing is paused, `refused` with the pause's
+words in place of the changed cells), presses Enter (`road`, pending) and accepts (`road-built`);
 the rule and the brush are restored. The sample grants no height range, so the
 demonstration does not sculpt ([Sculpt mode](#sculpt-mode)). It is a
 deterministic scripted demonstration,
