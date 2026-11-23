@@ -265,18 +265,47 @@ pub const SCULPT_MARK_DARK: [f32; 4] = BADGE_DARK;
 /// A sculpt mark is its cell's bounds scaled by this much about their
 /// centre.
 pub const SCULPT_MARK_SCALE: f32 = 0.5;
-/// Width of each line of the ring, in scene pixels.
+/// Width of each line of the ring, in scene pixels, at most: a line is
+/// never wider than a quarter of the mark's nearest-edge distance, so the
+/// ring stays inside its own tile at any zoom ([`sculpt_ring`]).
 pub const SCULPT_RING: f32 = 1.5;
+/// A mark whose smaller half-extent is below this many scene pixels gets no
+/// ring: at the smallest zooms the magenta mark alone shows.
+pub const SCULPT_RING_SMALLEST_MARK: f32 = 3.0;
+
+/// The width of each ring line of a mark with half-extents `a` and `b` in
+/// the shape `shape`: [`SCULPT_RING`], or a quarter of the mark's
+/// nearest-edge distance when that is less; `None` (no ring) for a mark
+/// smaller than [`SCULPT_RING_SMALLEST_MARK`].
+#[must_use]
+pub fn sculpt_ring(a: f32, b: f32, shape: CellShape) -> Option<f32> {
+    if a.min(b) < SCULPT_RING_SMALLEST_MARK {
+        return None;
+    }
+    Some(SCULPT_RING.min(nearest_edge(a, b, shape) / 4.0))
+}
+
+/// The distance from the centre of a shape with half-extents `a` and `b`
+/// to its nearest edge, measured perpendicular to the edge.
+fn nearest_edge(a: f32, b: f32, shape: CellShape) -> f32 {
+    match shape {
+        CellShape::Square => a.min(b),
+        CellShape::Diamond => a * b / a.hypot(b),
+    }
+}
 
 /// The live preview of a sculpt stroke: on every tile of `cells`, three
 /// flat quads made from the union bounds of the tile's exact cell quads
 /// (however many parts bent ground splits it into): the dark ring, the
 /// light ring, then the [`SCULPT_MARK`]. Each is the tile's cell art on
 /// those bounds scaled by [`SCULPT_MARK_SCALE`] about their centre, the
-/// rings grown by twice [`SCULPT_RING`] and by it. They take the badges'
-/// place after the last World quad, above every tile and object, so no
-/// object, nearer tile or later part of the same tile covers the ring; they
-/// draw in that order, the mark last. Unpickable; they need no cell slots.
+/// rings grown by twice and once the line width [`sculpt_ring`] gives, so
+/// each ring line shows that wide and the ring stays inside the tile; a
+/// mark too small for a ring is drawn alone. They take the badges' place
+/// after the last World quad, above every tile and object, so no object,
+/// nearer tile or later part of the same tile covers the ring; they draw in
+/// that order, the mark last (pass them before the badges to keep badges
+/// on top). Unpickable; they need no cell slots.
 pub fn sculpt_overlay(
     prepared: &PreparedPreview,
     cells: &BTreeSet<[i64; 2]>,
@@ -296,10 +325,13 @@ pub fn sculpt_overlay(
         let Some(mark) = flat_mark(&parts, depth, painter_order) else {
             continue;
         };
-        for (width, color) in [
-            (2.0 * SCULPT_RING, SCULPT_MARK_DARK),
-            (SCULPT_RING, SCULPT_MARK_LIGHT),
-        ] {
+        let [left, top] = mark.positions[0];
+        let [right, bottom] = mark.positions[2];
+        let rings = sculpt_ring((right - left) / 2.0, (bottom - top) / 2.0, shape)
+            .map_or_else(Vec::new, |line| {
+                vec![(2.0 * line, SCULPT_MARK_DARK), (line, SCULPT_MARK_LIGHT)]
+            });
+        for (width, color) in rings {
             marks.extend(
                 grow(&[mark], width, shape)
                     .into_iter()
@@ -520,11 +552,7 @@ fn grow(quads: &[Quad], width: f32, shape: CellShape) -> Vec<Quad> {
         return Vec::new();
     };
     let centre = [f32::midpoint(left, right), f32::midpoint(top, bottom)];
-    let (a, b) = ((right - left) / 2.0, (bottom - top) / 2.0);
-    let nearest = match shape {
-        CellShape::Square => a.min(b),
-        CellShape::Diamond => a * b / a.hypot(b),
-    };
+    let nearest = nearest_edge((right - left) / 2.0, (bottom - top) / 2.0, shape);
     if nearest.is_nan() || nearest <= f32::EPSILON {
         return quads.to_vec();
     }

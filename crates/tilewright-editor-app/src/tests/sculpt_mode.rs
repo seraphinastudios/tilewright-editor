@@ -965,15 +965,47 @@ fn a_large_stroke_on_bent_ground_keeps_the_tint_zones_and_marks() {
     let presentation = crate::prototype::workspace_presentation(&mut app).unwrap();
     assert!(!app.preview_omitted, "overlays dropped at {covered} cells");
     let marks = marks(&mut app);
-    assert_eq!(marks.len(), 3 * engine(&app).len());
+    // One mark per changed tile; at this zoom most marks are too small for
+    // a ring.
+    let changed = engine(&app).len();
+    assert_eq!(
+        marks
+            .iter()
+            .filter(|quad| quad.color == SCULPT_MARK)
+            .count(),
+        changed
+    );
+    assert!(marks.len() < 3 * changed);
     assert!(!crate::prototype::height_overlay(&app).is_empty());
     assert!(!crate::prototype::zone_overlay(&app).is_empty());
     assert!(!app.status_label().contains("Too many cells"));
-    // Past the budget everything the person shows is left out, and the
-    // sculpt status says so.
+    // Past the budget the tints give way first: the marks and badges stay,
+    // and the status line says what is hidden.
+    let count = |presentation: &crate::workspace_render::Presentation, colour: [f32; 4]| {
+        presentation
+            .scene
+            .quads()
+            .iter()
+            .filter(|quad| quad.color == colour)
+            .count()
+    };
     app.frame_limits.maximum_quads = presentation.scene.quads().len() - 1;
-    crate::prototype::workspace_presentation(&mut app).unwrap();
-    assert!(app.preview_omitted);
+    let kept = crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert!(app.tints_omitted && !app.preview_omitted);
+    assert_eq!(count(&kept, SCULPT_MARK), changed);
+    assert!(kept.scene.quads().len() < presentation.scene.quads().len() - 1000);
+    let status = app.status_label();
+    assert!(
+        status.starts_with("Raising ")
+            && status
+                .ends_with("; release to review. Height tint and zones hidden: too many cells."),
+        "{status}"
+    );
+    // When even the marks do not fit, everything is left out.
+    app.frame_limits.maximum_quads = kept.scene.quads().len() - 1;
+    let bare = crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert!(app.preview_omitted && !app.tints_omitted);
+    assert_eq!(count(&bare, SCULPT_MARK), 0);
     let status = app.status_label();
     assert!(
         status.starts_with("Raising ")
@@ -982,4 +1014,182 @@ fn a_large_stroke_on_bent_ground_keeps_the_tint_zones_and_marks() {
     );
     app.frame_limits = tilewright_scene::SceneLimits::default();
     route(&mut app, &key(Keycode::Escape)).unwrap();
+}
+
+#[test]
+fn rings_keep_their_width_and_stay_inside_their_tile_at_every_zoom() {
+    use crate::workspace_render::{CellShape, SCULPT_RING, sculpt_ring};
+    type Fixture = (&'static str, fn(&Path), CellShape);
+    let fixtures: [Fixture; 3] = [
+        ("top-down 32", |_| {}, CellShape::Square),
+        ("isometric 32x16", isometric, CellShape::Diamond),
+        ("isometric 64x32", wide_isometric, CellShape::Diamond),
+    ];
+    let bounds = |quads: &[&tilewright_scene::Quad]| {
+        let points = || quads.iter().flat_map(|quad| quad.positions);
+        [
+            points().map(|p| p[0]).fold(f32::MAX, f32::min),
+            points().map(|p| p[1]).fold(f32::MAX, f32::min),
+            points().map(|p| p[0]).fold(f32::MIN, f32::max),
+            points().map(|p| p[1]).fold(f32::MIN, f32::max),
+        ]
+    };
+    for (name, projection, shape) in fixtures {
+        for zoom in [0.25_f32, 1.0, 8.0] {
+            let (_temporary, mut app) = sculpt_application(|root| {
+                heights(root, -64, 64, |_, _| 0);
+                projection(root);
+            });
+            app.view.camera.zoom = zoom;
+            app.rebuild().unwrap();
+            acknowledge_ui(&mut app);
+            drag(&mut app, [4, 3], &[]);
+            let overlay = marks(&mut app);
+            let tiles = marked(&mut app);
+            assert!(!tiles.is_empty(), "{name} at {zoom}");
+            let (mut ringed, mut bare) = (0, 0);
+            for tile in tiles {
+                let of_tile = |quad: &&tilewright_scene::Quad| {
+                    matches!(
+                        app.prepared.cell_picks.get(&quad.semantic_id),
+                        Some(SelectionKey::Cell { x, y, .. }) if [*x, *y] == tile
+                    )
+                };
+                let quads: Vec<&tilewright_scene::Quad> = overlay.iter().filter(of_tile).collect();
+                let cell: Vec<&tilewright_scene::Quad> = app
+                    .prepared
+                    .cell_scene
+                    .quads()
+                    .iter()
+                    .filter(of_tile)
+                    .collect();
+                let [cl, ct, cr, cb] = bounds(&cell);
+                let mark = quads.iter().find(|quad| quad.color == SCULPT_MARK).unwrap();
+                let [ml, mt, mr, mb] = bounds(&[*mark]);
+                let half = [(mr - ml) / 2.0, (mb - mt) / 2.0];
+                let Some(line) = sculpt_ring(half[0], half[1], shape) else {
+                    assert_eq!(quads.len(), 1, "{name} at {zoom}: {tile:?}");
+                    assert!(half[0].min(half[1]) < 3.0);
+                    bare += 1;
+                    continue;
+                };
+                ringed += 1;
+                assert_eq!(quads.len(), 3, "{name} at {zoom}: {tile:?}");
+                assert!(line > 0.0 && line <= SCULPT_RING);
+                let nearest = match shape {
+                    CellShape::Square => half[0].min(half[1]),
+                    CellShape::Diamond => half[0] * half[1] / half[0].hypot(half[1]),
+                };
+                // Each ring is the mark grown by its width across every edge.
+                for (quad, width) in [(quads[0], 2.0 * line), (quads[1], line)] {
+                    let [left, top, right, bottom] = bounds(&[quad]);
+                    let grown = ((right - left) / 2.0 / half[0] - 1.0) * nearest;
+                    let _ = (top, bottom);
+                    assert!(
+                        (grown - width).abs() < 0.01,
+                        "{name} at {zoom}: {grown} {width}"
+                    );
+                    // Inside the tile.
+                    let [l, t, r, w] = bounds(&[quad]);
+                    assert!(
+                        l > cl && r < cr && t > ct && w < cb,
+                        "{name} at {zoom}: {tile:?}"
+                    );
+                }
+            }
+            match (name, zoom) {
+                // Too small for rings at the smallest zoom.
+                (_, 0.25) => assert!(ringed == 0 && bare > 0, "{name}"),
+                // Large marks keep the full width.
+                ("top-down 32", 1.0 | 8.0) | ("isometric 64x32", 8.0) => {
+                    assert!(bare == 0 && ringed > 0, "{name} at {zoom}");
+                    let quads: Vec<_> = overlay.iter().take(3).collect();
+                    let [ml, _, mr, _] = bounds(&[quads[2]]);
+                    let [ll, _, lr, _] = bounds(&[quads[1]]);
+                    if shape == CellShape::Square {
+                        assert!(((lr - ll) - (mr - ml) - 2.0 * 1.5).abs() < 0.01);
+                    }
+                }
+                _ => assert!(ringed > 0, "{name} at {zoom}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn badges_draw_over_the_marks() {
+    let (_temporary, mut app) = sculpt_application(|root| heights(root, -64, 64, |_, _| 0));
+    route(&mut app, &key(Keycode::O)).unwrap();
+    app.tools.set_brush(Brush::default());
+    acknowledge_ui(&mut app);
+    let badges = crate::prototype::badge_overlay(&app);
+    assert!(!badges.is_empty());
+    drag(&mut app, [7, 3], &[]);
+    let presentation = crate::prototype::workspace_presentation(&mut app).unwrap();
+    let quads = presentation.scene.quads();
+    let last_mark = quads
+        .iter()
+        .rposition(|quad| quad.color == SCULPT_MARK)
+        .unwrap();
+    // Everything after the last mark is a badge, and every badge is there.
+    let after: Vec<_> = quads[last_mark + 1..]
+        .iter()
+        .filter(|quad| quad.layer == tilewright_scene::Layer::World)
+        .collect();
+    assert_eq!(after.len(), badges.len());
+    for (quad, badge) in after.iter().zip(&badges) {
+        assert_eq!(quad.positions, badge.positions);
+        assert_eq!(quad.color, badge.color);
+    }
+}
+
+#[test]
+fn marks_draw_without_cell_slots() {
+    let (_temporary, mut app) = sculpt_application(|root| heights(root, -64, 64, |x, _| x % 8));
+    drag(&mut app, [3, 3], &[]);
+    assert!(app.prepared.withhold_cell_slots());
+    let presentation = crate::prototype::workspace_presentation(&mut app).unwrap();
+    assert_eq!(marks(&mut app).len(), 27);
+    assert_eq!(
+        presentation
+            .scene
+            .quads()
+            .iter()
+            .filter(|quad| quad.color == SCULPT_MARK)
+            .count(),
+        9
+    );
+    assert!(crate::prototype::height_overlay(&app).is_empty());
+    assert_eq!(
+        app.status_label(),
+        "Raising 9 cells by 1, 9 to change; release to review."
+    );
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    app.notice = None;
+    assert_eq!(app.status_label(), "Height tint unavailable for this view.");
+    route(&mut app, &key(Keycode::O)).unwrap();
+    assert_eq!(
+        app.status_label(),
+        "Height tint and zone overlay unavailable for this view."
+    );
+}
+
+#[test]
+fn a_refused_stroke_says_nothing_about_the_budget() {
+    let (_temporary, mut app) = sculpt_application(ramped);
+    app.tools.set_brush(Brush::default());
+    route(&mut app, &key(Keycode::F)).unwrap();
+    acknowledge_ui(&mut app);
+    drag(&mut app, [5, 0], &[[6, 0]]);
+    // Whatever the last frame left out, a refused stroke's status line is
+    // the engine's refusal alone.
+    for (omitted, tints) in [(true, false), (false, true)] {
+        (app.preview_omitted, app.tints_omitted) = (omitted, tints);
+        let status = app.status_label();
+        assert!(
+            status.starts_with("Lowering 2 cells by 1 refused: "),
+            "{status}"
+        );
+        assert!(status.ends_with("at least 2"), "{status}");
+    }
 }

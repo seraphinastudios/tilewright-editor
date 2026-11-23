@@ -562,15 +562,24 @@ carries a mark: a magenta copy of the cell's flat shape at half its size
 about its centre, ringed by a light line inside a dark navy one, so the
 cell's own height band still shows around it. The ring is at least 40 CIE L*
 lighter or darker than every height band (tested), so the mark separates
-from the band by lightness, not by hue alone. No height band (which fills
-the whole tile, violet to pale yellow), zone tint, proposal highlight
-(darker, the whole tile) or badge (in a corner) looks like it. Marks draw
-where badges do, above all World content, so no object, nearer tile or tall
-art hides one; a mark can cover the middle of an object on its tile while
-the stroke runs. Each marked tile costs three quads however bent its ground,
-so a stroke over most of a large bent view keeps the tint, the zones and the
-marks; when the overlays would still pass the scene limits they are left
-out together and the status line ends "Too many cells to preview." The marked cells are the engine's own answer
+from the band by lightness, not by hue alone. Each ring line is 1.5 pixels,
+or a quarter of the mark's own size when that is less, so the ring stays
+inside its tile at every zoom; at the smallest zooms a mark too small for a
+ring shows as the magenta mark alone. No height band (which fills the whole
+tile, violet to pale yellow), zone tint, proposal highlight (darker, the
+whole tile) or badge (in a corner) looks like it. Marks draw where badges
+do, above all World content, with the badges over them: no object, nearer
+tile or tall art hides a mark, and while the stroke runs a mark can cover
+part of an object on its tile, or of an object or nearer tile in front of
+it. A mark sits on its own tile's ground, so read it by the ground around
+it, not by what it covers. Cells outside the window are counted in the
+status line but not marked. Each marked tile costs three quads however bent
+its ground. When the overlays would pass the scene limits, the height tint
+and zone tints are left out first and the marks and badges kept; the status
+line then ends "Height tint and zones hidden: too many cells." (or "Height
+tint hidden: ..." without zones). Only when the marks still do not fit is
+everything left out, with "Too many cells to preview."
+The marked cells are the engine's own answer
 (`tilewright_editor_ui::sculpt::plan` on the committed World), the cells
 Accept writes. The status line says what the release would do: "Raising 37
 cells by 8, 35 to change, 2 at or above the top; release to review." Cells

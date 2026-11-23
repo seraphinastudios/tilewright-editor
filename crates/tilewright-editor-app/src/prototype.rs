@@ -440,6 +440,10 @@ struct Application {
     /// Whether the last composed frame left out the open proposal's map
     /// highlight to fit the scene limits (said in the Proposal block).
     highlight_omitted: bool,
+    /// Whether the last composed frame left out the height tint and zone
+    /// tints to keep a sculpt stroke's marks (and the badges) within the
+    /// scene limits.
+    tints_omitted: bool,
     /// The zone of every in-view tile, computed once per redraw for the
     /// legend and the overlay, keyed by the World source revision and the
     /// frame it was computed for.
@@ -460,6 +464,7 @@ struct Application {
 /// This command is intentionally a deployment seam, not arbitrary recovery-path
 /// selection. The trusted provision helper passes fresh separate retained Linux
 /// directory descriptors, whose identity/separation receipt it retains.
+#[allow(clippy::too_many_lines)]
 pub fn run(arguments: &[String]) -> Result<()> {
     if !cfg!(target_os = "linux") {
         return Err(
@@ -535,6 +540,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         prepared_scenes: 1,
         preview_omitted: false,
         highlight_omitted: false,
+        tints_omitted: false,
         zone_view: None,
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
@@ -3541,10 +3547,17 @@ impl Application {
                     ""
                 },
                 // The marks need no cell slots.
-                if preview.plan.is_ok() && self.preview_omitted {
-                    " Too many cells to preview."
-                } else {
-                    ""
+                match (
+                    preview.plan.is_ok(),
+                    self.tints_omitted,
+                    self.preview_omitted
+                ) {
+                    (true, true, _) if self.tools.zones_visible() => {
+                        " Height tint and zones hidden: too many cells."
+                    }
+                    (true, true, _) => " Height tint hidden: too many cells.",
+                    (true, false, true) => " Too many cells to preview.",
+                    _ => "",
                 }
             );
         }
@@ -3613,6 +3626,10 @@ impl Application {
                 || self.tools.stroke().is_some()
                 || self.fill_changes().is_some();
             return match (self.tools.heights_visible(), others) {
+                // Sculpt marks need no slots: only the tints are missing.
+                (true, true) if self.tools.mode() == ToolMode::Sculpt => {
+                    "Height tint and zone overlay unavailable for this view."
+                }
                 (true, true) => HEIGHTS_AND_OVERLAY_UNAVAILABLE,
                 (true, false) => HEIGHTS_UNAVAILABLE,
                 _ => OVERLAY_UNAVAILABLE,
@@ -6331,45 +6348,95 @@ fn compose_highlight_first(
 }
 
 fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {
-    // Height tints, zone tints, the proposal highlight and the stroke
-    // preview take the World's cell slots: each copy draws right after its
-    // tile's terrain, and copies sharing a slot draw in the order passed
-    // here, so a zone tint draws over a height tint, the highlight over
-    // both and the preview, passed last, over all of them. Badges take no cell slot: they sit in their own slot after the
-    // last World quad, above every tile and object, whatever order they are
-    // passed in.
+    // Height tints, zone tints, the proposal highlight and a terrain, zone
+    // or scatter stroke preview take the World's cell slots: each copy
+    // draws right after its tile's terrain, and copies sharing a slot draw
+    // in the order passed here, so a zone tint draws over a height tint,
+    // the highlight over both and that preview, passed last, over all of
+    // them. Badges and sculpt marks share one slot after the last World
+    // quad, above every tile and object; the marks are passed first, so
+    // the badges draw over them.
+    let sculpt = matches!(
+        app.tools
+            .stroke()
+            .map(tilewright_editor_ui::brush::Stroke::target),
+        Some(StrokeTarget::Heights { .. })
+    );
+    let stroke = stroke_overlay(app);
+    let (marks, brush) = if sculpt {
+        (stroke, Vec::new())
+    } else {
+        (Vec::new(), stroke)
+    };
+    // Marks and badges alone: what a sculpt stroke keeps when the tints
+    // would not fit with them.
+    let mut essential = marks;
+    essential.extend(badge_overlay(app));
     let mut person = height_overlay(app);
     person.extend(zone_overlay(app));
-    person.extend(badge_overlay(app));
-    let stroke = stroke_overlay(app);
+    person.extend(essential.iter().copied());
     let mut overlay = person.clone();
     overlay.extend(proposal_overlay(app));
-    overlay.extend(stroke.iter().copied());
-    person.extend(stroke);
-    let compose = |app: &mut Application| {
-        compose_highlight_first(
-            &mut app.text,
-            &app.ui,
-            &app.prepared,
-            &overlay,
-            &person,
-            app.frame_limits,
-        )
-        .map_err(|error| error.to_string())
+    overlay.extend(brush.iter().copied());
+    person.extend(brush);
+    let fallback = sculpt && essential.len() < person.len();
+    // Three levels, each showing less: everything, then (for a sculpt
+    // stroke) the marks and badges without the tints, then no overlay.
+    // A recompose after the interface changed starts at the level reached,
+    // so a status line that changes length cannot flip it back.
+    let compose = |app: &mut Application, floor: u8| -> Result<(_, bool, bool, bool, u8)> {
+        let limits = app.frame_limits;
+        let (text, ui, prepared) = (&mut app.text, &app.ui, &app.prepared);
+        let error = |error: crate::workspace_render::CompositionError| error.to_string();
+        if floor == 0 {
+            let (presentation, omitted, highlight) =
+                compose_highlight_first(text, ui, prepared, &overlay, &person, limits)
+                    .map_err(error)?;
+            if !omitted || !fallback {
+                return Ok((
+                    presentation,
+                    omitted,
+                    highlight,
+                    false,
+                    2 * u8::from(omitted),
+                ));
+            }
+        }
+        if floor <= 1 && fallback {
+            let (kept, omitted) =
+                compose_with_preview(text, ui, prepared, &essential, limits).map_err(error)?;
+            if !omitted {
+                return Ok((kept, false, true, true, 1));
+            }
+        }
+        let (bare, _) = compose_with_preview(text, ui, prepared, &[], limits).map_err(error)?;
+        Ok((bare, true, overlay.len() != person.len(), false, 2))
     };
-    let (mut presentation, mut omitted, mut highlight) = compose(app)?;
-    if app.unsupported_runs != presentation.unsupported_runs
-        || app.preview_omitted != omitted
-        || app.highlight_omitted != highlight
-    {
+    let (mut presentation, mut omitted, mut highlight, mut tints, mut level) = compose(app, 0)?;
+    for _ in 0..2 {
+        if app.unsupported_runs == presentation.unsupported_runs
+            && (
+                app.preview_omitted,
+                app.highlight_omitted,
+                app.tints_omitted,
+            ) == (omitted, highlight, tints)
+        {
+            break;
+        }
         app.unsupported_runs = presentation.unsupported_runs;
-        app.preview_omitted = omitted;
-        app.highlight_omitted = highlight;
+        (
+            app.preview_omitted,
+            app.highlight_omitted,
+            app.tints_omitted,
+        ) = (omitted, highlight, tints);
         app.refresh_ui();
-        (presentation, omitted, highlight) = compose(app)?;
-        app.preview_omitted = omitted;
-        app.highlight_omitted = highlight;
+        (presentation, omitted, highlight, tints, level) = compose(app, level)?;
     }
+    (
+        app.preview_omitted,
+        app.highlight_omitted,
+        app.tints_omitted,
+    ) = (omitted, highlight, tints);
     Ok(presentation)
 }
 
