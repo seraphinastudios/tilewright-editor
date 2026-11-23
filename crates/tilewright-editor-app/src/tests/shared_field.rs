@@ -7,7 +7,9 @@
 //! own field.
 use super::{acknowledge_ui, application_with_source_using, input_key, modified_input_key};
 use crate::prototype::Application;
-use crate::shared_field::{RESERVED_RESOURCES, SHARED_ATLAS_RESOURCE, SHARED_SOLID_RESOURCE};
+use crate::shared_field::{
+    RESERVED_RESOURCES, SHARED_ATLAS_RESOURCE, SHARED_FIRST_SEMANTIC, SHARED_SOLID_RESOURCE,
+};
 use crate::workspace_ui::{Control, WorkspaceUi};
 use sdl3::{
     event::Event,
@@ -84,14 +86,33 @@ fn the_switch_is_off_by_default_and_on_names_the_field_in_every_frame() {
         };
         assert_eq!(uses(SHARED_ATLAS_RESOURCE), shared);
         assert_eq!(uses(SHARED_SOLID_RESOURCE), shared);
-        assert!(presentation.scene.quads().iter().all(|quad| {
-            [SHARED_ATLAS_RESOURCE, SHARED_SOLID_RESOURCE].contains(&quad.resource_id.0)
-                || quad.resource_id.0 < RESERVED_RESOURCES
-                || quad.resource_id.0 == u64::MAX
-        }));
+        let reserved = [SHARED_ATLAS_RESOURCE, SHARED_SOLID_RESOURCE];
+        for quad in presentation.scene.quads() {
+            let own = quad.semantic_id.0 >= SHARED_FIRST_SEMANTIC;
+            assert_eq!(reserved.contains(&quad.resource_id.0), own, "{quad:?}");
+            assert!(
+                own || quad.resource_id.0 < RESERVED_RESOURCES || quad.resource_id.0 == u64::MAX
+            );
+        }
         let geometry = app.displayed_text.as_ref().unwrap();
         assert_eq!(geometry.shared.is_some(), shared);
         assert_eq!(geometry.snapshot.committed, "Trail marker");
+    }
+}
+
+#[test]
+fn no_resource_id_the_editor_derives_reaches_the_reserved_ones() {
+    // World resource IDs are catalog positions plus one; a catalog holds
+    // at most this many values, so at most this many resources. The
+    // editor's own UI textures take the largest ID plus one and two.
+    let catalog =
+        u64::try_from(tilewright_editor_preview::PreviewLimits::default().maximum_catalog_values)
+            .unwrap();
+    let derived = catalog + 2;
+    for reserved in [SHARED_SOLID_RESOURCE, SHARED_ATLAS_RESOURCE] {
+        assert!(derived < RESERVED_RESOURCES && RESERVED_RESOURCES <= reserved);
+        // Clear of the cell reference art's sentinel.
+        assert_ne!(reserved, u64::MAX);
     }
 }
 
