@@ -2,9 +2,10 @@
 
 All implementation, tests, documentation, and synthetic fixtures in this
 repository are MIT work by Seraphina Studios. No outside implementation, tests,
-configuration, or fixtures are copied or adapted; the one port of Seraphina
-Studios' own MIT code from a sibling repository is recorded under
-[MCP server](#mcp-server). Dependency font data retains its own license as
+configuration, or fixtures are copied or adapted. Two adaptations of Seraphina
+Studios' own MIT code from sibling projects are recorded: the MCP port under
+[MCP server](#mcp-server), and the own text field's caret stepping under
+[Shared UI field](#shared-ui-field). Dependency font data retains its own license as
 recorded below.
 
 Independent implementation remains the default. Before any outside source is
@@ -99,10 +100,23 @@ match the crates.io index and the `SHA256SUMS` of the
 [v0.2.0 release](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.2.0)
 (the source release that carries crate version 0.1.1), source revision
 `9a7e2174ec8a25369bf8ffcb615a8a58a3f605ea`. They are
-dependencies, not reused source: nothing of them is copied into this
-repository. Their text editing was itself adapted from this repository's
+dependencies, not reused source: no file of them is copied into this
+repository; the one adaptation is recorded below. Their text editing was itself adapted from this repository's
 `text_input.rs` (their own `PROVENANCE.md` records it). They pin renderer
 0.7.2, the editor's own, so the lock holds one renderer.
+
+- **Adapted from tilewright-ui-render 0.1.1.** The editor's own text field
+  steps its caret with the rule of `tilewright-ui-render` 0.1.1 (archive and
+  source revision above): `src/lib.rs` `step_visual`, `same_position` and the
+  constants `SAME_CARET_POSITION` (1/64 px) and `MAXIMUM_STEPS` (4), into
+  `crates/tilewright-editor-app/src/workspace_render.rs` `step_caret`,
+  `SAME_CARET_POSITION` and `MAXIMUM_CARET_STEPS`. Transformation: the same
+  loop and conditions, on the editor's own `TextInputSnapshot` and
+  `UnicodeLayout`; it returns the display cursor, which `visual_move` maps to
+  committed text; it maps to committed text inside the loop only after a
+  visible step; no composition check, because `visual_move` is never reached
+  while composing; doc comments paraphrased. Same owner and licence: no
+  notice beyond this record is needed.
 
 ## Shared renderer UI font
 
