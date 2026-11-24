@@ -151,6 +151,7 @@ fn f_and_the_rule_rows_choose_the_brush_fill_or_replace() {
     for (expected, name) in [
         (TerrainRule::Fill, "Fill"),
         (TerrainRule::Replace, "Replace"),
+        (TerrainRule::Road, "Road"),
         (TerrainRule::Brush, "Brush"),
     ] {
         route(&mut app, &key(Keycode::F)).unwrap();
@@ -162,8 +163,9 @@ fn f_and_the_rule_rows_choose_the_brush_fill_or_replace() {
     acknowledge_ui(&mut app);
     route(&mut app, &button(true, header)).unwrap();
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Fill);
-    route(&mut app, &key(Keycode::F)).unwrap();
-    route(&mut app, &key(Keycode::F)).unwrap();
+    for _ in 0..3 {
+        route(&mut app, &key(Keycode::F)).unwrap();
+    }
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Brush);
     // A rule row, pressed with the pointer, chooses its rule and is marked.
     app.refresh_ui();
@@ -216,6 +218,11 @@ fn f_and_the_rule_rows_choose_the_brush_fill_or_replace() {
     route(&mut app, &key(Keycode::F)).unwrap();
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Replace);
     app.control(Control::Terrain).unwrap();
+    route(&mut app, &key(Keycode::F)).unwrap();
+    // The Road rule uses the brush: its width and shape are the road's.
+    assert_eq!(app.tools.terrain_rule(), TerrainRule::Road);
+    app.refresh_ui();
+    assert!(enabled(&app, &Control::BrushSize(1)));
     route(&mut app, &key(Keycode::F)).unwrap();
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Brush);
     app.refresh_ui();
@@ -725,8 +732,9 @@ fn a_mode_or_rule_change_forgets_the_hover_until_the_pointer_moves() {
     route(&mut app, &hover(sand)).unwrap();
     // Brush, move, F: nothing until the pointer moves; Brush releases the
     // mask.
-    route(&mut app, &key(Keycode::F)).unwrap();
-    route(&mut app, &key(Keycode::F)).unwrap();
+    for _ in 0..3 {
+        route(&mut app, &key(Keycode::F)).unwrap();
+    }
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Brush);
     route(&mut app, &hover(grass)).unwrap();
     assert!(
