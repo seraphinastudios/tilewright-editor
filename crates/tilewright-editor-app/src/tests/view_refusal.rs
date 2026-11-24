@@ -394,3 +394,17 @@ fn ending_a_pause_by_key_or_by_button_reads_the_same() {
         assert_eq!(app.status_label(), VIEW_RESUMED, "by key: {by_key}");
     }
 }
+
+#[test]
+fn zooming_in_stops_at_the_largest_zoom_lint_judges_heights_at() {
+    // The flat neutral sample draws at every zoom, so nothing is refused.
+    let (_temporary, mut app) = zone_application(|_| {});
+    for _ in 0..20 {
+        route(&mut app, &key(Keycode::Equals)).unwrap();
+        assert!(app.view.camera.zoom <= tilewright_editor_preview::LARGEST_ZOOM);
+    }
+    assert_eq!(
+        app.view.camera.zoom,
+        tilewright_editor_preview::LARGEST_ZOOM
+    );
+}

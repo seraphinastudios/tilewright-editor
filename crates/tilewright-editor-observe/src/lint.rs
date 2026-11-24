@@ -138,9 +138,9 @@ fn undrawable_heights(observed: &Observed) -> Option<Finding> {
 fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) -> String {
     let BendLimit {
         largest_difference: largest,
+        zoom,
         width,
         height,
-        diamond: [across, down],
         ..
     } = *limit;
     let art = if limit.resources.is_empty() {
@@ -148,12 +148,15 @@ fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) ->
     } else {
         format!("{width} x {height} ground art")
     };
+    // Art judged below the largest zoom draws at no zoom above it.
+    #[allow(clippy::float_cmp)]
+    let which = if zoom == LARGEST_ZOOM { "the" } else { "its" };
     let head = format!(
-        "Heights from {} to {} (and 0) can lie {difference} apart, but at zoom {LARGEST_ZOOM} the preview cannot bend {art} on a {across} x {down} diamond over more than {largest}.",
+        "Heights {} to {} (and 0) can differ by {difference}, but at zoom {zoom} ({which} largest) the preview cannot bend {art} over more than {largest}.",
         grant.min, grant.max,
     );
     if largest == 0 {
-        return format!("{head} No height range can be bent there.");
+        return format!("{head} No height range bends there.");
     }
     // An example range as near the grant as it can be: as wide as is safe,
     // with 0 in it.
@@ -165,7 +168,7 @@ fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) ->
         from = to - largest;
     }
     format!(
-        "{head} A range at most {largest} wide with 0 in it, such as {from} to {to}, can be bent at every zoom."
+        "{head} Per tile, {from} to {to} bends at that zoom and below; a whole view can exceed the frame budget."
     )
 }
 
@@ -384,8 +387,9 @@ mod tests {
     #[test]
     fn the_heights_message_is_never_clipped() {
         // The longest numbers a catalog and its art can give.
-        let limit = |resources: Vec<String>, largest| BendLimit {
+        let limit = |resources: Vec<String>, largest, zoom| BendLimit {
             largest_difference: largest,
+            zoom,
             width: 8192,
             height: 8192,
             diamond: [8192, 8192],
@@ -396,14 +400,35 @@ mod tests {
             max: -1023,
         };
         for largest in [0, 1, 1023, 2047] {
-            for resources in [Vec::new(), vec!["art".to_owned()]] {
-                let message = undrawable_message(grant, 2048, &limit(resources, largest));
-                assert!(
-                    message.chars().count() <= MAXIMUM_TEXT_CHARACTERS,
-                    "{}: {message}",
-                    message.chars().count()
-                );
+            // Art is at most 8,192 pixels on a side, so it draws flat from zoom
+            // 8,191 / 8,192 (a few steps below at most).
+            for zoom in [LARGEST_ZOOM, 7.999_023, 0.999_877_9, 0.999_871_9] {
+                for resources in [Vec::new(), vec!["art".to_owned()]] {
+                    let message = undrawable_message(grant, 2048, &limit(resources, largest, zoom));
+                    assert!(
+                        message.chars().count() <= MAXIMUM_TEXT_CHARACTERS,
+                        "{}: {message}",
+                        message.chars().count()
+                    );
+                }
             }
         }
+    }
+
+    #[test]
+    fn a_limit_of_0_offers_no_range() {
+        let limit = BendLimit {
+            largest_difference: 0,
+            zoom: LARGEST_ZOOM,
+            width: 100,
+            height: 300,
+            diamond: [3, 2],
+            resources: vec!["art".to_owned()],
+        };
+        let message = undrawable_message(HeightGrant { min: 0, max: 1 }, 1, &limit);
+        assert_eq!(
+            message,
+            "Heights 0 to 1 (and 0) can differ by 1, but at zoom 8 (the largest) the preview cannot bend 100 x 300 ground art over more than 0. No height range bends there."
+        );
     }
 }

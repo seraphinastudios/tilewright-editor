@@ -12,8 +12,16 @@
 //! preview's stretching ([`preview_stretch`]) and its corner heights, which
 //! are the means of the heights of the tile's 3 × 3 neighbourhood. It does
 //! not depend on where the tile lies, on the window or on what else is in
-//! view, and it grows with the zoom, so the editor's largest zoom
-//! ([`LARGEST_ZOOM`]) is the worst case of every view.
+//! view, and it grows linearly with the zoom, so a verdict at one zoom
+//! holds at every lower zoom.
+//!
+//! Art is judged at the editor's largest zoom ([`LARGEST_ZOOM`]), or, when
+//! it is so large that the renderer cannot draw it there even flat (a side
+//! of more than about 1,023 pixels), at the largest zoom at which it draws
+//! flat: above that zoom no view with the art draws at all, whatever its
+//! heights, and every zoom below is covered. Zooms are treated as
+//! continuous, so this does not depend on which zooms a front end steps
+//! through.
 //!
 //! Within one neighbourhood each quad corner's position is linear in the
 //! nine heights, so a quad's span is the largest of a few linear functions
@@ -26,14 +34,13 @@
 //! `d` finds its end. A pattern whose four corners come out equal (only
 //! the middle tile differs, say) is drawn flat, as at `d = 0`; the mesh it
 //! would otherwise be spans less than that flat quad on any diamond of at
-//! least 3 x 2 pixels, so the bound holds for it too. Every verdict here is the renderer's own `compile` of
-//! one tile at that zoom, so the arithmetic is the preview's, not a copy.
+//! least 3 x 2 pixels, so the bound holds for it too. Every verdict here is
+//! the renderer's own `compile` of one tile, so the arithmetic is the
+//! preview's, not a copy.
 //!
 //! What this does not decide: the scene's quad and raster-sample budgets,
 //! which count the whole view and depend on the window and on how many
-//! tiles are bent, and art the renderer cannot draw at the largest zoom
-//! even flat (an image more than about 1,023 pixels on a side), which no
-//! height range changes.
+//! tiles are bent.
 
 use crate::{PreviewCatalog, PreviewLimits, ReadyResources};
 use std::collections::BTreeMap;
@@ -44,7 +51,8 @@ use tilewright_scene::{Digest256, ResourceId, Sampling, SemanticId};
 use tilewright_source::World;
 
 /// The largest zoom of any editor view: the desktop's zoom stops at 8, and
-/// so does `render --scale`; the MCP server's render stops at 4.
+/// so does `render --scale` (`MAXIMUM_RENDER_SCALE`); the MCP server's
+/// render stops at 4. Tests in those crates hold them to this.
 pub const LARGEST_ZOOM: f32 = 8.0;
 
 /// The stretching every preview uses: mean corners, no cliffs, one pixel
@@ -54,12 +62,17 @@ pub(crate) fn preview_stretch() -> Stretch {
 }
 
 /// The largest difference between neighbouring heights that some of a
-/// catalog's ground art can be bent over at [`LARGEST_ZOOM`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// catalog's ground art can be bent over.
+#[derive(Clone, Debug, PartialEq)]
 pub struct BendLimit {
-    /// Heights that lie at most this far apart can be bent at every zoom;
-    /// a 3 × 3 pattern of heights one more apart cannot be at the largest.
+    /// Heights that lie at most this far apart can be bent, tile by tile,
+    /// at every zoom up to `zoom`; a 3 × 3 pattern of heights one more
+    /// apart cannot be at `zoom`.
     pub largest_difference: u32,
+    /// The zoom the art was judged at: [`LARGEST_ZOOM`], or less for art
+    /// the renderer cannot draw there even flat, which then draws at no
+    /// zoom above this one.
+    pub zoom: f32,
     /// The limiting art's size in pixels.
     pub width: u32,
     pub height: u32,
@@ -72,14 +85,14 @@ pub struct BendLimit {
 }
 
 /// The tightest [`BendLimit`] of the ground art `catalog` can draw, when
-/// some of it cannot be bent over heights `difference` apart at
-/// [`LARGEST_ZOOM`]; `None` when all of it can, and always for top-down
-/// projection, whose ground shifts with its height but never bends.
+/// some of it cannot be bent over heights `difference` apart; `None` when
+/// all of it can, and always for top-down projection, whose ground shifts
+/// with its height but never bends.
 ///
 /// The art is every resource a prototype of the catalog draws with the
 /// `ground` anchor, used in the World or not, and the diamond-sized
-/// reference art of the preview's tile picking. Art the renderer cannot
-/// draw at the largest zoom even flat is left out: no height changes it.
+/// reference art of the preview's tile picking. Only the tightest size is
+/// reported; other art may also fall short of `difference`.
 pub fn bend_limit(
     world: &World,
     catalog: &PreviewCatalog,
@@ -87,7 +100,29 @@ pub fn bend_limit(
     difference: u32,
     limits: PreviewLimits,
 ) -> Option<BendLimit> {
-    let projection = crate::catalog::projection(world);
+    let mut art: BTreeMap<(u32, u32), Vec<String>> = BTreeMap::new();
+    for (resource, anchor) in catalog.prototypes.values() {
+        if *anchor != Anchor::Ground {
+            continue;
+        }
+        if let Some(texture) = resources.textures.get(resource) {
+            let names = art.entry((texture.width, texture.height)).or_default();
+            if !names.contains(resource) {
+                names.push(resource.clone());
+            }
+        }
+    }
+    tightest(crate::catalog::projection(world), art, difference, limits)
+}
+
+/// [`bend_limit`] of ground art sized as `art`'s keys, with the resources
+/// named by its values, and of the tile-picking art.
+fn tightest(
+    projection: Projection,
+    mut art: BTreeMap<(u32, u32), Vec<String>>,
+    difference: u32,
+    limits: PreviewLimits,
+) -> Option<BendLimit> {
     let Projection::Isometric {
         tile_width,
         tile_height,
@@ -95,22 +130,11 @@ pub fn bend_limit(
     else {
         return None;
     };
-    let mut sizes: BTreeMap<(u32, u32), Vec<String>> = BTreeMap::new();
-    sizes.entry((tile_width, tile_height)).or_default();
-    for (resource, anchor) in catalog.prototypes.values() {
-        if *anchor != Anchor::Ground {
-            continue;
-        }
-        if let Some(texture) = resources.textures.get(resource) {
-            let names = sizes.entry((texture.width, texture.height)).or_default();
-            if !names.contains(resource) {
-                names.push(resource.clone());
-            }
-        }
-    }
+    art.entry((tile_width, tile_height)).or_default();
     let mut tightest: Option<BendLimit> = None;
-    for ((width, height), mut names) in sizes {
-        let Some(largest) = largest_difference(projection, width, height, difference, limits)
+    for ((width, height), mut names) in art {
+        let Some((largest, zoom)) =
+            largest_difference(projection, width, height, difference, limits)
         else {
             continue;
         };
@@ -121,6 +145,7 @@ pub fn bend_limit(
             names.sort();
             tightest = Some(BendLimit {
                 largest_difference: largest,
+                zoom,
                 width,
                 height,
                 diamond: [tile_width, tile_height],
@@ -131,18 +156,44 @@ pub fn bend_limit(
     tightest
 }
 
+/// The largest zoom up to [`LARGEST_ZOOM`] at which the renderer draws this
+/// art flat, or `None` when it draws it at none of the editor's zooms.
+fn flat_zoom(
+    projection: Projection,
+    width: u32,
+    height: u32,
+    limits: PreviewLimits,
+) -> Option<f32> {
+    // A flat tile is one quad of the art's size times the zoom; start just
+    // under that bound and step down to the first zoom the renderer takes.
+    #[allow(clippy::cast_precision_loss)]
+    let bound = (limits.scene.maximum_dimension as f32 - 1.0) / width.max(height) as f32;
+    let mut zoom = LARGEST_ZOOM.min(bound);
+    for _ in 0..64 {
+        if zoom <= 0.0 {
+            return None;
+        }
+        if draws(projection, width, height, zoom, 0, limits) {
+            return Some(zoom);
+        }
+        zoom = zoom.next_down();
+    }
+    None
+}
+
 /// The largest difference below `up_to` that art of this size can be bent
-/// over at [`LARGEST_ZOOM`], or `None` when it can be bent over `up_to`
-/// itself, or cannot be drawn there even flat.
+/// over, and the zoom it was judged at ([`flat_zoom`]); `None` when it can
+/// be bent over `up_to` itself, or is drawn at no zoom.
 fn largest_difference(
     projection: Projection,
     width: u32,
     height: u32,
     up_to: u32,
     limits: PreviewLimits,
-) -> Option<u32> {
-    let drawn = |difference: u32| draws(projection, width, height, difference, limits);
-    if !drawn(0) || drawn(up_to) {
+) -> Option<(u32, f32)> {
+    let zoom = flat_zoom(projection, width, height, limits)?;
+    let drawn = |difference: u32| draws(projection, width, height, zoom, difference, limits);
+    if drawn(up_to) {
         return None;
     }
     // `drawn(low)` holds and `drawn(high)` does not.
@@ -155,16 +206,32 @@ fn largest_difference(
             high = middle;
         }
     }
-    Some(low)
+    Some((low, zoom))
 }
 
-/// Whether the renderer draws one ground tile of this art at
-/// [`LARGEST_ZOOM`] under every pattern of its 3 × 3 neighbourhood whose
-/// heights are 0 or `difference`.
+/// Every pattern of a 3 × 3 neighbourhood whose heights are 0 or
+/// `difference`, row-major.
+fn patterns(difference: i32) -> impl Iterator<Item = Vec<Option<i32>>> {
+    (0..512_u16).map(move |pattern| {
+        (0..9)
+            .map(|bit| {
+                Some(if pattern >> bit & 1 == 1 {
+                    difference
+                } else {
+                    0
+                })
+            })
+            .collect()
+    })
+}
+
+/// Whether the renderer draws one ground tile of this art at `zoom` under
+/// every [`patterns`] of `difference`.
 fn draws(
     projection: Projection,
     width: u32,
     height: u32,
+    zoom: f32,
     difference: u32,
     limits: PreviewLimits,
 ) -> bool {
@@ -178,23 +245,14 @@ fn draws(
         width,
         height,
     };
-    (0..512_u16).all(|pattern| {
-        let heights = (0..9)
-            .map(|bit| {
-                Some(if pattern >> bit & 1 == 1 {
-                    difference
-                } else {
-                    0
-                })
-            })
-            .collect();
+    patterns(difference).all(|heights| {
         let view = WorldView {
             revision: 1,
             clock_millis: 0,
             camera: Camera {
                 projection,
                 center: [0.5, 0.5],
-                zoom: LARGEST_ZOOM,
+                zoom,
                 width: 64,
                 height: 64,
                 sampling: Sampling::Nearest,
@@ -223,6 +281,7 @@ fn draws(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     fn isometric(tile_width: u32, tile_height: u32) -> Projection {
         Projection::Isometric {
@@ -231,9 +290,9 @@ mod tests {
         }
     }
 
-    /// The largest drawable difference, searched up to the editor's widest
-    /// range with 0 (2 × 1,024), or 2,048 when that draws.
-    fn limit(diamond: [u32; 2], art: [u32; 2]) -> u32 {
+    /// The largest drawable difference and its zoom, searched up to the
+    /// editor's widest range with 0 (2 × 1,024), or 2,048 when that draws.
+    fn limit(diamond: [u32; 2], art: [u32; 2]) -> (u32, f32) {
         largest_difference(
             isometric(diamond[0], diamond[1]),
             art[0],
@@ -241,7 +300,14 @@ mod tests {
             2048,
             PreviewLimits::default(),
         )
-        .unwrap_or(2048)
+        .unwrap_or((2048, LARGEST_ZOOM))
+    }
+
+    fn sizes(entries: &[((u32, u32), &[&str])]) -> BTreeMap<(u32, u32), Vec<String>> {
+        entries
+            .iter()
+            .map(|(size, names)| (*size, names.iter().map(|name| (*name).to_owned()).collect()))
+            .collect()
     }
 
     #[test]
@@ -255,45 +321,118 @@ mod tests {
             ([32, 16], [32, 48], 215),
             ([64, 32], [64, 128], 129),
         ] {
-            let largest = limit(diamond, art);
+            let (largest, zoom) = limit(diamond, art);
+            assert_eq!(zoom, LARGEST_ZOOM);
             assert!(
                 (2 * measured..2 * measured + 2).contains(&largest),
                 "{diamond:?} {art:?}: {largest}"
             );
         }
         // Diamond-only art draws beyond the editor's widest range.
-        assert_eq!(limit([32, 16], [32, 16]), 2048);
-        assert_eq!(limit([64, 32], [64, 32]), 2048);
-        assert_eq!(limit([32, 16], [32, 32]), 921);
+        assert_eq!(limit([32, 16], [32, 16]).0, 2048);
+        assert_eq!(limit([64, 32], [64, 32]).0, 2048);
+        assert_eq!(limit([32, 16], [32, 32]).0, 921);
     }
 
     #[test]
     fn the_largest_difference_draws_and_one_more_does_not() {
         let projection = isometric(32, 16);
         let limits = PreviewLimits::default();
-        assert!(draws(projection, 32, 32, 921, limits));
-        assert!(!draws(projection, 32, 32, 922, limits));
+        let at = |difference| draws(projection, 32, 32, LARGEST_ZOOM, difference, limits);
+        assert!(at(921));
+        assert!(!at(922));
         // Every smaller difference draws too.
-        assert!(
-            (0..921)
-                .step_by(37)
-                .all(|d| draws(projection, 32, 32, d, limits))
-        );
+        assert!((0..921).step_by(37).all(at));
         // Top-down ground never bends.
         assert!(draws(
             Projection::TopDown { tile_size: 32 },
             32,
             128,
+            LARGEST_ZOOM,
             2048,
             limits
         ));
     }
 
     #[test]
-    fn art_too_large_to_draw_flat_at_the_largest_zoom_is_left_out() {
+    fn every_two_height_pattern_is_checked() {
+        let all: BTreeSet<Vec<Option<i32>>> = patterns(7).collect();
+        assert_eq!(all.len(), 512);
+        assert!(
+            all.iter().all(|field| field.len() == 9
+                && field.iter().all(|height| matches!(height, Some(0 | 7))))
+        );
+    }
+
+    #[test]
+    fn art_too_large_to_draw_flat_at_the_largest_zoom_is_judged_where_it_draws_flat() {
+        let limits = PreviewLimits::default();
+        // 1024 x 1024 on a 128 x 64 diamond draws flat only below zoom 8.
+        let projection = isometric(128, 64);
+        let zoom = flat_zoom(projection, 1024, 1024, limits).unwrap();
+        assert!(zoom < LARGEST_ZOOM && zoom > 7.99, "{zoom}");
+        assert!(!draws(projection, 1024, 1024, zoom.next_up(), 0, limits));
+        let (largest, judged) = limit([128, 64], [1024, 1024]);
+        assert_eq!(judged, zoom);
+        // At zoom 1 the art bends over 123; at its largest zoom over less.
+        assert!(largest < 123, "{largest}");
+        assert!(draws(projection, 1024, 1024, 1.0, 123, limits));
+        assert!(!draws(projection, 1024, 1024, 1.0, 124, limits));
+        assert!(draws(projection, 1024, 1024, zoom, largest, limits));
+        assert!(!draws(projection, 1024, 1024, zoom, largest + 1, limits));
+        // Art too large for even zoom 1 is still judged, below 1.
+        let (_, below) = limit([32, 16], [32, 8192]);
+        assert!(below < 1.0, "{below}");
+    }
+
+    #[test]
+    fn the_tightest_size_is_reported_with_its_sorted_resources() {
+        let limits = PreviewLimits::default();
+        let found = tightest(
+            isometric(32, 16),
+            sizes(&[((32, 32), &["b", "a"]), ((32, 48), &["tall_b", "tall_a"])]),
+            2048,
+            limits,
+        )
+        .unwrap();
+        assert_eq!(found.largest_difference, 430);
+        assert_eq!((found.width, found.height), (32, 48));
+        assert_eq!(found.resources, ["tall_a", "tall_b"]);
+        assert_eq!(found.diamond, [32, 16]);
+        // Within the tighter limit nothing is reported.
         assert_eq!(
-            largest_difference(isometric(32, 16), 32, 1100, 2048, PreviewLimits::default()),
+            tightest(
+                isometric(32, 16),
+                sizes(&[((32, 32), &["b"]), ((32, 48), &["tall"])]),
+                430,
+                limits
+            ),
             None
         );
+        // Top-down never bends.
+        assert_eq!(
+            tightest(
+                Projection::TopDown { tile_size: 32 },
+                sizes(&[((32, 1000), &["tall"])]),
+                2048,
+                limits
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_tall_diamond_limits_through_its_tile_picking_art() {
+        // Small ground art, but the picking art is the 4 x 1000 diamond.
+        let found = tightest(
+            isometric(4, 1000),
+            sizes(&[((4, 8), &["flat"])]),
+            2048,
+            PreviewLimits::default(),
+        )
+        .unwrap();
+        assert_eq!((found.width, found.height), (4, 1000));
+        assert!(found.resources.is_empty());
+        assert!(found.largest_difference < 2048);
     }
 }

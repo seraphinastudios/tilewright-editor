@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use tilewright_editor_observe::cli::{self, EXIT_SUCCESS};
 use tilewright_editor_observe::world::{Catalog, Observed};
 use tilewright_editor_preview::{LARGEST_ZOOM, PreviewLimits};
-use tilewright_editor_testkit::fixture_world;
+use tilewright_editor_testkit::{fixture_world, generated_resource};
 
 const CODE: &str = "catalog.heights_undrawable";
 
@@ -63,6 +63,27 @@ fn sample(isometric: bool, grant: Option<[i32; 2]>) -> (tempfile::TempDir, PathB
     (directory, root)
 }
 
+/// A copy of the neutral sample on a 128 x 64 diamond whose grass and sand
+/// are 1024 x 1024 images, too large to draw flat at zoom 8, granting
+/// heights `grant`.
+fn large_art(grant: [i32; 2]) -> (tempfile::TempDir, PathBuf) {
+    let (directory, root) = sample(false, Some(grant));
+    edit_json(&root, "profile/profile.jsonc", |profile| {
+        profile["projection"] = json!({"kind": "isometric", "tile_width": 128, "tile_height": 64});
+    });
+    let mut catalog = std::fs::read_to_string(root.join("preview.jsonc")).unwrap();
+    for (id, color) in [
+        ("grass", [40, 160, 60, 255]),
+        ("sand", [200, 180, 120, 255]),
+    ] {
+        let (image, edited) = generated_resource(&catalog, id, 1024, 1024, color);
+        std::fs::write(root.join(format!("preview-assets/{id}.atx1")), image).unwrap();
+        catalog = edited;
+    }
+    std::fs::write(root.join("preview.jsonc"), catalog).unwrap();
+    (directory, root)
+}
+
 /// Stores `high` and `low` in the worst 3 x 3 pattern of ADR 0006 around
 /// tile (2, 2), inside the catalog's view, and 0 elsewhere.
 fn worst_pattern(root: &Path, low: i32, high: i32) {
@@ -104,14 +125,21 @@ fn findings<'a>(report: &'a Value, code: &str) -> Vec<&'a Value> {
         .collect()
 }
 
-/// Whether the preview prepares the catalog's view at `zoom`.
+/// Whether the preview prepares the catalog's view at `zoom` in the
+/// desktop's default window.
 fn prepares(root: &Path, zoom: f32) -> Result<(), String> {
+    prepares_in(root, zoom, [1280, 800])
+}
+
+/// Whether the preview prepares the catalog's view at `zoom` in a window
+/// of `size`.
+fn prepares_in(root: &Path, zoom: f32, size: [u32; 2]) -> Result<(), String> {
     let observed = Observed::open(root).unwrap();
     let Catalog::Loaded(loaded) = &observed.catalog else {
         panic!("the catalog does not load");
     };
     let (catalog, resources) = &**loaded;
-    let mut spec = catalog.default_view(observed.world(), 1280, 800, 1);
+    let mut spec = catalog.default_view(observed.world(), size[0], size[1], 1);
     spec.camera.zoom = zoom;
     tilewright_editor_preview::prepare(
         observed.world(),
@@ -162,10 +190,10 @@ fn a_grant_just_outside_the_bound_warns_and_its_worst_pattern_does_not_draw() {
     assert!(finding.get("message_clipped").is_none());
     let message = finding["message"].as_str().unwrap();
     for part in [
-        "Heights from -460 to 462 (and 0) can lie 922 apart",
-        "at zoom 8",
-        "32 x 32 ground art on a 32 x 16 diamond over more than 921.",
-        "at most 921 wide with 0 in it, such as -460 to 461,",
+        "Heights -460 to 462 (and 0) can differ by 922",
+        "at zoom 8 (the largest)",
+        "cannot bend 32 x 32 ground art over more than 921.",
+        "Per tile, -460 to 461 bends at that zoom and below; a whole view can exceed the frame budget.",
     ] {
         assert!(message.contains(part), "{part}: {message}");
     }
@@ -192,14 +220,14 @@ fn zero_counts_as_a_height_of_every_grant() {
     let found = findings(&report, CODE);
     assert_eq!(found.len(), 1, "{report}");
     let message = found[0]["message"].as_str().unwrap();
-    assert!(message.contains("lie 922 apart"), "{message}");
-    assert!(message.contains("such as 0 to 921"), "{message}");
+    assert!(message.contains("differ by 922,"), "{message}");
+    assert!(message.contains("Per tile, 0 to 921 bends"), "{message}");
     // A lowering grant gets an example that ends at 0.
     let (_lower_directory, lower) = sample(true, Some([-1000, -10]));
     let report = lint(&lower);
     let message = findings(&report, CODE)[0]["message"].as_str().unwrap();
-    assert!(message.contains("lie 1000 apart"), "{message}");
-    assert!(message.contains("such as -921 to 0"), "{message}");
+    assert!(message.contains("differ by 1000,"), "{message}");
+    assert!(message.contains("Per tile, -921 to 0 bends"), "{message}");
     // Just inside, with 0 at one end.
     let (_inside_directory, inside) = sample(true, Some([0, LARGEST]));
     assert!(findings(&lint(&inside), CODE).is_empty());
@@ -214,4 +242,76 @@ fn top_down_ground_and_catalogs_without_a_grant_have_no_warning() {
     assert!(findings(&lint(&iso), CODE).is_empty());
     // The committed neutral sample itself.
     assert!(findings(&lint(&fixture_world("prototype-neutral")), CODE).is_empty());
+}
+
+#[test]
+fn art_too_large_for_the_largest_zoom_is_judged_at_its_own_largest() {
+    for high in [123, 200] {
+        let (_directory, root) = large_art([0, high]);
+        let report = lint(&root);
+        let found = findings(&report, CODE);
+        assert_eq!(found.len(), 1, "{report}");
+        let finding = found[0];
+        assert_eq!(finding["location"]["resources"], json!(["grass", "sand"]));
+        let message = finding["message"].as_str().unwrap();
+        assert!(finding.get("message_clipped").is_none());
+        assert!(
+            message.contains(
+                "(its largest) the preview cannot bend 1024 x 1024 ground art over more than "
+            ),
+            "{message}"
+        );
+        // The zoom and the limit, as the message gives them.
+        let zoom: f32 = message
+            .split("at zoom ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(zoom < LARGEST_ZOOM && zoom > 7.99, "{zoom}");
+        let largest: i32 = message
+            .split("over more than ")
+            .nth(1)
+            .and_then(|rest| rest.split('.').next())
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(largest < 123, "{largest}");
+        // The real preview agrees: the worst pattern of the safe range
+        // draws at that zoom, and the art draws at no zoom above it. A
+        // small window keeps the whole view within the frame budget, which
+        // this art exceeds near zoom 8 in a large one.
+        worst_pattern(&root, 0, largest);
+        let small = [64, 64];
+        prepares_in(&root, zoom, small).unwrap();
+        assert_eq!(
+            prepares_in(&root, zoom.next_up(), small).unwrap_err(),
+            "invalid world view"
+        );
+        worst_pattern(&root, 0, largest + 1);
+        assert_eq!(
+            prepares_in(&root, zoom, small).unwrap_err(),
+            "invalid world view"
+        );
+        // The grant's own worst pattern: 123 draws at the opening zoom but
+        // not from the next step (1.25); 200 does not draw even at zoom 1.
+        worst_pattern(&root, 0, high);
+        if high == 123 {
+            prepares(&root, 1.0).unwrap();
+            assert_eq!(prepares(&root, 1.25).unwrap_err(), "invalid world view");
+        } else {
+            assert_eq!(prepares(&root, 1.0).unwrap_err(), "invalid world view");
+        }
+    }
+}
+
+#[test]
+fn the_largest_zoom_is_the_largest_render_scale() {
+    // `render --scale` reaches the zoom the warning judges at, and no
+    // further; the desktop's clamp is held to it in the app's tests.
+    assert_eq!(
+        LARGEST_ZOOM,
+        f32::from(u16::try_from(tilewright_editor_observe::limits::MAXIMUM_RENDER_SCALE).unwrap())
+    );
 }
