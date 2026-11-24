@@ -5745,7 +5745,7 @@ fn visual_move(app: &mut Application, key: Keycode, extend: bool) -> Result<()> 
             )
             .map_err(|error| error.to_string());
     } else {
-        layout.move_visual(current, motion)
+        crate::workspace_render::step_caret(&snapshot, &layout, motion)?
     };
     let focus = crate::workspace_render::model_cursor(focus);
     let focus = if let Some(geometry) = shared
