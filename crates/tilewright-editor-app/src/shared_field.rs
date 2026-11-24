@@ -129,8 +129,9 @@ impl SharedField {
 
     /// Compile the field in the row the sidebar reserved, before the
     /// editor's frame is fitted, so the fit can leave room for it
-    /// ([`PreparedField::quads`], [`PreparedField::raster_samples`]). Without a reserved row (the field is
-    /// scrolled away) there is nothing to draw.
+    /// ([`PreparedField::quads`], [`PreparedField::raster_samples`]).
+    /// Without a reserved row (the field is scrolled away) there is nothing
+    /// to draw.
     pub fn prepare(
         &mut self,
         text: &mut TextSystem,
