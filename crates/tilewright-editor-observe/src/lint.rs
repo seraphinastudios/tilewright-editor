@@ -4,13 +4,14 @@
 //! `lint`: the editor's own findings about a world that loads. World's
 //! diagnostics come with a world that does not load (see
 //! [`crate::world::load_failure`]); everything here is computed by the
-//! editor's existing checks, with no analysis of its own. Reachability is
-//! deliberately left out until the profile can say what blocks movement.
+//! editor's existing checks and the shared renderer's own compile, with no
+//! analysis of its own. Reachability is deliberately left out until the
+//! profile can say what blocks movement.
 use crate::limits::MAXIMUM_FINDINGS;
 use crate::node::{Bounded, Map, Node, Pager};
 use crate::world::{Catalog, Observed};
 use std::collections::BTreeSet;
-use tilewright_editor_preview::PreviewLimits;
+use tilewright_editor_preview::{BendLimit, HeightGrant, LARGEST_ZOOM, PreviewLimits};
 use tilewright_editor_ui::{anchors, portals, zones};
 use tilewright_source::World;
 
@@ -99,6 +100,75 @@ fn project_art(resources: usize) -> Option<Finding> {
     })
 }
 
+/// The finding for a catalog whose height grant lets neighbouring heights
+/// lie further apart than its ground art can be bent over at the largest
+/// zoom ([`tilewright_editor_preview::bend_limit`]), if it does. Its text
+/// is all this editor's: numbers, never world text; the resources' ids are
+/// in its location.
+fn undrawable_heights(observed: &Observed) -> Option<Finding> {
+    let Catalog::Loaded(loaded) = &observed.catalog else {
+        return None;
+    };
+    let (catalog, resources) = &**loaded;
+    let grant = catalog.editing().heights?;
+    // Tiles without a height have 0, so 0 is always one of the heights.
+    let low = grant.min.min(0);
+    let high = grant.max.max(0);
+    let difference = high.abs_diff(low);
+    let limit = tilewright_editor_preview::bend_limit(
+        observed.world(),
+        catalog,
+        resources,
+        difference,
+        PreviewLimits::default(),
+    )?;
+    Some(Finding {
+        code: "catalog.heights_undrawable",
+        severity: Severity::Warning,
+        location: Map::new()
+            .text("path", "preview.jsonc")
+            .ids("resources", limit.resources.iter().map(String::as_str)),
+        message: undrawable_message(grant, difference, &limit),
+        detail: None,
+    })
+}
+
+/// The message, at most 256 characters with any numbers the catalog can
+/// hold, so that it is never clipped.
+fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) -> String {
+    let BendLimit {
+        largest_difference: largest,
+        width,
+        height,
+        diamond: [across, down],
+        ..
+    } = *limit;
+    let art = if limit.resources.is_empty() {
+        "the tile-picking art".to_owned()
+    } else {
+        format!("{width} x {height} ground art")
+    };
+    let head = format!(
+        "Heights from {} to {} (and 0) can lie {difference} apart, but at zoom {LARGEST_ZOOM} the preview cannot bend {art} on a {across} x {down} diamond over more than {largest}.",
+        grant.min, grant.max,
+    );
+    if largest == 0 {
+        return format!("{head} No height range can be bent there.");
+    }
+    // An example range as near the grant as it can be: as wide as is safe,
+    // with 0 in it.
+    let largest = i32::try_from(largest).unwrap_or(i32::MAX);
+    let mut from = grant.min.min(0).max(-(largest / 2));
+    let mut to = from + largest;
+    if to > grant.max.max(0) {
+        to = grant.max.max(0);
+        from = to - largest;
+    }
+    format!(
+        "{head} A range at most {largest} wide with 0 in it, such as {from} to {to}, can be bent at every zoom."
+    )
+}
+
 /// Every finding about `observed`, in a fixed order: the catalog, the
 /// prepared view, portals in World order, then anchors and zones by plane
 /// and id.
@@ -128,6 +198,7 @@ pub fn findings(observed: &Observed) -> Vec<Finding> {
         Catalog::Loaded(loaded) => {
             let (catalog, resources) = &**loaded;
             found.extend(project_art(catalog.project_art_resources()));
+            found.extend(undrawable_heights(observed));
             let (plane, layer, _) = catalog.view();
             let view = || Map::new().text("plane", plane).with("layer", layer);
             // The view the desktop editor opens, prepared as it prepares it.
@@ -303,4 +374,36 @@ pub fn report_paged(observed: &Observed, found: &[Finding], pager: &dyn Pager) -
             ),
         errors > 0,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::limits::MAXIMUM_TEXT_CHARACTERS;
+
+    #[test]
+    fn the_heights_message_is_never_clipped() {
+        // The longest numbers a catalog and its art can give.
+        let limit = |resources: Vec<String>, largest| BendLimit {
+            largest_difference: largest,
+            width: 8192,
+            height: 8192,
+            diamond: [8192, 8192],
+            resources,
+        };
+        let grant = HeightGrant {
+            min: -1024,
+            max: -1023,
+        };
+        for largest in [0, 1, 1023, 2047] {
+            for resources in [Vec::new(), vec!["art".to_owned()]] {
+                let message = undrawable_message(grant, 2048, &limit(resources, largest));
+                assert!(
+                    message.chars().count() <= MAXIMUM_TEXT_CHARACTERS,
+                    "{}: {message}",
+                    message.chars().count()
+                );
+            }
+        }
+    }
 }

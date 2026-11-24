@@ -7,7 +7,7 @@ use crate::{
     validate_bounds,
 };
 use std::{collections::BTreeMap, sync::Arc};
-use tilewright_render_world::{Anchor, HeightField, Stretch, TextureRef, WorldObject, WorldView};
+use tilewright_render_world::{Anchor, HeightField, TextureRef, WorldObject, WorldView};
 use tilewright_scene::{Digest256, ResourceId, SemanticId};
 use tilewright_source::{CHUNK_SIZE, World};
 
@@ -253,7 +253,7 @@ pub fn prepare(
         camera: view.camera,
         clear_color: [0.04, 0.05, 0.07, 1.0],
         heights,
-        stretch: Stretch::default(),
+        stretch: crate::bend::preview_stretch(),
         ground_layer_ranks: ground_ranks,
         objects,
     };

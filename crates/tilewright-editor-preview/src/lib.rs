@@ -37,10 +37,12 @@ pub fn render_scene<R: Renderer>(
     renderer.render(RenderRequest { scene, resources })
 }
 
+mod bend;
 mod catalog;
 pub mod loader;
 pub mod mark;
 mod prepare;
+pub use bend::{BendLimit, LARGEST_ZOOM, bend_limit};
 pub use catalog::{
     AnchorGrant, EditingCapabilities, FORMAT_1, FORMAT_2, HeightGrant, MAXIMUM_HEIGHT,
     MAXIMUM_PALETTE_ENTRIES, MAXIMUM_PALETTE_NAME_BYTES, MAXIMUM_PALETTE_WEIGHT, MAXIMUM_PALETTES,
