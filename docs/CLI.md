@@ -223,7 +223,7 @@ wrong.
 | `catalog.absent` | error | The world has no `preview.jsonc`. The editing entry point cannot open it; `open ROOT` and these commands can. |
 | `catalog.invalid` | error | `preview.jsonc` is there but does not load. |
 | `preview.unprepared` | error | The catalog's view cannot be prepared for display, for example an object in it whose prototype the catalog cannot draw. |
-| `catalog.heights_undrawable` | warning | The catalog's `editing.heights` lets neighbouring tiles lie further apart than the preview can bend its isometric ground art over at the largest zoom (8); see below. The message gives the zoom, both numbers and a range that can be bent; `location.resources` lists the ground resources of the tightest art size, in id order (empty when the limit is the tile-picking art). |
+| `catalog.heights_undrawable` | warning | The catalog's `editing.heights` lets neighbouring tiles lie further apart than the preview can bend its isometric ground art over at the largest zoom (8, or for art too large to draw flat there, the largest zoom at which it draws flat); see below. The message gives the zoom, both numbers and a range that can be bent; `location.resources` lists the ground resources of the tightest art size, in id order (empty when the limit is the tile-picking art). |
 | `catalog.project_art` | info | The catalog contains project art: resources with the license `project`, under the project's own license. The message gives their number; every image the editor makes of the world is marked (see [render](#render)). |
 | `preview.*` (others) | info | A note the preview adds when it prepares the view, such as `preview.effects-neutral`. |
 | `portal.target_own_tile` | warning | A portal leads to the tile its object stands on. |
@@ -244,9 +244,11 @@ and the diamond-sized tile-picking art), with the renderer itself, under
 every pattern of its neighbourhood at the two ends of the grant, where 0
 always counts as an end because tiles without a height have 0. It does so
 at the largest zoom, 8, or, for art too large to draw even flat at 8 (a
-side over about 1,023 pixels), at the largest zoom at which it draws flat:
-above that zoom the art draws in no view at all, and the message names the
-zoom. When a pattern cannot be drawn, lint finds the largest difference
+side over about 1,023 pixels), at the largest zoom at which it draws flat,
+which the message gives rounded down to hundredths. Above that zoom a flat
+tile of the art does not draw; a bent tile is 16 smaller quads, so a view
+in which every tile of the art is bent can draw at higher zooms, and such
+views are not covered. When a pattern cannot be drawn, lint finds the largest difference
 that can: tile by tile, heights at most that far apart can be bent at
 that zoom and every lower one. For 32 x 32 ground art on a 32 x 16 diamond
 (the neutral sample's art, made isometric) it is 921, from -460 to 461 for

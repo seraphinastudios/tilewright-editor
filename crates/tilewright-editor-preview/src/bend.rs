@@ -18,8 +18,10 @@
 //! Art is judged at the editor's largest zoom ([`LARGEST_ZOOM`]), or, when
 //! it is so large that the renderer cannot draw it there even flat (a side
 //! of more than about 1,023 pixels), at the largest zoom at which it draws
-//! flat: above that zoom no view with the art draws at all, whatever its
-//! heights, and every zoom below is covered. Zooms are treated as
+//! flat. Every zoom below is covered. Above it a flat tile of the art does
+//! not draw; a bent tile is 16 smaller quads, so a view in which every
+//! tile of the art is bent can draw at higher zooms, and such views are
+//! not covered. Zooms are treated as
 //! continuous, so this does not depend on which zooms a front end steps
 //! through.
 //!
@@ -69,9 +71,10 @@ pub struct BendLimit {
     /// at every zoom up to `zoom`; a 3 × 3 pattern of heights one more
     /// apart cannot be at `zoom`.
     pub largest_difference: u32,
-    /// The zoom the art was judged at: [`LARGEST_ZOOM`], or less for art
-    /// the renderer cannot draw there even flat, which then draws at no
-    /// zoom above this one.
+    /// The zoom the art was judged at: [`LARGEST_ZOOM`], or, for art the
+    /// renderer cannot draw there even flat, the largest zoom at which it
+    /// draws flat. Views in which every tile of that art is bent can draw
+    /// above it and are not covered.
     pub zoom: f32,
     /// The limiting art's size in pixels.
     pub width: u32,
@@ -383,6 +386,29 @@ mod tests {
         assert!(!draws(projection, 1024, 1024, 1.0, 124, limits));
         assert!(draws(projection, 1024, 1024, zoom, largest, limits));
         assert!(!draws(projection, 1024, 1024, zoom, largest + 1, limits));
+        // Each is judged at the largest zoom that draws flat, not left out.
+        // 1025 and 1050 need the step down: their bound rounds up in `f32`.
+        for (diamond, art, expected, largest, steps) in [
+            ([32, 16], [32, 1100], 7.446_363_4, 0, false),
+            ([128, 64], [1025, 1025], 7.991_219, 11, true),
+            ([64, 32], [64, 1050], 7.800_952, 3, true),
+        ] {
+            let projection = isometric(diamond[0], diamond[1]);
+            #[allow(clippy::cast_precision_loss)]
+            let bound = 8191.0 / art[1] as f32;
+            let zoom = flat_zoom(projection, art[0], art[1], limits).unwrap();
+            assert_eq!(zoom < bound, steps, "{art:?}: {zoom} {bound}");
+            assert_eq!(zoom, expected, "{art:?}");
+            assert!(!draws(
+                projection,
+                art[0],
+                art[1],
+                zoom.next_up(),
+                0,
+                limits
+            ));
+            assert_eq!(limit(diamond, art), (largest, expected), "{art:?}");
+        }
         // Art too large for even zoom 1 is still judged, below 1.
         let (_, below) = limit([32, 16], [32, 8192]);
         assert!(below < 1.0, "{below}");

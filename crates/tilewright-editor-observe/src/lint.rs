@@ -148,11 +148,28 @@ fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) ->
     } else {
         format!("{width} x {height} ground art")
     };
-    // Art judged below the largest zoom draws at no zoom above it.
+    // The zoom rounded down to hundredths: the verdict that ranges within
+    // the limit bend holds at every lower zoom. Art too large to draw flat
+    // at the largest zoom is judged at the largest at which it draws flat,
+    // just above the rounded value.
     #[allow(clippy::float_cmp)]
-    let which = if zoom == LARGEST_ZOOM { "the" } else { "its" };
+    let (at, shown) = if zoom == LARGEST_ZOOM {
+        (format!("at zoom {zoom} (the largest)"), format!("{zoom}"))
+    } else {
+        let down = (f64::from(zoom) * 100.0).floor() / 100.0;
+        let shown = format!("{down:.2}");
+        let near = if down == f64::from(zoom) {
+            "at"
+        } else {
+            "just above"
+        };
+        (
+            format!("{near} zoom {shown} (its largest flat zoom)"),
+            shown,
+        )
+    };
     let head = format!(
-        "Heights {} to {} (and 0) can differ by {difference}, but at zoom {zoom} ({which} largest) the preview cannot bend {art} over more than {largest}.",
+        "Heights {} to {} (and 0) can differ by {difference}, but {at} the preview cannot bend {art} over more than {largest}.",
         grant.min, grant.max,
     );
     if largest == 0 {
@@ -168,7 +185,7 @@ fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) ->
         from = to - largest;
     }
     format!(
-        "{head} Per tile, {from} to {to} bends at that zoom and below; a whole view can exceed the frame budget."
+        "{head} Per tile, {from} to {to} bends up to zoom {shown}; a whole view can exceed the frame budget."
     )
 }
 
@@ -402,7 +419,7 @@ mod tests {
         for largest in [0, 1, 1023, 2047] {
             // Art is at most 8,192 pixels on a side, so it draws flat from zoom
             // 8,191 / 8,192 (a few steps below at most).
-            for zoom in [LARGEST_ZOOM, 7.999_023, 0.999_877_9, 0.999_871_9] {
+            for zoom in [LARGEST_ZOOM, 7.999_023, 7.5, 0.999_877_9, 0.999_871_9] {
                 for resources in [Vec::new(), vec!["art".to_owned()]] {
                     let message = undrawable_message(grant, 2048, &limit(resources, largest, zoom));
                     assert!(
@@ -426,6 +443,18 @@ mod tests {
             resources: vec!["art".to_owned()],
         };
         let message = undrawable_message(HeightGrant { min: 0, max: 1 }, 1, &limit);
+        let mut lower = limit.clone();
+        lower.zoom = 7.446_363_4;
+        lower.largest_difference = 11;
+        assert_eq!(
+            undrawable_message(HeightGrant { min: 0, max: 20 }, 20, &lower),
+            "Heights 0 to 20 (and 0) can differ by 20, but just above zoom 7.44 (its largest flat zoom) the preview cannot bend 100 x 300 ground art over more than 11. Per tile, 0 to 11 bends up to zoom 7.44; a whole view can exceed the frame budget."
+        );
+        lower.zoom = 7.5;
+        assert!(
+            undrawable_message(HeightGrant { min: 0, max: 20 }, 20, &lower)
+                .contains("but at zoom 7.50 (its largest flat zoom)")
+        );
         assert_eq!(
             message,
             "Heights 0 to 1 (and 0) can differ by 1, but at zoom 8 (the largest) the preview cannot bend 100 x 300 ground art over more than 0. No height range bends there."

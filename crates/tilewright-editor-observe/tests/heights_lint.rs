@@ -125,6 +125,24 @@ fn findings<'a>(report: &'a Value, code: &str) -> Vec<&'a Value> {
         .collect()
 }
 
+/// The catalog's bend limit for heights `difference` apart, as lint finds
+/// it.
+fn bend_limit(root: &Path, difference: u32) -> tilewright_editor_preview::BendLimit {
+    let observed = Observed::open(root).unwrap();
+    let Catalog::Loaded(loaded) = &observed.catalog else {
+        panic!("the catalog does not load");
+    };
+    let (catalog, resources) = &**loaded;
+    tilewright_editor_preview::bend_limit(
+        observed.world(),
+        catalog,
+        resources,
+        difference,
+        PreviewLimits::default(),
+    )
+    .unwrap()
+}
+
 /// Whether the preview prepares the catalog's view at `zoom` in the
 /// desktop's default window.
 fn prepares(root: &Path, zoom: f32) -> Result<(), String> {
@@ -193,7 +211,7 @@ fn a_grant_just_outside_the_bound_warns_and_its_worst_pattern_does_not_draw() {
         "Heights -460 to 462 (and 0) can differ by 922",
         "at zoom 8 (the largest)",
         "cannot bend 32 x 32 ground art over more than 921.",
-        "Per tile, -460 to 461 bends at that zoom and below; a whole view can exceed the frame budget.",
+        "Per tile, -460 to 461 bends up to zoom 8; a whole view can exceed the frame budget.",
     ] {
         assert!(message.contains(part), "{part}: {message}");
     }
@@ -255,33 +273,28 @@ fn art_too_large_for_the_largest_zoom_is_judged_at_its_own_largest() {
         assert_eq!(finding["location"]["resources"], json!(["grass", "sand"]));
         let message = finding["message"].as_str().unwrap();
         assert!(finding.get("message_clipped").is_none());
+        // The limit, judged just above zoom 7.99, the largest at which
+        // this art draws flat; the message rounds the zoom down.
+        let limit = bend_limit(&root, u32::try_from(high).unwrap());
         assert!(
-            message.contains(
-                "(its largest) the preview cannot bend 1024 x 1024 ground art over more than "
-            ),
-            "{message}"
+            limit.zoom < LARGEST_ZOOM && limit.zoom > 7.99,
+            "{}",
+            limit.zoom
         );
-        // The zoom and the limit, as the message gives them.
-        let zoom: f32 = message
-            .split("at zoom ")
-            .nth(1)
-            .and_then(|rest| rest.split(' ').next())
-            .unwrap()
-            .parse()
-            .unwrap();
-        assert!(zoom < LARGEST_ZOOM && zoom > 7.99, "{zoom}");
-        let largest: i32 = message
-            .split("over more than ")
-            .nth(1)
-            .and_then(|rest| rest.split('.').next())
-            .unwrap()
-            .parse()
-            .unwrap();
+        let largest = i32::try_from(limit.largest_difference).unwrap();
         assert!(largest < 123, "{largest}");
+        for part in [
+            "but just above zoom 7.99 (its largest flat zoom) the preview cannot bend 1024 x 1024 ground art".to_owned(),
+            format!("over more than {largest}. Per tile, 0 to {largest} bends up to zoom 7.99;"),
+        ] {
+            assert!(message.contains(&part), "{part}: {message}");
+        }
+        let zoom = limit.zoom;
         // The real preview agrees: the worst pattern of the safe range
-        // draws at that zoom, and the art draws at no zoom above it. A
-        // small window keeps the whole view within the frame budget, which
-        // this art exceeds near zoom 8 in a large one.
+        // draws at that zoom, one more apart does not, and a view with flat
+        // tiles of this art draws at no zoom above it. A small window keeps
+        // the whole view within the frame budget, which this art exceeds
+        // near zoom 8 in a large one.
         worst_pattern(&root, 0, largest);
         let small = [64, 64];
         prepares_in(&root, zoom, small).unwrap();
