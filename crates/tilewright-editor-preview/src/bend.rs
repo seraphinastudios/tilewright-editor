@@ -23,7 +23,10 @@
 //! span depends only on differences. Convex and drawable at `d = 0` (flat
 //! art the renderer draws as one quad, the same at every `d`), the
 //! drawable differences form a range from 0 up, so a binary search over
-//! `d` finds its end. Every verdict here is the renderer's own `compile` of
+//! `d` finds its end. A pattern whose four corners come out equal (only
+//! the middle tile differs, say) is drawn flat, as at `d = 0`; the mesh it
+//! would otherwise be spans less than that flat quad on any diamond of at
+//! least 3 x 2 pixels, so the bound holds for it too. Every verdict here is the renderer's own `compile` of
 //! one tile at that zoom, so the arithmetic is the preview's, not a copy.
 //!
 //! What this does not decide: the scene's quad and raster-sample budgets,
