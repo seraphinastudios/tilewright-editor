@@ -28,7 +28,7 @@ use tilewright_editor_ui::uid::{SeededUidSource, UidSource};
 
 const MAIN: &str = "world/planes/main/layers/0/0_0.jsonc";
 
-fn with_speckle(root: &Path) {
+pub(super) fn with_speckle(root: &Path) {
     edit_json(root, "preview.jsonc", |catalog| {
         catalog["editing"]["palettes"] = serde_json::json!([{"name": "speckle", "grid": "floor",
             "entries": [{"value": "grass", "weight": 3}, {"value": "sand", "weight": 1}]}]);
@@ -38,7 +38,10 @@ fn with_speckle(root: &Path) {
 /// The 1280x800 application on the sample changed by `prepare`, in Terrain
 /// mode with sand chosen and the Road rule reached with F, its random
 /// source seeded with `seed`.
-fn road_application(seed: u64, prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
+pub(super) fn road_application(
+    seed: u64,
+    prepare: impl FnOnce(&Path),
+) -> (tempfile::TempDir, Application) {
     let (temporary, mut app) = zone_application(prepare);
     app.session
         .set_uid_source(Box::new(SeededUidSource::new(seed)));
@@ -57,7 +60,7 @@ fn road_application(seed: u64, prepare: impl FnOnce(&Path)) -> (tempfile::TempDi
 }
 
 /// A real press and release on tile `at`, on a displayed frame.
-fn click(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
+pub(super) fn click(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
     acknowledge_ui(app);
     let pixel = cell_pixel(app, at[0], at[1]);
     let down = route(app, &button(true, pixel));
@@ -66,12 +69,12 @@ fn click(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
 }
 
 /// A real key press on a displayed frame.
-fn press(app: &mut Application, keycode: Keycode) -> Result<(), String> {
+pub(super) fn press(app: &mut Application, keycode: Keycode) -> Result<(), String> {
     acknowledge_ui(app);
     route(app, &key(keycode))
 }
 
-fn points(app: &Application) -> Vec<[i64; 2]> {
+pub(super) fn points(app: &Application) -> Vec<[i64; 2]> {
     app.tools
         .road()
         .map(|road| road.points().to_vec())
@@ -128,9 +131,9 @@ fn changed(before: &[Option<String>], after: &[Option<String>]) -> BTreeSet<[i64
 }
 
 /// A small fixed pseudo-random sequence, so every run checks the same lines.
-struct Lines(u64);
+pub(super) struct Lines(pub(super) u64);
 impl Lines {
-    fn next(&mut self, below: i64) -> i64 {
+    pub(super) fn next(&mut self, below: i64) -> i64 {
         self.0 = self
             .0
             .wrapping_mul(6_364_136_223_846_793_005)
@@ -619,7 +622,7 @@ fn a_road_is_refused_as_a_brush_is_and_never_while_editing_is_paused() {
 }
 
 /// A world pixel outside every panel that no tile covers.
-fn off_tile_pixel(app: &mut Application) -> [f32; 2] {
+pub(super) fn off_tile_pixel(app: &mut Application) -> [f32; 2] {
     use crate::workspace_ui::Hit;
     app.refresh_ui();
     let frame = app.frame(true).unwrap();
@@ -657,7 +660,7 @@ fn gate_application(shared: bool) -> (tempfile::TempDir, Application) {
 }
 
 /// Whether the laid-out widget for `control`, if any, is enabled.
-fn enabled(app: &mut Application, control: &Control) -> Option<bool> {
+pub(super) fn enabled(app: &mut Application, control: &Control) -> Option<bool> {
     app.refresh_ui();
     app.ui
         .widgets
@@ -687,6 +690,8 @@ fn nothing_else_is_prepared_or_opened_while_a_road_is_drawn() {
             Control::Delete,
             Control::ApplyDraft,
             Control::ProposalPrepare,
+            Control::GradeRoad(tilewright_editor_ui::road::RoadGrade::Flatten),
+            Control::GradeRoad(tilewright_editor_ui::road::RoadGrade::Smooth),
         ];
         // Without a road the portal rows are live.
         assert_eq!(enabled(&mut app, &Control::PortalClear), Some(true));

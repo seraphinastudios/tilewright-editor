@@ -85,6 +85,9 @@ pub enum Control {
     BrushShape,
     /// Terrain mode: what a press does, the brush, fill or replace.
     TerrainRule(tilewright_editor_ui::tools::TerrainRule),
+    /// Terrain mode: prepare this existing height edit over the cells of
+    /// the last accepted road, for its own Review.
+    GradeRoad(tilewright_editor_ui::road::RoadGrade),
     Field(String),
     Palette {
         grid: String,
