@@ -1751,18 +1751,18 @@ dependencies = [
 
 [[package]]
 name = "tilewright-ui"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bc80cb023e2ba71bc94690093c391591fa227a3395e76364fd464306cd35a80"
+checksum = "cd88fecce4bfc40d0e1e25a84eaf10e40c52e1bdab7613013d90f90afd9f6e9e"
 dependencies = [
  "unicode-segmentation",
 ]
 
 [[package]]
 name = "tilewright-ui-render"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "700085081500887b505a6d18b416ef43a19e424a0cdebc4a219a50fb6810b7b2"
+checksum = "11e9909a8245db81e79cd8096c8da5f2f85a24257489e6fcd5ab307e9314ec72"
 dependencies = [
  "tilewright-render-api",
  "tilewright-render-resources",

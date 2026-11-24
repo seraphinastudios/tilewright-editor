@@ -10,8 +10,10 @@
 //! editor's frame under the editor's own scene limits. Its geometry then
 //! serves pointer selection, caret steps and the input method area in place
 //! of the editor's own. The field is laid out without the shared crate's
-//! submit control: the editor's own Review control and Enter review.
-use crate::workspace_render::{EditableGeometry, Presentation};
+//! submit control: the editor's own Review control and Enter review. It is
+//! styled with the editor's own field row's values, so it sits in the same
+//! row, the same size, with its text at the same origin and size.
+use crate::workspace_render::{self, EditableGeometry, Presentation};
 use crate::workspace_ui::{Rect, WorkspaceUi};
 use tilewright_editor_ui::field_input::{SharedInput, editor_snapshot};
 use tilewright_render_ui::{TextSystem, UiRect};
@@ -37,10 +39,6 @@ pub const SHARED_FIRST_SEMANTIC: u32 = 0xf000_0000;
 const _: () =
     assert!(SHARED_ATLAS_RESOURCE != u64::MAX && SHARED_SOLID_RESOURCE != SHARED_ATLAS_RESOURCE);
 
-/// The logical height of the shared field's row: its composer with the
-/// shared layout's insets.
-pub const ROW_HEIGHT: u32 = 52;
-
 /// The shared field's pointer geometry, beside the editor's own terms.
 #[derive(Clone, Debug)]
 pub struct SharedGeometry {
@@ -48,10 +46,33 @@ pub struct SharedGeometry {
 }
 
 /// The shared layout's options: the single field without its own submit
-/// control, so the composer takes the row's whole inner width.
+/// control, so the composer takes the row's whole width, styled as the
+/// editor's own field row (`workspace_render::display_list`): flat, the
+/// row's own height and active fill, the editor's text size, inset and
+/// colours, and the same scroll. The editor keeps the caret's left edge
+/// `FIELD_SCROLL_MARGIN` from the row's right edge, counted from the text
+/// inset; the shared field keeps its right edge `padding_right` from it.
 pub fn layout_options() -> tilewright_ui::LayoutOptions {
+    use workspace_render::{
+        ACTIVE_ROW_COLOR, CARET_WIDTH, FIELD_ACCENT, FIELD_ROW_HEIGHT, FIELD_SCROLL_MARGIN,
+        TEXT_COLOR, TEXT_INSET,
+    };
     let mut options = tilewright_ui::LayoutOptions::default();
     options.submit_control = false;
+    let style = &mut options.field_style;
+    style.text_size = workspace_render::text_size(FIELD_ROW_HEIGHT);
+    #[allow(clippy::cast_precision_loss)]
+    let height = FIELD_ROW_HEIGHT as f32;
+    style.height = height;
+    style.inset = 0.0;
+    style.padding_left = TEXT_INSET[0];
+    style.padding_top = TEXT_INSET[1];
+    style.padding_right = FIELD_SCROLL_MARGIN - TEXT_INSET[0] - CARET_WIDTH;
+    style.text_color = TEXT_COLOR;
+    style.box_color = Some(ACTIVE_ROW_COLOR);
+    style.selection_color = FIELD_ACCENT;
+    style.caret_color = Some(FIELD_ACCENT);
+    style.preedit_color = Some(FIELD_ACCENT);
     options
 }
 
@@ -108,8 +129,9 @@ impl SharedField {
 
     /// Compile the field in the row the sidebar reserved, before the
     /// editor's frame is fitted, so the fit can leave room for it
-    /// ([`PreparedField::quads`]). Without a reserved row (the field is
-    /// scrolled away) there is nothing to draw.
+    /// ([`PreparedField::quads`], [`PreparedField::raster_samples`]).
+    /// Without a reserved row (the field is scrolled away) there is nothing
+    /// to draw.
     pub fn prepare(
         &mut self,
         text: &mut TextSystem,
@@ -153,13 +175,18 @@ impl PreparedField {
         self.frame.quad_count()
     }
 
+    /// How many raster samples drawing the field adds to the frame.
+    pub fn raster_samples(&self) -> u64 {
+        self.frame.raster_sample_count()
+    }
+
     /// Draw the field over the editor's composed frame and hand its
     /// geometry to the input paths. The composed frame is checked against
-    /// the editor's own `limits`: its quads (the editor's frame was fitted
-    /// to leave [`PreparedField::quads`] free) and its raster samples. The
-    /// shared crate does not report the field's samples, so they cannot be
-    /// set aside beforehand; a field that takes the frame past them is
-    /// refused here, not drawn, and editing pauses with the draft kept.
+    /// the editor's own `limits` as a backstop: the editor's frame was
+    /// fitted to leave [`PreparedField::quads`] and
+    /// [`PreparedField::raster_samples`] free, so a frame refused here is
+    /// one the field alone takes past them. It is not drawn, and editing
+    /// pauses with the draft kept.
     pub fn attach(self, presentation: &mut Presentation, limits: SceneLimits) -> Result<()> {
         let composed = self
             .frame
@@ -183,7 +210,7 @@ fn bounds(ui: &WorkspaceUi) -> Rect {
         x: 0,
         y: 0,
         width: 300.min(logical.0),
-        height: ROW_HEIGHT.min(logical.1),
+        height: workspace_render::FIELD_ROW_HEIGHT.min(logical.1),
     })
 }
 

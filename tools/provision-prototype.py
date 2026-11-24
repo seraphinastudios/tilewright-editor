@@ -202,7 +202,7 @@ def copy_tree(source, destination):
 
 
 # What the receipt and the editor's frame records call the shared field.
-SHARED_STRING_FIELD = 'tilewright-ui 0.1.1'
+SHARED_STRING_FIELD = 'tilewright-ui 0.1.2'
 
 
 def editor_command(executable, children, args, proposal_name, actor):
