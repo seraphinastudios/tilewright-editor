@@ -156,6 +156,7 @@ mod insertion;
 pub mod inspector;
 pub mod portals;
 mod removal;
+pub mod road;
 pub mod scatter;
 pub mod sculpt;
 pub mod text_input;

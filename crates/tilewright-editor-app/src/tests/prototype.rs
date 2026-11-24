@@ -135,7 +135,7 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
         assert!(!app.demo_step(step).unwrap());
     }
     let selected_before_zones = app.session.selection().cloned();
-    for step in 10..17 {
+    for step in 10..18 {
         if app.demo_step(step).unwrap() {
             break;
         }
@@ -237,6 +237,8 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
     tilewright_editor_ui::uid::UidSource::fill(&mut source, &mut seed_bytes).unwrap();
     let seed = u32::from_be_bytes([seed_bytes[0], seed_bytes[1], seed_bytes[2], seed_bytes[3]]);
     assert_eq!(seed, 3_332_693_014);
+    // The road step, last, paints sand with a one-cell brush along row 1
+    // from (0, 1) to (3, 1) and down column 3 to (3, 5): one more change.
     let rows: Vec<String> = (0..6)
         .map(|y| {
             (0..8)
@@ -251,11 +253,12 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
     assert_eq!(
         rows,
         [
-            "sgggssss", "sgggssss", "ggggssss", "sgggssss", "ggggssss", "gsggssss"
+            "sgggssss", "ssssssss", "gggsssss", "sggsssss", "gggsssss", "gsgsssss"
         ]
     );
-    // The scatter is the last step: the fill and replace previews before
-    // it still see the sample's grass columns whole, 24 cells each.
+    // The scatter and the road are the last steps: the fill and replace
+    // previews before them still see the sample's grass columns whole, 24
+    // cells each.
     for phase in ["fill-preview", "replace-preview"] {
         let record: serde_json::Value = serde_json::from_slice(
             &fs::read(temporary.path().join(format!("evidence/{phase}.json"))).unwrap(),
@@ -268,6 +271,9 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
         ("scatter-preview", false),
         ("scatter", true),
         ("scattered", false),
+        ("road-preview", false),
+        ("road", true),
+        ("road-built", false),
     ] {
         let record: serde_json::Value = serde_json::from_slice(
             &fs::read(temporary.path().join(format!("evidence/{phase}.json"))).unwrap(),
@@ -275,7 +281,16 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
         .unwrap();
         assert_eq!(record["pending"], pending, "{phase}");
     }
-    assert_eq!(app.session.history().depths(), (17, 0));
+    assert_eq!(app.session.history().depths(), (18, 0));
+    let record: serde_json::Value = serde_json::from_slice(
+        &fs::read(temporary.path().join("evidence/road-preview.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        record["road"]["points"],
+        serde_json::json!([[0, 1], [3, 1], [3, 5]])
+    );
+    assert_eq!(record["road"]["cells"], 8);
     for phase in [
         "before",
         "pending",
@@ -326,6 +341,9 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
         "scatter-preview",
         "scatter",
         "scattered",
+        "road-preview",
+        "road",
+        "road-built",
     ] {
         assert!(
             temporary
@@ -2235,6 +2253,9 @@ mod proposal_highlight;
 
 #[path = "view_refusal.rs"]
 mod view_refusal;
+
+#[path = "road.rs"]
+mod road;
 
 fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(fs::read(path).unwrap()))

@@ -758,7 +758,16 @@ fn the_tool_builds_the_rules_fill_and_never_a_stroke_under_it() {
         );
         assert!(tools.stroke().is_none());
     }
-    assert_eq!(TerrainRule::Replace.next(), TerrainRule::Brush);
+    assert_eq!(TerrainRule::Replace.next(), TerrainRule::Road);
+    assert_eq!(TerrainRule::Road.next(), TerrainRule::Brush);
+    // The Road rule neither fills nor drags.
+    tools.set_terrain_rule(TerrainRule::Road);
+    assert!(!tools.filling() && tools.drawing_road());
+    assert!(
+        tools
+            .fill_action(catalog, &cell("floor"), expected, false)
+            .is_err()
+    );
     // Outside Terrain mode there is no fill, whatever the rule.
     tools.set_mode(ToolMode::Select);
     assert!(!tools.filling());

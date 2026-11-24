@@ -313,6 +313,33 @@ pub fn sculpt_overlay(
     cells: &BTreeSet<[i64; 2]>,
     shape: CellShape,
 ) -> Vec<Quad> {
+    ringed_marks(prepared, cells, shape, SCULPT_MARK)
+}
+
+/// The mark of a point of the road being drawn: amber, where a sculpt
+/// mark is magenta; ringed and placed like one ([`sculpt_overlay`]).
+/// Sculpt marks show only in Sculpt mode and road points only in Terrain
+/// mode, so the two never show together.
+pub const ROAD_POINT_MARK: [f32; 4] = [1.0, 0.62, 0.05, 1.0];
+
+/// The points of the road being drawn: on every tile of `points` the ringed
+/// centre mark of [`sculpt_overlay`] in [`ROAD_POINT_MARK`], above every
+/// tile and object. Unpickable; they need no cell slots.
+pub fn road_point_overlay(
+    prepared: &PreparedPreview,
+    points: &BTreeSet<[i64; 2]>,
+    shape: CellShape,
+) -> Vec<Quad> {
+    ringed_marks(prepared, points, shape, ROAD_POINT_MARK)
+}
+
+/// [`sculpt_overlay`]'s marks, the centre one in `color`.
+fn ringed_marks(
+    prepared: &PreparedPreview,
+    cells: &BTreeSet<[i64; 2]>,
+    shape: CellShape,
+    color: [f32; 4],
+) -> Vec<Quad> {
     let (depth, painter_order) = above_world(prepared);
     let mut tiles: BTreeMap<[i64; 2], Vec<&Quad>> = BTreeMap::new();
     for quad in prepared.cell_scene.quads() {
@@ -327,6 +354,7 @@ pub fn sculpt_overlay(
         let Some(mark) = flat_mark(&parts, depth, painter_order) else {
             continue;
         };
+        let mark = Quad { color, ..mark };
         let [left, top] = mark.positions[0];
         let [right, bottom] = mark.positions[2];
         let rings = sculpt_ring((right - left) / 2.0, (bottom - top) / 2.0, shape)
