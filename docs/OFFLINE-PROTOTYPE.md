@@ -580,7 +580,8 @@ Once a road's change is accepted, the editor remembers the cells that
 change recorded (every cell of the corridor, also those that already held
 the terrain) and the road's first point. Under a catalog with a
 [height range](#height-range), Terrain mode's sidebar then offers, after
-the rules, "Road to grade: 21 cells from (0, 1)" and two rows:
+the rules, "Road from (0, 1), 21 cells" (the first point, then the
+cells) and two rows:
 
 - **Grade road: Flatten** (`L`, for level) prepares a `flatten_heights`
   over exactly those cells to the committed height at the road's first
@@ -603,12 +604,16 @@ height is outside it refuses the flatten: "Grade road refused: the road's
 first point (1, 1) has height 20, outside the granted range -8 to 8; a
 flatten target must lie inside it."), nothing to change, the cell cap (a
 road never has more cells than an edit may cover), and a result that cannot
-be drawn at this view, which is cancelled with the flatten's or the
-smooth's advice.
+be drawn at this view, which is cancelled as any edit is, with a grade's
+own advice: its target and cells are the road's, so "Zoom out and grade
+again, or smooth the road instead." for a flatten and "Zoom out and grade
+again." for a smooth. The road stays remembered.
 
 The rows are laid out disabled, and the line above them says why, when the
 catalog grants no heights ("Grading needs editing.heights"), when no road
-is remembered ("Grading: accept a road first"), while a change is pending,
+is remembered ("Grading: no road since last edit": grading needs a road
+accepted since the last other accepted change, Undo or Redo, even when an
+older road is still on the map), while a change is pending,
 the grade's own too ("Grading: a change is pending"), and while editing is
 paused ("Grading: editing is paused"); the keys and controls are then
 refused in the words of the cause. While a road is drawn they are fenced
@@ -623,10 +628,13 @@ its cells are still what it covers:
 - accepting any other change forgets it, and so does accepting an Undo or
   a Redo of any step, including the road's own Undo; a Redo never brings it
   back;
-- Reopen forgets it, and so would any change of the committed World or of
-  the active view (plane, layer, bounds) that did not come from its grade;
-- leaving Terrain mode, pans and zooms, drawing another road (until that
-  one is accepted) and dropping it keep it.
+- any change of the committed World or of the active view (plane, layer,
+  bounds) that did not come from its grade forgets it; a World or catalog
+  changed on disk pauses or blocks every edit, grades included;
+- leaving Terrain mode, pans and zooms, a Reopen (also during the road's
+  or a grade's Review: the change accepted after it is remembered as
+  usual), drawing another road (until that one is accepted) and dropping
+  it keep it.
 
 The scripted demonstration does not grade: the neutral sample grants no
 height range.
@@ -641,16 +649,16 @@ To try it by hand on a copy (the sample has no heights grant):
    it as above.
 2. Press T, choose "floor / sand", press F until the rule row says Road,
    press `]` once (3 x 3), click (0,1) and (5,1), and press Enter twice:
-   the road is accepted, and the sidebar's last rows read "Road to grade:
-   21 cells from (0, 1)", "Grade road: Flatten  L" and "Grade road: Smooth
-   E".
+   the road is accepted, and the sidebar's last rows read "Road from (0,
+   1), 21 cells", "Grade road: Flatten  L" and "Grade road: Smooth  E".
 3. Press L: the review shows the chunk's `height` rows; press Enter. Press
    H: the road's three rows from x 0 to 6 are one band, height -1, the
    height of (0,1); the inspector on (6,2) reads "Height: -1" and on (7,2)
    "Height: 5".
 4. Press Z and Enter: the heights come back ((2,1) reads "Height: 1")
-   and the sand stays; Z and Enter again: the road goes too. The line
-   above the grade rows now reads "Grading: accept a road first".
+   and the sand stays, but the Undo forgot the road: the line above the
+   grade rows reads "Grading: no road since last edit" and L is refused.
+   Z and Enter again: the road goes too.
 
 ### Deleting objects
 

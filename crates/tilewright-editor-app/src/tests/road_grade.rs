@@ -13,7 +13,7 @@ use super::acknowledge_ui;
 use super::road::{Lines, click, points, press, road_application, with_speckle};
 use super::sculpt_mode::{height, heights, steep_at, wide_isometric};
 use super::zones::{button, route};
-use crate::prototype::{Application, GRADE_NO_ROAD, ROAD_IN_PROGRESS};
+use crate::prototype::{Application, GRADE_NO_ROAD, GRADE_NO_ROAD_ROW, ROAD_IN_PROGRESS};
 use crate::workspace_ui::Control;
 use sdl3::keyboard::Keycode;
 use std::collections::BTreeMap;
@@ -208,10 +208,10 @@ fn grades_exactly_the_roads_cells(prepare: fn(&Path)) {
         assert_eq!(
             label,
             format!(
-                "Road to grade: {} cells from ({}, {})",
-                cells.len(),
+                "Road from ({}, {}), {} cells",
                 clicked[0][0],
-                clicked[0][1]
+                clicked[0][1],
+                cells.len()
             )
         );
         assert!(flatten && smooth);
@@ -345,7 +345,7 @@ fn the_rows_and_keys_say_why_grading_is_unavailable() {
     let (_temporary, mut app) = road_application(1, bumpy);
     assert_eq!(
         grade_rows(&mut app),
-        ("Grading: accept a road first".into(), false, false)
+        (GRADE_NO_ROAD_ROW.into(), false, false)
     );
     assert_eq!(press(&mut app, Keycode::L).unwrap_err(), GRADE_NO_ROAD);
     // A road drawn but pending is not yet a road to grade.
@@ -356,7 +356,7 @@ fn the_rows_and_keys_say_why_grading_is_unavailable() {
     press(&mut app, Keycode::Return).unwrap();
     assert_eq!(
         grade_rows(&mut app),
-        ("Road to grade: 4 cells from (0, 1)".into(), true, true)
+        ("Road from (0, 1), 4 cells".into(), true, true)
     );
     // A pending change (the grade's own here).
     press(&mut app, Keycode::L).unwrap();
@@ -410,13 +410,21 @@ fn the_rows_and_keys_say_why_grading_is_unavailable() {
     assert!(app.session.history().pending().is_none());
     // Dropping that road keeps the remembered one.
     press(&mut app, Keycode::Escape).unwrap();
-    assert_eq!(grade_rows(&mut app).0, "Road to grade: 4 cells from (0, 1)");
+    assert_eq!(grade_rows(&mut app).0, "Road from (0, 1), 4 cells");
 }
 
 #[test]
 fn grading_is_refused_in_the_pauses_words() {
     // Tall tiles at (1, 1) to (3, 3); the road runs along row 5.
     let (_temporary, mut app) = road_application(1, |root| steep_at(root, [1, 1]));
+    // Paused with no road: the missing road is named first.
+    app.view.camera.zoom = 8.0;
+    assert_eq!(app.rebuild().unwrap_err(), "invalid world view");
+    acknowledge_ui(&mut app);
+    assert_eq!(grade_rows(&mut app).0, GRADE_NO_ROAD_ROW);
+    assert_eq!(press(&mut app, Keycode::L).unwrap_err(), GRADE_NO_ROAD);
+    app.view.camera.zoom = 1.0;
+    app.rebuild().unwrap();
     accept_road(&mut app, &[[0, 5], [7, 5]]);
     app.view.camera.zoom = 8.0;
     assert_eq!(app.rebuild().unwrap_err(), "invalid world view");
@@ -505,7 +513,7 @@ fn whatever_makes_the_cells_stale_drops_the_road_and_nothing_else_does() {
     assert!(remembered(&app).is_some());
     press(&mut app, Keycode::Return).unwrap();
     assert!(remembered(&app).is_none());
-    // Reopen.
+    // A Reopen that finds the files unchanged keeps the road.
     for _ in 0..3 {
         press(&mut app, Keycode::F).unwrap();
     }
@@ -517,9 +525,152 @@ fn whatever_makes_the_cells_stale_drops_the_road_and_nothing_else_does() {
     .unwrap();
     accept_road(&mut app, &[[0, 3], [4, 3]]);
     assert!(remembered(&app).is_some());
+    let cells = remembered(&app).unwrap();
     press(&mut app, Keycode::R).unwrap();
-    assert!(remembered(&app).is_none());
-    assert_eq!(press(&mut app, Keycode::L).unwrap_err(), GRADE_NO_ROAD);
+    assert_eq!(remembered(&app), Some(cells));
+    press(&mut app, Keycode::L).unwrap();
+    assert!(app.session.history().pending().is_some());
+}
+
+#[test]
+fn a_reopen_keeps_a_road_under_review_or_remembered_and_never_a_stale_one() {
+    // During the road's own Review: the road accepted after it is
+    // remembered.
+    let (temporary, mut app) = road_application(1, bumpy);
+    click(&mut app, [0, 1]).unwrap();
+    click(&mut app, [3, 1]).unwrap();
+    press(&mut app, Keycode::Return).unwrap();
+    let _ = press(&mut app, Keycode::R);
+    assert!(app.session.history().pending().is_some());
+    press(&mut app, Keycode::Return).unwrap();
+    let cells = recorded_cells(&last_step(&app));
+    assert_eq!(remembered(&app), Some(cells.clone()));
+    assert_eq!(grade_rows(&mut app).0, "Road from (0, 1), 4 cells");
+    // During a grade's Review: the grade accepted after it keeps it.
+    press(&mut app, Keycode::E).unwrap();
+    let _ = press(&mut app, Keycode::R);
+    assert!(app.session.history().pending().is_some());
+    press(&mut app, Keycode::Return).unwrap();
+    assert!(matches!(last_step(&app), Action::SmoothHeights { .. }));
+    assert_eq!(remembered(&app), Some(cells.clone()));
+    // With nothing pending and nothing changed.
+    press(&mut app, Keycode::R).unwrap();
+    assert_eq!(remembered(&app), Some(cells.clone()));
+    // A World changed on disk: the Reopen blocks the session, and no
+    // grade of the stale road is prepared.
+    let path = temporary
+        .path()
+        .join("world")
+        .join(super::sculpt_mode::MAIN);
+    let mut changed = fs::read(&path).unwrap();
+    changed.extend_from_slice(b"\n");
+    fs::write(&path, &changed).unwrap();
+    let _ = press(&mut app, Keycode::R);
+    for keycode in [Keycode::L, Keycode::E] {
+        assert!(press(&mut app, keycode).is_err());
+        assert!(app.session.history().pending().is_none());
+    }
+    let (_, flatten, smooth) = grade_rows(&mut app);
+    assert!(!flatten && !smooth);
+    // While paused: the Reopen is refused and the road kept.
+    let (_temporary, mut app) = road_application(1, |root| steep_at(root, [1, 1]));
+    let cells = recorded_cells(&accept_road(&mut app, &[[0, 5], [7, 5]]));
+    app.view.camera.zoom = 8.0;
+    assert!(app.rebuild().is_err());
+    acknowledge_ui(&mut app);
+    assert!(press(&mut app, Keycode::R).is_err());
+    app.view.camera.zoom = 1.0;
+    app.rebuild().unwrap();
+    acknowledge_ui(&mut app);
+    assert_eq!(remembered(&app), Some(cells));
+    press(&mut app, Keycode::E).unwrap();
+    assert!(app.session.history().pending().is_some());
+}
+
+#[test]
+fn an_undrawable_grade_is_cancelled_with_a_grades_advice_and_the_road_kept() {
+    // Isometric 32 x 16 (the sample's art is taller than its diamonds),
+    // row 1 at -1024 and (0, 3) at 1024: a 3 x 3 road along row 3 from
+    // (0, 3) flattened to 1024 puts a band at 1024 beside the band at
+    // -1024, which zoom 8 cannot draw though the committed World draws.
+    let (_temporary, mut app) = road_application(1, |root| {
+        heights(root, -1024, 1024, |x, y| match [x, y] {
+            [_, 1] => -1024,
+            [0, 3] => 1024,
+            _ => 0,
+        });
+        super::proposal::edit_json(root, "profile/profile.jsonc", |profile| {
+            profile["projection"] =
+                serde_json::json!({"kind": "isometric", "tile_width": 32, "tile_height": 16});
+        });
+    });
+    // Drawn zoomed out, where every tile is in the window.
+    app.view.camera.zoom = 0.25;
+    app.rebuild().unwrap();
+    press(&mut app, Keycode::RightBracket).unwrap();
+    let road = accept_road(&mut app, &[[0, 3], [7, 3]]);
+    app.view.camera.zoom = 8.0;
+    app.rebuild().unwrap();
+    acknowledge_ui(&mut app);
+    let error = press(&mut app, Keycode::L).unwrap_err();
+    assert_eq!(
+        error,
+        format!(
+            "{} Zoom out and grade again, or smooth the road instead. Renderer: invalid world view",
+            crate::prototype::UNDRAWABLE_CHANGE
+        )
+    );
+    assert!(app.session.history().pending().is_none());
+    assert!(app.blocked.is_none());
+    assert_eq!(remembered(&app), Some(recorded_cells(&road)));
+    assert!(grade_rows(&mut app).1);
+    assert_eq!(
+        crate::prototype::grade_advice(RoadGrade::Smooth),
+        "Zoom out and grade again."
+    );
+    // Zoomed out it grades.
+    app.view.camera.zoom = 1.0;
+    app.rebuild().unwrap();
+    acknowledge_ui(&mut app);
+    press(&mut app, Keycode::L).unwrap();
+    assert!(app.session.history().pending().is_some());
+}
+
+#[test]
+fn the_grade_lines_fit_the_sidebar_row() {
+    // The widest label the sample's view allows: its farthest tile and
+    // the cell cap.
+    let (_temporary, mut app) = road_application(1, bumpy);
+    let (_, _, [min_x, min_y, width, height]) = app.session.catalog().view();
+    let far = [min_x + width - 1, min_y + height - 1];
+    let labels: Vec<String> = [far, [min_x, min_y]]
+        .into_iter()
+        .map(|point| {
+            crate::prototype::grade_label(point, tilewright_editor_ui::brush::MAXIMUM_STROKE_CELLS)
+        })
+        .collect();
+    assert_eq!(labels[0], "Road from (7, 5), 4096 cells");
+    app.refresh_ui();
+    let row_width = app.ui.sidebar_width();
+    for text in [
+        labels[0].as_str(),
+        labels[1].as_str(),
+        GRADE_NO_ROAD_ROW,
+        "Grading needs editing.heights",
+        "Grading: editing is paused",
+        "Grading: a change is pending",
+        "Grading: editing unavailable",
+    ] {
+        assert_eq!(
+            crate::workspace_render::fit_text(
+                &mut app.text,
+                text,
+                row_width,
+                crate::prototype::TEXT_ROW_HEIGHT
+            ),
+            text
+        );
+    }
 }
 
 #[test]
@@ -533,10 +684,7 @@ fn the_guides_hand_test_reads_as_written() {
     }
     press(&mut app, Keycode::Return).unwrap();
     press(&mut app, Keycode::Return).unwrap();
-    assert_eq!(
-        grade_rows(&mut app).0,
-        "Road to grade: 21 cells from (0, 1)"
-    );
+    assert_eq!(grade_rows(&mut app).0, "Road from (0, 1), 21 cells");
     press(&mut app, Keycode::L).unwrap();
     assert!(app.session.history().pending().is_some());
     press(&mut app, Keycode::Return).unwrap();
@@ -552,8 +700,10 @@ fn the_guides_hand_test_reads_as_written() {
     press(&mut app, Keycode::Return).unwrap();
     assert_eq!(height(&app, 2, 1), 1);
     assert_eq!(super::terrain_value(&app, 2, 1).as_deref(), Some("sand"));
+    // The Undo forgot the road although it is still on the map.
+    assert_eq!(grade_rows(&mut app).0, GRADE_NO_ROAD_ROW);
     press(&mut app, Keycode::Z).unwrap();
     press(&mut app, Keycode::Return).unwrap();
     assert_eq!(super::terrain_value(&app, 2, 1).as_deref(), Some("grass"));
-    assert_eq!(grade_rows(&mut app).0, "Grading: accept a road first");
+    assert_eq!(grade_rows(&mut app).0, GRADE_NO_ROAD_ROW);
 }

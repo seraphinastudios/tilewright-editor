@@ -282,9 +282,12 @@ struct Anchor {
 /// a grade of it, which leaves the cells the road's), at the committed
 /// revision and active view that Accept produced. Any other accepted
 /// change, an accepted Undo or Redo (of the road, a grade or anything
-/// else), and [`Self::forget`] (Reopen) drop it, and a committed revision
-/// or view that differs from its own hides it for good at the next
-/// [`Self::settle`]. Cancelling a pending change, the road's own or a
+/// else) drop it, and a committed revision or view that differs from its
+/// own hides it on every read and forgets it for good at the next
+/// [`Self::settle`]. Nothing else does: a Reopen, which only checks that
+/// the files still hold the committed World, keeps it, and a change of
+/// the World or catalog on disk pauses or blocks every edit, grades
+/// included. Cancelling a pending change, the road's own or a
 /// grade's, keeps it.
 #[derive(Clone, Debug, Default)]
 pub struct RoadMemory {
@@ -355,10 +358,6 @@ impl RoadMemory {
         {
             self.accepted = None;
         }
-    }
-    /// Forget every road (Reopen).
-    pub fn forget(&mut self) {
-        *self = Self::default();
     }
     /// The remembered road, when its revision and view are `revision` and
     /// `view`: the committed World's and the active view's now.
@@ -589,8 +588,5 @@ mod tests {
             ..settled(false, false, 3, 3)
         });
         assert!(memory.road([3; 32], VIEW).is_none());
-        commit(&mut memory, Some(road), 3, 4);
-        memory.forget();
-        assert!(memory.road([4; 32], VIEW).is_none());
     }
 }

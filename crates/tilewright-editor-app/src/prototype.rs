@@ -52,8 +52,11 @@ const ROAD_ENDED_BY_MODE: &str = "Road dropped: the mode changed; nothing was pr
 const ROAD_ENDED_BY_RULE: &str = "Road dropped: the rule changed; nothing was prepared.";
 const ROAD_ENDED_BY_GRID: &str = "Road dropped: the grid changed; nothing was prepared.";
 const ROAD_IN_PROGRESS: &str = "Finish the road with Enter or drop it with Esc first.";
-/// Grade road's refusal with no remembered road.
-pub(crate) const GRADE_NO_ROAD: &str = "Grade road needs an accepted road: draw one with the Road rule, review it and accept it first.";
+/// Grade road's refusal with no remembered road, and the line above its
+/// rows: a road is remembered only from its Accept until the next other
+/// accepted change, Undo or Redo.
+pub(crate) const GRADE_NO_ROAD: &str = "Grade road needs a road accepted since the last other change, Undo or Redo: draw one with the Road rule, review it and accept it.";
+pub(crate) const GRADE_NO_ROAD_ROW: &str = "Grading: no road since last edit";
 const ROAD_OFF_VIEW: &str =
     "Road points are tiles of the view: no tile under the pointer, so no point was added.";
 
@@ -867,10 +870,13 @@ impl Application {
     }
 
     fn action(&mut self, action: Action) -> Result<()> {
-        // Reopen forgets the remembered road, whatever it finds.
-        if matches!(action, Action::Reopen) {
-            self.roads.forget();
-        }
+        let advice = undrawable_advice(Some(&action));
+        self.advised_action(action, advice)
+    }
+
+    /// [`Self::action`] with `advice` for a change that cannot be drawn at
+    /// this view, in place of its kind's.
+    fn advised_action(&mut self, action: Action, advice: &str) -> Result<()> {
         // Cancel stays open while rendering blocks editing: it changes no
         // source and goes back to the committed World.
         if !matches!(action, Action::Cancel) {
@@ -881,7 +887,6 @@ impl Application {
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
-        let advice = undrawable_advice(Some(&action));
         let paused_cancel = self.blocked.is_some() && self.session.history().pending().is_some();
         let result = self.funnel(accept, false, advice, |app| {
             app.session
@@ -1589,7 +1594,7 @@ impl Application {
             ));
         }
         if self.graded_road().is_none() {
-            return Some(("Grading: accept a road first", GRADE_NO_ROAD.into()));
+            return Some((GRADE_NO_ROAD_ROW, GRADE_NO_ROAD.into()));
         }
         if let Err(reason) = self.refuse_while_paused() {
             return Some(("Grading: editing is paused", reason));
@@ -1626,7 +1631,7 @@ impl Application {
             self.session.history().document().revision(),
         )?;
         self.roads.stage(road);
-        let result = self.action(action);
+        let result = self.advised_action(action, grade_advice(grade));
         self.roads.unstage();
         result
     }
@@ -3061,15 +3066,8 @@ impl Application {
         rows.push((
             match (&unavailable, self.graded_road()) {
                 (Some((row, _)), _) => (*row).to_owned(),
-                (None, Some(road)) => {
-                    let [x, y] = road.first();
-                    let count = road.cells().len();
-                    format!(
-                        "Road to grade: {count} {} from ({x}, {y})",
-                        if count == 1 { "cell" } else { "cells" }
-                    )
-                }
-                (None, None) => GRADE_NO_ROAD.to_owned(),
+                (None, Some(road)) => grade_label(road.first(), road.cells().len()),
+                (None, None) => GRADE_NO_ROAD_ROW.to_owned(),
             },
             None,
             true,
@@ -6750,6 +6748,26 @@ fn road_key(app: &mut Application, key: Keycode) -> Option<Result<()>> {
         Keycode::G if app.proposal.is_some() => Err(ROAD_IN_PROGRESS.into()),
         _ => return None,
     })
+}
+
+/// The line above the Grade road rows for a remembered road: its first
+/// point (where a flatten reads its target) first, so a narrow row cuts
+/// the count, never the point.
+pub(crate) fn grade_label([x, y]: [i64; 2], count: usize) -> String {
+    format!(
+        "Road from ({x}, {y}), {count} {}",
+        if count == 1 { "cell" } else { "cells" }
+    )
+}
+
+/// What to do after [`UNDRAWABLE_CHANGE`] refused a grade: its target and
+/// cells are the road's, so zoom out; a flatten can be swapped for a
+/// smooth, which keeps each cell nearer its neighbours.
+pub(crate) fn grade_advice(grade: RoadGrade) -> &'static str {
+    match grade {
+        RoadGrade::Flatten => "Zoom out and grade again, or smooth the road instead.",
+        RoadGrade::Smooth => "Zoom out and grade again.",
+    }
 }
 
 /// A pan (WASD) or zoom (+/-) key: one step through [`Application::change_view`].
