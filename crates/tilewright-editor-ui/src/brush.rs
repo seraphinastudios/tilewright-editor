@@ -376,12 +376,18 @@ mod tests {
         let mut stroke = wide_stroke(4);
         // Start inside the view so every stamp is a whole 9 x 9 square.
         let mut x = 4;
-        while !stroke.capped() {
+        // Bounded, so a cap that is not applied fails here instead of
+        // looping: 4,096 / 81 stamps fit, the next one caps.
+        for _ in 0..100 {
+            if stroke.capped() {
+                break;
+            }
             let before = stroke.len();
             let added = stroke.stamp([x, 4]);
             assert!(added == 0 || stroke.len() == before + added);
             x += 9;
         }
+        assert!(stroke.capped(), "the cap stops the stroke");
         assert!(stroke.len() <= MAXIMUM_STROKE_CELLS);
         assert_eq!(stroke.len() % 81, 0, "only whole 9x9 stamps were kept");
     }

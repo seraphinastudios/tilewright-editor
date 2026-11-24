@@ -373,10 +373,10 @@ Terrain mode's sidebar names the current rule in a header row above the
 inspector's rows, below a proposal's block ("Rule: Brush  F", always laid
 out, even at the smallest window; pressing it moves to the next rule), and
 lists the rules after the palette: **Brush**
-(drag paints, the default), **Fill** (a click fills the joined area) or
-**Replace** (a click replaces every match in the view). A row chooses its
-rule; **F** cycles Brush, Fill, Replace in Terrain mode and does nothing
-elsewhere. The rule is kept across modes, like the brush. With Fill or
+(drag paints, the default), **Fill** (a click fills the joined area),
+**Replace** (a click replaces every match in the view) or **Road** (clicked
+points, see [Roads](#roads)). A row chooses its rule; **F** cycles Brush,
+Fill, Replace, Road in Terrain mode and does nothing elsewhere. The rule is kept across modes, like the brush. With Fill or
 Replace the brush rows stay but are unavailable, and `[`, `]` and `B` do
 nothing; a press never starts a stroke.
 
@@ -496,6 +496,99 @@ palette above, with no catalog editing:
 2. Release: the pending scene shows grass and sand mixed about 3 to 1 where
    the preview was. Accept, then Undo: one step restores the area.
 3. Drag the same area again: another seed gives another mix.
+
+### Roads
+
+Terrain mode's fourth rule, **Road** ("Rule: Road  F"), draws a road by its
+points: each click on a tile of the view adds a point, and the road is the
+brush stamped along the straight cell line from each point to the next,
+exactly as a drag stamps between its pointer samples (the same code, so a
+drag whose pointer samples land on exactly these tiles, in this order,
+covers the same cells; a drag by hand also samples the tiles in between,
+and may cover others. The line rule depends on direction, so the order of
+the clicks decides which cells). The width and shape are the
+brush's (`[`, `]` and `B`; odd widths 1 to 17, square or disc; the disc
+keeps a diagonal road as wide as a straight one); the corridor is clipped
+to the view and capped at 4,096 cells, as a stroke is. The road lays the
+chosen terrain value, or scatters the chosen palette. A press never starts
+a drag stroke with this rule.
+
+Keys while a road is drawn, before the global keys:
+
+- **Enter** finishes it: it becomes one ordinary pending change for Review,
+  a `paint_stroke` over the corridor with the chosen terrain, or a
+  `scatter_terrain` with the chosen palette. Enter again, on the review
+  shown, accepts as for every edit; one Enter never does both.
+- **Backspace** removes the last point; removing the only point ends the
+  road.
+- **Esc** drops the road and does nothing else: no pending change is
+  cancelled and the mode stays.
+- `[`, `]` and `B` change the corridor, and the preview follows; H, O, pans
+  and zooms keep the points, which are tiles, not pixels.
+- F (another rule), a key or button of another mode, and a terrain or
+  palette of another grid end the road, and the status line says so ("Road
+  dropped: the rule changed; nothing was prepared.", and likewise for the
+  mode and the grid; Esc gives "Road dropped; nothing was prepared."). T or
+  the Terrain button in Terrain mode, and a terrain or palette of the same
+  grid, keep it.
+- Every other control that would prepare an edit or open a draft or a pick
+  step is refused with "Finish the road with Enter or drop it with Esc
+  first." when it comes from a key or a direct control, and laid out
+  disabled (a press on a disabled row does nothing, as for every disabled
+  row): Undo, Redo, Delete, the inspector's
+  position, field and portal controls of an object selected before, and the
+  proposal's controls; so are the keys Z, Y, R, Delete and, with a proposal
+  open, G. So nothing else is prepared while a road is drawn.
+
+A road needs two points: with one, Enter prepares nothing and the road
+stays. A click on the last point adds none. A click that hits no tile of
+the view adds nothing and says so; it never picks a nearby tile. The road
+does not select anything. While a change is pending a click adds no point,
+refused in the words a brush press gets. While editing is paused clicks,
+Enter and Backspace are refused in the pause's words and the road's marks
+are not drawn; Esc still drops it. A road and a text draft never exist
+together: the first road point discards an open draft (its text is not
+kept), as any press on the map does, and no draft opens while a road is
+drawn, so a road never takes text input. An open portal pick
+step takes the next tile click, as it always does, so no road begins until
+it is ended (Esc ends it first). With neither a terrain nor a palette chosen a click is refused as a
+brush press is. A window losing focus keeps the road.
+
+While a road is drawn its points are marked with ringed amber centre marks
+(the shape of Sculpt mode's marks, which never show in Terrain mode), and
+the cells finishing it would change are marked as a stroke's are, white at
+45 %: the engine's own plan for the same stroke Enter prepares, so cells
+that already hold the terrain stay unmarked. The status line counts them:
+"Road of sand: 3 points, 212 cells, 180 to change; Enter to review,
+Backspace removes a point, Esc drops it." When finishing would change
+nothing, or be refused, nothing is marked and the line gives the engine's
+reason after "Enter prepares nothing:"; the road stays so it can be
+extended. There is no line from the last point to the pointer: the corridor
+after each click is what is recorded. Over the scene limits the marks are
+left out with "Too many cells to preview.", as for a stroke.
+
+A road that scatters draws its seed once, from the session's random
+source, at its first point (or when a palette is chosen while a terrain
+road is drawn) and keeps it, so the preview marks the cells the recorded
+seed changes; the status line names it ("Road from palette speckle (seed
+1234): ..."). Finishing draws no seed.
+
+What is recorded is the ordinary edit: its cells, terrain or palette and
+seed, never the points. A proposal, Undo and Redo treat a road as the one
+paint or scatter it is, one step each; a later "grade this road" step is
+not part of this version.
+
+To try it by hand in a real window on the unedited neutral sample:
+
+1. Press T, choose "floor / sand", press F until the rule row says Road,
+   and press `]` once (a 3 x 3 brush).
+2. Click (0,1), (3,1) and (3,4): amber marks sit on the three tiles, the
+   white marks cover the grass the road crosses, and the status line counts
+   3 points.
+3. Press Backspace (the mark on (3,4) goes), click (0,4), then press Enter:
+   the status line says "Review changes, then Accept or Cancel." and the
+   pending scene shows the sand road.
+4. Press Enter to accept, then Z and Enter: one step takes the road away.
 
 ### Deleting objects
 
@@ -1511,7 +1604,12 @@ capturing the live preview mid-gesture (`scatter-preview`; the status line
 names the seed), the pending review (`scatter`) and the accepted result
 (`scattered`); the brush and the terrain choice are restored. Its seed comes
 from the same seeded source as the placements' uids, so the drawn values
-are the same on every run. The sample grants no height range, so the
+are the same on every run. It then draws a road: with sand, the Road rule
+and a one-cell brush it clicks (0,1), (3,1) and (3,5) (`road-preview`,
+whose JSON has a `road` member with the points, the brush, the covered and
+changed cells, or, while editing is paused, `refused` with the pause's
+words in place of the changed cells), presses Enter (`road`, pending) and accepts (`road-built`);
+the rule and the brush are restored. The sample grants no height range, so the
 demonstration does not sculpt ([Sculpt mode](#sculpt-mode)). It is a
 deterministic scripted demonstration,
 not a claim of human input. `--reference` produces composed workspace CPU

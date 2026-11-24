@@ -410,5 +410,5 @@ fn without_palettes_the_scripted_scatter_step_is_skipped() {
         .filter(|name| name.starts_with("scatter"))
         .collect();
     assert!(evidence.is_empty(), "{evidence:?}");
-    assert!(app.demo_step(16).unwrap());
+    assert!(app.demo_step(17).unwrap());
 }
