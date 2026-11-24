@@ -368,11 +368,7 @@ fn presses(app: &mut Application, from: Keycode, arrow: Keycode, presses: usize)
 }
 
 /// Every arrow press beside a stored-break marker moves the caret, in both
-/// fields and both directions. At its 20 px text the renderer gives
-/// committed position 9 of this value two caret stops a float apart (x
-/// 97.700005 and 97.7); tilewright-ui-render 0.1.0 took the step between
-/// them for a move, so one Left press there did nothing. 0.1.1 counts them
-/// as one place.
+/// fields and both directions.
 #[test]
 fn the_shared_field_visits_every_position_beside_a_marker_with_no_press_that_does_nothing() {
     let stored = "Trail\nmar\u{2028}ker\u{2029}";
@@ -557,6 +553,77 @@ fn raster_samples(scene: &tilewright_scene::SceneBundle, quads: &[tilewright_sce
     low
 }
 
+/// The caret's position and its x in the drawn field, after each of
+/// `presses` presses of `arrow` from `from`, then from where it ends.
+fn visual_presses(
+    app: &mut Application,
+    from: Keycode,
+    arrow: Keycode,
+    presses: usize,
+) -> Vec<(usize, f32)> {
+    let mut input = crate::native_input::NativeInput::new(7);
+    let mut clipboard = String::new();
+    acknowledge_ui(app);
+    route(app, &mut input, &input_key(7, from, false), &mut clipboard).unwrap();
+    let mut stops = Vec::new();
+    for press in 0..=presses {
+        if press > 0 {
+            route(app, &mut input, &input_key(7, arrow, false), &mut clipboard).unwrap();
+        }
+        acknowledge_ui(app);
+        let geometry = app.displayed_text.as_ref().unwrap();
+        let focus = geometry.snapshot.display_selection.focus;
+        let caret = geometry
+            .layout
+            .caret(crate::workspace_render::renderer_cursor(focus))
+            .unwrap();
+        let byte = app.tools.draft_snapshot().unwrap().selection.focus.byte;
+        stops.push((byte, geometry.origin[0] + caret.x));
+    }
+    stops
+}
+
+/// At the 18 px field text the renderer gives display position 7 of this
+/// value two caret stops a float apart (x 4.68 after the letters and
+/// 4.6800003 before the Hebrew letter): the editor's own field takes one
+/// press to step between them, and nothing moves on screen.
+/// tilewright-ui-render 0.1.0 also took that step for a move; 0.1.1 counts
+/// the two stops as one place, so every press of the shared field moves.
+#[test]
+fn every_arrow_press_moves_the_shared_caret_where_two_stops_are_a_float_apart() {
+    let stored = "\u{5d0}abb\u{5d0} ";
+    let moved = |stops: &[(usize, f32)]| {
+        stops
+            .windows(2)
+            .map(|pair| (pair[1].1 - pair[0].1).abs() > 0.5)
+            .collect::<Vec<_>>()
+    };
+    let (_own, mut own) = labelled(FieldImplementation::Editor, stored, (960, 640));
+    own.control(Control::Field("label".into())).unwrap();
+    // The value still has the pair: one press of the editor's own field
+    // does not move.
+    let stops = visual_presses(&mut own, Keycode::Home, Keycode::Right, 7);
+    assert_eq!(
+        moved(&stops).iter().filter(|moved| !**moved).count(),
+        1,
+        "{stops:?}"
+    );
+    let (_shared, mut shared) = labelled(FieldImplementation::Shared, stored, (960, 640));
+    shared.control(Control::Field("label".into())).unwrap();
+    for (from, arrow, expected) in [
+        (Keycode::Home, Keycode::Right, [8, 7, 2, 3, 4, 2, 0]),
+        (Keycode::End, Keycode::Left, [0, 5, 4, 3, 5, 7, 8]),
+    ] {
+        let stops = visual_presses(&mut shared, from, arrow, 6);
+        let bytes: Vec<_> = stops.iter().map(|stop| stop.0).collect();
+        assert_eq!(bytes, expected, "{arrow:?}");
+        assert!(
+            moved(&stops).iter().all(|moved| *moved),
+            "{arrow:?}: {stops:?}"
+        );
+    }
+}
+
 /// The proposal twin with the shared field open on a marker's label, its
 /// highlight on screen.
 fn highlighted() -> super::proposal::Twin {
@@ -634,6 +701,42 @@ fn the_frame_leaves_room_for_the_shared_fields_raster_samples_before_the_highlig
     assert!(field_drawn(&fitted.scene));
     assert!(raster_samples(&fitted.scene, fitted.scene.quads()) < total);
     assert!(app.tools.shared_draft().is_some(), "the draft is kept");
+}
+
+/// When the frame is laid out again (the "Highlight left out" note comes or
+/// goes), the field is prepared again and its own samples set aside anew.
+/// In a 1280×300 window the note pushes the field's row off the sidebar:
+/// the first pass, laid out with the note, has no field and reserves
+/// nothing; the frame then has room for the highlight, the note goes and
+/// the row is shown, so the second pass must reserve the field's samples.
+#[test]
+fn a_frame_laid_out_again_reserves_the_fields_samples_again() {
+    let mut twin = super::proposal::twin(1, |_| {}, |_| {}, None);
+    super::proposal::open(&mut twin);
+    let app = &mut twin.app;
+    app.ui = WorkspaceUi::new((1280, 300), (1280, 300));
+    app.view.camera.width = 1280;
+    app.view.camera.height = 300;
+    app.rebuild().unwrap();
+    app.share_string_field().unwrap();
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    acknowledge_ui(app);
+    let full = crate::prototype::workspace_presentation(app).unwrap();
+    assert!(field_drawn(&full.scene) && highlight(&full.scene) > 0);
+    app.highlight_omitted = true;
+    app.refresh_ui();
+    assert!(app.ui.shared_field.is_none(), "the note hides the row");
+    // One sample short of the whole frame, the first pass laid out with
+    // the note.
+    let total = raster_samples(&full.scene, full.scene.quads());
+    app.frame_limits.maximum_raster_samples = total - 1;
+    let fitted = crate::prototype::workspace_presentation(app).unwrap();
+    assert!(app.highlight_omitted);
+    assert_eq!(highlight(&fitted.scene), 0);
+    assert!(field_drawn(&fitted.scene));
+    assert!(raster_samples(&fitted.scene, fitted.scene.quads()) < total);
 }
 
 #[test]
@@ -764,6 +867,79 @@ fn coverage(scene: &tilewright_scene::SceneBundle) -> Vec<[u32; 12]> {
         .collect();
     quads.sort_unstable();
     quads
+}
+
+/// The editor's own field row, pinned at the values it has always had, so
+/// that a drift of the constants both fields now share is seen: the active
+/// row fill, the text inset, the accent of the caret and selection, the
+/// scroll margin, and the 4 px gap to the hint below.
+#[test]
+// The values are exact by construction.
+#[allow(clippy::float_cmp)]
+fn the_editors_own_field_row_keeps_its_look() {
+    let rect = |quad: &tilewright_scene::Quad| {
+        let [x, y] = quad.positions[0];
+        [x, y, quad.positions[2][0] - x, quad.positions[2][1] - y]
+    };
+    let select = |app: &mut Application| app.tools.select_all().unwrap();
+    let (_temporary, mut app) = opened(
+        FieldImplementation::Editor,
+        "Trail marker",
+        (1280, 800),
+        1,
+        select,
+    );
+    let presentation = crate::prototype::workspace_presentation(&mut app).unwrap();
+    let row = app
+        .ui
+        .widgets
+        .iter()
+        .position(|widget| widget.control == Some(Control::EditDraft))
+        .unwrap();
+    let layout = app.ui.widgets[row].layout;
+    assert_eq!(
+        (layout.x, layout.y, layout.width, layout.height),
+        (970, 56, 300, 30)
+    );
+    assert_eq!(app.ui.widgets[row + 1].layout.y, 56 + 30 + 4, "the hint");
+    let quads = presentation.scene.quads();
+    // The row's fill: the active row colour over the whole row.
+    assert!(
+        quads
+            .iter()
+            .any(|quad| quad.color == [0.12, 0.32, 0.47, 1.0]
+                && rect(quad) == [970.0, 56.0, 300.0, 30.0])
+    );
+    let geometry = presentation.editable.unwrap();
+    assert_eq!(geometry.origin, [974.0, 57.0]);
+    // The selection and the caret, in the accent.
+    let accent: Vec<_> = quads
+        .iter()
+        .filter(|quad| quad.color == [0.28, 0.48, 0.66, 1.0])
+        .map(rect)
+        .collect();
+    assert_eq!(accent.len(), 2, "{accent:?}");
+    assert!(accent.iter().any(|caret| caret[2] == 1.0), "{accent:?}");
+    // A long value scrolls once its caret passes the width less 12.
+    let (_temporary, mut app) = opened(
+        FieldImplementation::Editor,
+        "A long value past the width of the field, so it scrolls 0123",
+        (1280, 800),
+        1,
+        |_| {},
+    );
+    let geometry = crate::prototype::workspace_presentation(&mut app)
+        .unwrap()
+        .editable
+        .unwrap();
+    let caret = geometry
+        .layout
+        .caret(crate::workspace_render::renderer_cursor(
+            geometry.snapshot.display_selection.focus,
+        ))
+        .unwrap();
+    assert!(caret.x > 300.0);
+    assert_eq!(geometry.origin[0], 974.0 - (caret.x - (300.0 - 12.0)));
 }
 
 /// A change to the draft after it opens.

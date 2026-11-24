@@ -171,11 +171,14 @@ messages, stored line breaks as the same markers (now drawn by the shared
 field), the same keys, clipboard and input method events, and Enter or
 Review hands the engine the same `SetField` with the shared field's
 committed text. The arrows step the caret with the shared field's own
-`step_caret`, which steps over a marker's zero-width space in one press;
-every press beside a marker moves the caret, as in the editor's own field.
-Its text is the editor's own size (18 px), so in mixed-direction text an
-arrow or a click lands on the same visual stop, with the same side, as in
-the editor's own field.
+`step_caret`, which steps over a marker's zero-width space in one press and
+counts two caret stops at the same place as one, so every press moves the
+caret. Its text is the editor's own size (18 px), so an arrow or a click
+lands on the same visual stop, with the same side, as in the editor's own
+field, except where the editor's own press moves nothing on screen: two
+caret stops at the same place at a change of direction, U+0600 before a
+stored break, some emoji sequences beside right-to-left text or breaks, or
+a value of breaks only. There the shared field moves on to the next stop.
 
 The field looks like the editor's own: it is laid out with the editor's own
 field row values (`workspace_render`'s `FIELD_ROW_HEIGHT`, `text_size`,
