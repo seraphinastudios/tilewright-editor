@@ -393,6 +393,10 @@ fn backspace_takes_one_point_and_esc_drops_the_road_and_does_nothing_else() {
     // The status line says so; the input did apply.
     assert!(app.notice.is_none());
     assert_eq!(app.status_label(), "Road dropped; nothing was prepared.");
+    // The next road point clears those words.
+    click(&mut app, [5, 5]).unwrap();
+    assert!(app.status_label().starts_with("Road of sand: 1 point"));
+    press(&mut app, Keycode::Escape).unwrap();
     // A pending change stays when Esc drops a road: while a change is
     // pending a click adds no point, so the road was drawn before.
     click(&mut app, [0, 0]).unwrap();
@@ -688,8 +692,21 @@ fn nothing_else_is_prepared_or_opened_while_a_road_is_drawn() {
         assert_eq!(enabled(&mut app, &Control::PortalClear), Some(true));
         click(&mut app, [0, 0]).unwrap();
         click(&mut app, [3, 0]).unwrap();
+        // The rows of these are laid out for the selected gate; they are
+        // disabled while the road is drawn. The others have no row here.
+        for control in [
+            Control::PortalClear,
+            Control::PortalAnchors,
+            Control::PortalPick,
+            Control::PortalLocation,
+            Control::Coordinates,
+            Control::Undo,
+            Control::Redo,
+            Control::Delete,
+        ] {
+            assert_eq!(enabled(&mut app, &control), Some(false), "{control:?}");
+        }
         for control in &edits {
-            assert_ne!(enabled(&mut app, control), Some(true), "{control:?}");
             let refused = app.control(control.clone()).unwrap_err();
             assert_eq!(refused, ROAD_IN_PROGRESS, "{control:?}");
             assert_eq!(points(&app), [[0, 0], [3, 0]], "{control:?}");
@@ -724,6 +741,77 @@ fn nothing_else_is_prepared_or_opened_while_a_road_is_drawn() {
         assert!(app.session.history().pending().is_some());
         assert!(app.tools.road().is_none());
     }
+}
+
+#[test]
+fn the_first_road_point_discards_a_half_typed_string_draft() {
+    for shared in [false, true] {
+        let (_temporary, mut app) = road_application(1, |_| {});
+        if shared {
+            app.share_string_field().unwrap();
+        }
+        app.select_visible_object(crate::prototype::Capability::Field)
+            .unwrap();
+        route(&mut app, &key(Keycode::T)).unwrap();
+        let field = Control::Field("label".into());
+        assert_eq!(enabled(&mut app, &field), Some(true));
+        app.control(field.clone()).unwrap();
+        app.tools.input("XYZ").unwrap();
+        assert!(app.tools.draft_text().unwrap().ends_with("XYZ"));
+        click(&mut app, [0, 0]).unwrap();
+        assert!(app.tools.draft_text().is_none(), "shared {shared}");
+        assert!(app.session.history().pending().is_none());
+        assert_eq!(points(&app), [[0, 0]]);
+        assert_eq!(enabled(&mut app, &field), Some(false));
+        assert_eq!(app.control(field).unwrap_err(), ROAD_IN_PROGRESS);
+        assert!(app.tools.draft_text().is_none());
+    }
+}
+
+#[test]
+fn the_admitted_controls_leave_a_road_alone() {
+    let (_temporary, mut app) = gate_application(false);
+    click(&mut app, [0, 0]).unwrap();
+    click(&mut app, [3, 0]).unwrap();
+    for control in [
+        Control::EditDraft,
+        Control::CancelDraft,
+        Control::Accept,
+        Control::Cancel,
+        Control::Clear,
+    ] {
+        acknowledge_ui(&mut app);
+        let _ = app.control(control.clone());
+        assert_eq!(points(&app), [[0, 0], [3, 0]], "{control:?}");
+        assert!(app.session.history().pending().is_none(), "{control:?}");
+        assert!(app.tools.draft_text().is_none(), "{control:?}");
+        assert!(!app.tools.portal_picking(), "{control:?}");
+    }
+    assert!(app.status_label().starts_with("Road of sand: 2 points"));
+}
+
+#[test]
+fn a_terrain_of_another_grid_drops_the_road_and_says_the_grid() {
+    let (_temporary, mut app) = road_application(1, |root| {
+        edit_json(root, "preview.jsonc", |catalog| {
+            catalog["editing"]["terrain"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"grid": "edge", "values": ["grass_edge_1"]}));
+        });
+    });
+    click(&mut app, [0, 0]).unwrap();
+    click(&mut app, [3, 0]).unwrap();
+    app.control(Control::Palette {
+        grid: "edge".into(),
+        prototype: "grass_edge_1".into(),
+    })
+    .unwrap();
+    assert!(app.tools.road().is_none());
+    assert_eq!(
+        app.status_label(),
+        "Road dropped: the grid changed; nothing was prepared."
+    );
 }
 
 #[test]

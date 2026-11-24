@@ -516,7 +516,9 @@ Keys while a road is drawn, before the global keys:
   grid, keep it.
 - Every other control that would prepare an edit or open a draft or a pick
   step is refused with "Finish the road with Enter or drop it with Esc
-  first." and laid out disabled: Undo, Redo, Delete, the inspector's
+  first." when it comes from a key or a direct control, and laid out
+  disabled (a press on a disabled row does nothing, as for every disabled
+  row): Undo, Redo, Delete, the inspector's
   position, field and portal controls of an object selected before, and the
   proposal's controls; so are the keys Z, Y, R, Delete and, with a proposal
   open, G. So nothing else is prepared while a road is drawn.
@@ -528,8 +530,9 @@ does not select anything. While a change is pending a click adds no point,
 refused in the words a brush press gets. While editing is paused clicks,
 Enter and Backspace are refused in the pause's words and the road's marks
 are not drawn; Esc still drops it. A road and a text draft never exist
-together: the first road point ends an open draft, and no draft opens while
-a road is drawn, so a road never takes text input. An open portal pick
+together: the first road point discards an open draft (its text is not
+kept), as any press on the map does, and no draft opens while a road is
+drawn, so a road never takes text input. An open portal pick
 step takes the next tile click, as it always does, so no road begins until
 it is ended (Esc ends it first). With neither a terrain nor a palette chosen a click is refused as a
 brush press is. A window losing focus keeps the road.
