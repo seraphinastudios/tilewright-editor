@@ -279,6 +279,9 @@ fn draws(
 }
 
 #[cfg(test)]
+// Zooms are the ones the search returns, never recomputed, so they compare
+// exactly.
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use std::collections::BTreeSet;

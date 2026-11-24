@@ -307,6 +307,8 @@ fn art_too_large_for_the_largest_zoom_is_judged_at_its_own_largest() {
 }
 
 #[test]
+// Both are small whole numbers, exact in `f32`.
+#[allow(clippy::float_cmp)]
 fn the_largest_zoom_is_the_largest_render_scale() {
     // `render --scale` reaches the zoom the warning judges at, and no
     // further; the desktop's clamp is held to it in the app's tests.
