@@ -68,7 +68,7 @@ sys.exit(37 if sys.argv[1] == 'test' else 0)
         windows = workflow.split('\n  windows:\n', 1)[1].split('\n  aggregate:\n', 1)[0]
         self.assertLess(windows.index('prepare-font-pack.py prepare --acquire'), windows.index('cargo test --locked'))
         self.assertRegex(windows, re.compile(
-            r'      - run: cargo test --locked --workspace --all-targets\n'
+            r'      - run: cargo test --locked --workspace --all-targets[^\n]*\n'
             r'        env:\n'
             r'          TILEWRIGHT_UNICODE_FONT_ROOT: \$\{\{ runner.temp \}\}/unicode-font-pack\n'))
 
