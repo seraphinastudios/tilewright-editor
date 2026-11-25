@@ -3,7 +3,8 @@
 
 //! Drawing the opt-in shared string field (`--shared-string-field`).
 //!
-//! The inspector's string field is edited by `tilewright-ui`'s field (see
+//! The inspector's string field and the zone name drafts are edited by
+//! `tilewright-ui`'s field (see
 //! `tilewright_editor_ui::field_input`); here its state is laid out in the
 //! sidebar row, compiled by `tilewright-ui-render`'s `UiCompiler` with the
 //! editor's own text system lent for each call, and composed into the

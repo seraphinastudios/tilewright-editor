@@ -736,8 +736,8 @@ pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
 }
 
 impl Application {
-    /// Switch the inspector's string fields to the shared field
-    /// (`--shared-string-field`), from the next field draft on.
+    /// Switch the inspector's string fields and the zone name drafts to the
+    /// shared field (`--shared-string-field`), from the next such draft on.
     fn share_string_field(&mut self) -> Result<()> {
         self.shared_field = Some(crate::shared_field::SharedField::new()?);
         self.tools

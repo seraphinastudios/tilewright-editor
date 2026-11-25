@@ -1,10 +1,10 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! The opt-in shared string field in the application: the switch, the
-//! frame record, the reserved identities, refusals that pause rather than
-//! panic, and a differential run of real SDL events against the editor's
-//! own field.
+//! The opt-in shared field in the application: the switch, the frame
+//! record, the reserved identities, refusals that pause rather than panic,
+//! and differential runs of real SDL events against the editor's own field,
+//! for the inspector's string field and both zone name drafts.
 use super::{acknowledge_ui, application_with_source_using, input_key, modified_input_key};
 use crate::prototype::Application;
 use crate::shared_field::{
@@ -20,6 +20,7 @@ use tilewright_editor_ui::field_input::FieldImplementation;
 use tilewright_editor_ui::text_input::{
     TextCursor, TextInputSnapshot, TextRevision, TextSelection,
 };
+use tilewright_editor_ui::tools::{ZoneChoice, ZoneDraft};
 
 fn labelled(
     implementation: FieldImplementation,
@@ -1014,4 +1015,551 @@ fn the_styled_shared_field_covers_what_the_editors_own_field_covers() {
             assert!(field_drawn(&frames[1].scene), "{case}");
         }
     }
+}
+
+/// Open `draft` for meadow: its display name, or a new zone under it.
+fn open_zone(app: &mut Application, draft: ZoneDraft) -> Result<(), String> {
+    app.control(match draft {
+        ZoneDraft::Name => Control::ZoneName,
+        ZoneDraft::Create => Control::ZoneCreate(Some("meadow".into())),
+    })
+}
+
+/// The sample with meadow's display name `name` (`None`: no name), with
+/// `implementation`, in a window of `logical` size at `scale`, in Zone mode
+/// with meadow chosen and `draft` open.
+fn zoned(
+    implementation: FieldImplementation,
+    name: Option<&str>,
+    logical: (u32, u32),
+    scale: u32,
+    draft: ZoneDraft,
+) -> (tempfile::TempDir, Application) {
+    let name = name.map(str::to_owned);
+    let (temporary, mut app) = application_with_source_using(implementation, move |world| {
+        let path = world.join("planes/main/zones.jsonc");
+        let mut zones: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let meadow = zones["zones"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|zone| zone["id"] == "meadow")
+            .unwrap()
+            .as_object_mut()
+            .unwrap();
+        match name {
+            Some(name) => meadow.insert("name".into(), name.into()),
+            None => meadow.remove("name"),
+        };
+        fs::write(path, serde_json::to_vec_pretty(&zones).unwrap()).unwrap();
+    });
+    let physical = (logical.0 * scale, logical.1 * scale);
+    app.ui = WorkspaceUi::new(logical, physical);
+    app.view.camera.width = physical.0;
+    app.view.camera.height = physical.1;
+    app.reflow().unwrap();
+    app.control(Control::Zone).unwrap();
+    app.control(Control::ZonePalette(ZoneChoice::Zone("meadow".into())))
+        .unwrap();
+    open_zone(&mut app, draft).unwrap();
+    assert_eq!(app.tools.zone_draft(), Some(draft));
+    assert_eq!(
+        app.tools.shared_draft().is_some(),
+        implementation == FieldImplementation::Shared
+    );
+    acknowledge_ui(&mut app);
+    (temporary, app)
+}
+
+/// The sidebar's texts but the draft row's own (the shared field draws its
+/// text itself): the hint, Review and Discard and every row below.
+fn sidebar_hints(app: &mut Application) -> Vec<String> {
+    app.refresh_ui();
+    let x = app.ui.sidebar_x();
+    app.ui
+        .widgets
+        .iter()
+        .filter(|widget| widget.layout.x >= x && widget.control != Some(Control::EditDraft))
+        .map(|widget| widget.text.clone())
+        .collect()
+}
+
+/// Meadow's display names the zone tests open: plain, none, stored breaks,
+/// joining marks and an emoji sequence, right-to-left, and 256 four-byte
+/// characters, which fill the name draft's 1024 bytes exactly.
+fn zone_names() -> [Option<String>; 6] {
+    [
+        Some("Quiet meadow".into()),
+        None,
+        Some("Stone\npath\u{2028}way\u{2029}".into()),
+        Some("e\u{301} 👨\u{200d}👩\u{200d}👧".into()),
+        Some("Quiet עברית 123 meadow".into()),
+        Some("😀".repeat(256)),
+    ]
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // The event sequences are listed inline.
+fn both_fields_turn_the_same_sdl_events_into_the_same_zone_drafts_and_reviews() {
+    let key = |code| input_key(7, code, false);
+    let shift = |code| modified_input_key(code, false, Mod::LSHIFTMOD);
+    let command = |code| modified_input_key(code, false, Mod::LCTRLMOD);
+    let full = "😀".repeat(256);
+    let sequences: Vec<Vec<Event>> = vec![
+        vec![command(Keycode::A), text("Open meadow")],
+        vec![
+            key(Keycode::End),
+            text(" »"),
+            key(Keycode::Home),
+            key(Keycode::Right),
+            key(Keycode::Backspace),
+            key(Keycode::Delete),
+        ],
+        vec![
+            shift(Keycode::Left),
+            shift(Keycode::Left),
+            command(Keycode::C),
+            key(Keycode::Home),
+            command(Keycode::V),
+            command(Keycode::A),
+            command(Keycode::X),
+        ],
+        vec![
+            preedit("に", 1, 0),
+            preedit("にほ", 2, 0),
+            key(Keycode::Left),
+            text("にほん"),
+            key(Keycode::Home),
+            preedit("x", 1, 0),
+            key(Keycode::Escape),
+            text("y"),
+        ],
+        vec![
+            text("a\nb"),
+            text("\u{2028}"),
+            preedit("\u{2029}", 1, 0),
+            text("😀".repeat(300).as_str()),
+            command(Keycode::A),
+            text(full.as_str()),
+            text("a"),
+            preedit("a", 1, 0),
+            key(Keycode::Backspace),
+            text("a"),
+        ],
+        vec![command(Keycode::A), text("meadow.bridge Old bridge")],
+        vec![command(Keycode::A), text("meadow.bridge")],
+        vec![command(Keycode::A), text("Bridge")],
+        vec![command(Keycode::A), text("path")],
+        vec![command(Keycode::A), text(" no id")],
+        vec![
+            command(Keycode::A),
+            text(format!("{} {full}", "x".repeat(128)).as_str()),
+            text("a"),
+        ],
+        vec![
+            command(Keycode::A),
+            text("grove "),
+            text("é".repeat(257).as_str()),
+        ],
+        vec![command(Keycode::A), text("Odd \u{e000} name")],
+        vec![preedit("に", 1, 0)],
+        vec![text("x"), key(Keycode::Escape), text("z")],
+    ];
+    let (mut events, mut reviews) = (0, 0);
+    let mut outcomes = std::collections::BTreeSet::new();
+    for name in zone_names() {
+        for draft in [ZoneDraft::Name, ZoneDraft::Create] {
+            let mut runs = FieldImplementation::ALL.map(|implementation| {
+                let (temporary, app) = zoned(implementation, name.as_deref(), (960, 640), 1, draft);
+                let input = crate::native_input::NativeInput::new(7);
+                (temporary, app, input, String::new())
+            });
+            for sequence in &sequences {
+                for (_, app, _, clipboard) in &mut runs {
+                    open_zone(app, draft).unwrap();
+                    acknowledge_ui(app);
+                    clipboard.clear();
+                }
+                assert!(runs[1].1.tools.shared_draft().is_some());
+                // The same hint under the same row.
+                let hints = runs.each_mut().map(|run| sidebar_hints(&mut run.1));
+                assert_eq!(hints[0], hints[1], "{name:?} {draft:?}");
+                let hint = match draft {
+                    ZoneDraft::Name => "Name of meadow; empty = none",
+                    ZoneDraft::Create => "New zone under meadow: id, name",
+                };
+                assert!(hints[0].iter().any(|text| text == hint), "{hints:?}");
+                for event in sequence {
+                    let results = runs
+                        .each_mut()
+                        .map(|(_, app, input, clipboard)| route(app, input, event, clipboard));
+                    assert_eq!(results[0], results[1], "{name:?} {draft:?} {event:?}");
+                    let [own, shared] = runs.each_ref().map(|run| &run.1);
+                    assert_eq!(
+                        comparable(own.tools.draft_snapshot()),
+                        comparable(shared.tools.draft_snapshot()),
+                        "{name:?} {draft:?} {event:?}"
+                    );
+                    assert_eq!(runs[0].3, runs[1].3, "the clipboard holds the same");
+                    events += 1;
+                }
+                // The same hint again (an unsupported text says so), then
+                // Enter reviews: the same refusal, or the same pending
+                // source change byte for byte and the same review lines.
+                let hints = runs.each_mut().map(|run| sidebar_hints(&mut run.1));
+                assert_eq!(hints[0], hints[1], "{name:?} {draft:?} {sequence:?}");
+                // Typing fences Return until a Return is released, as when
+                // a person lets go of the keys and presses Enter; while
+                // composing it stays fenced and Enter does not review.
+                for run in &mut runs {
+                    acknowledge_ui(&mut run.1);
+                }
+                let results = runs.each_mut().map(|(_, app, input, clipboard)| {
+                    route(app, input, &input_key(7, Keycode::Return, true), clipboard)?;
+                    route(app, input, &key(Keycode::Return), clipboard)
+                });
+                assert_eq!(results[0], results[1], "{name:?} {draft:?} {sequence:?}");
+                let pending = runs.each_ref().map(|run| {
+                    run.1.session.history().pending().map(|pending| {
+                        pending
+                            .changed()
+                            .map(|file| (file.path.clone(), file.after.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                });
+                assert_eq!(pending[0], pending[1], "{name:?} {draft:?} {sequence:?}");
+                let lines = runs.each_mut().map(|run| run.1.review_lines(900));
+                assert_eq!(lines[0], lines[1], "{name:?} {draft:?} {sequence:?}");
+                if let Err(error) = &results[0] {
+                    outcomes.insert(error.clone());
+                }
+                if pending[0].is_some() {
+                    reviews += 1;
+                    for line in &lines[0] {
+                        for kind in ["Renames zone", "Removes the display name", "Creates zone"] {
+                            if line.contains(kind) {
+                                outcomes.insert(kind.to_owned());
+                            }
+                        }
+                    }
+                }
+                for run in &mut runs {
+                    if run.1.session.history().pending().is_some() {
+                        run.1.action(tilewright_editor_ui::Action::Cancel).unwrap();
+                    }
+                }
+            }
+        }
+    }
+    // Every review outcome was reached: each change, each refusal.
+    for outcome in [
+        "Renames zone",
+        "Removes the display name",
+        "Creates zone",
+        "A zone id is 1 to 128 lowercase letters, digits, '_', '.' or '-', starting with a letter or digit",
+        "This plane already has a zone with this id",
+        "Type the new zone's id first",
+        "A zone's display name has at most 256 characters",
+        "missing font glyphs: review blocked; draft preserved",
+    ] {
+        assert!(outcomes.contains(outcome), "{outcome}: {outcomes:?}");
+    }
+    assert!(events > 600 && reviews > 60, "{events} {reviews}");
+}
+
+/// Render `presentation` with the reference renderer.
+fn rendered(presentation: &crate::workspace_render::Presentation) -> Vec<u8> {
+    use tilewright_render_api::{RenderRequest, Renderer};
+    let viewport = presentation.scene.viewport();
+    tilewright_render_testkit::ReferenceRenderer::new(tilewright_render_testkit::offscreen_target(
+        viewport.width,
+        viewport.height,
+    ))
+    .unwrap()
+    .render(RenderRequest {
+        scene: &presentation.scene,
+        resources: presentation.resources.clone(),
+    })
+    .unwrap()
+    .rgba8
+}
+
+/// The caret's and the preedit underline's quads, one pixel wider all
+/// round: the only places the two fields may paint differently (the shared
+/// field draws them over the text, the editor's own under it).
+fn caret_and_underline(scene: &tilewright_scene::SceneBundle) -> Vec<[f32; 4]> {
+    scene
+        .quads()
+        .iter()
+        .filter(|quad| quad.color == crate::workspace_render::FIELD_ACCENT)
+        .map(|quad| {
+            let [x, y] = quad.positions[0];
+            let [right, bottom] = quad.positions[2];
+            [x - 1.0, y - 1.0, right + 1.0, bottom + 1.0]
+        })
+        .filter(|[x, y, right, bottom]| right - x <= 4.0 || bottom - y <= 4.0)
+        .collect()
+}
+
+#[test]
+// The two fields must agree exactly, not within a tolerance.
+#[allow(clippy::float_cmp)]
+#[allow(clippy::too_many_lines)] // The cases are listed inline.
+fn the_shared_zone_name_fields_cover_and_paint_what_the_editors_own_fields_do() {
+    let long = "A long display name past the width of the field, so it scrolls 0123";
+    let cases: [(&str, ZoneDraft, Option<&str>, Edit); 9] = [
+        ("name", ZoneDraft::Name, Some("Quiet meadow"), |_| {}),
+        ("no name", ZoneDraft::Name, None, |_| {}),
+        (
+            "long name, scrolled to the end",
+            ZoneDraft::Name,
+            Some(long),
+            |_| {},
+        ),
+        (
+            "mixed direction",
+            ZoneDraft::Name,
+            Some("Quiet עברית 123 meadow"),
+            |_| {},
+        ),
+        (
+            "stored line breaks",
+            ZoneDraft::Name,
+            Some("Stone\npath\u{2028}way\u{2029}"),
+            |_| {},
+        ),
+        ("preedit", ZoneDraft::Name, Some("Quiet meadow"), |app| {
+            let revision = app.tools.input_revision().unwrap();
+            app.tools
+                .set_selection(TextSelection::caret(TextCursor::new(6)), revision)
+                .unwrap();
+            app.tools.update_preedit("にほん", 2, 0).unwrap();
+        }),
+        ("selection", ZoneDraft::Name, Some("Quiet meadow"), |app| {
+            app.tools.select_all().unwrap();
+        }),
+        ("new zone, empty", ZoneDraft::Create, None, |_| {}),
+        ("new zone, typed", ZoneDraft::Create, None, |app| {
+            app.tools.input("meadow.bridge Old bridge").unwrap();
+        }),
+    ];
+    for (logical, scale) in [((1280, 800), 1), ((720, 480), 1), ((720, 480), 2)] {
+        for (name, draft, stored, edit) in cases {
+            let [(_own, mut own), (_shared, mut shared)] =
+                FieldImplementation::ALL.map(|implementation| {
+                    let (temporary, mut app) = zoned(implementation, stored, logical, scale, draft);
+                    edit(&mut app);
+                    acknowledge_ui(&mut app);
+                    (temporary, app)
+                });
+            let case = format!("{name} at {logical:?}x{scale}");
+            assert!(shared.tools.shared_draft().is_some(), "{case}");
+            let frames = [&mut own, &mut shared]
+                .map(|app| crate::prototype::workspace_presentation(app).unwrap());
+            let row = |app: &Application| {
+                app.ui
+                    .widgets
+                    .iter()
+                    .find(|widget| widget.control == Some(Control::EditDraft))
+                    .map(|widget| widget.layout)
+            };
+            assert_eq!(row(&own), row(&shared), "{case}");
+            assert_eq!(shared.ui.shared_field, row(&own), "{case}");
+            assert_eq!(
+                row(&own).map(|row| row.height),
+                Some(crate::workspace_render::FIELD_ROW_HEIGHT)
+            );
+            let [mine, theirs] = frames
+                .each_ref()
+                .map(|frame| frame.editable.as_ref().unwrap());
+            assert_eq!(mine.origin, theirs.origin, "{case}");
+            assert_eq!(mine.clip, theirs.clip, "{case}");
+            assert_eq!(mine.layout.size(), theirs.layout.size(), "{case}");
+            if stored == Some(long) {
+                assert!(mine.origin[0] < mine.clip.x, "{case}: {:?}", mine.origin);
+            }
+            assert_eq!(
+                coverage(&frames[0].scene),
+                coverage(&frames[1].scene),
+                "{case}"
+            );
+            assert!(field_drawn(&frames[1].scene), "{case}");
+            // Rendered, the frames are the same pixels except where the
+            // caret or the underline is.
+            let allowed: Vec<_> = frames
+                .iter()
+                .flat_map(|frame| caret_and_underline(&frame.scene))
+                .collect();
+            assert!(!allowed.is_empty(), "{case}");
+            let width = frames[0].scene.viewport().width;
+            let pixels = frames.each_ref().map(rendered);
+            for (index, (a, b)) in pixels[0]
+                .chunks_exact(4)
+                .zip(pixels[1].chunks_exact(4))
+                .enumerate()
+            {
+                if a == b {
+                    continue;
+                }
+                let index = u32::try_from(index).unwrap();
+                #[allow(clippy::cast_precision_loss)]
+                let (x, y) = ((index % width) as f32 + 0.5, (index / width) as f32 + 0.5);
+                assert!(
+                    allowed.iter().any(|[left, top, right, bottom]| {
+                        (*left..=*right).contains(&x) && (*top..=*bottom).contains(&y)
+                    }),
+                    "{case}: pixel ({x}, {y}) differs: {a:?} {b:?}"
+                );
+            }
+        }
+    }
+}
+
+/// A zone draft's field is compiled first and the editor's frame fitted to
+/// leave its quads and raster samples free, as for the string field.
+#[test]
+fn a_zone_draft_frame_leaves_room_for_the_shared_field_and_pauses_without_it() {
+    for draft in [ZoneDraft::Name, ZoneDraft::Create] {
+        let (_temporary, mut app) = zoned(
+            FieldImplementation::Shared,
+            Some("Quiet meadow"),
+            (960, 640),
+            1,
+            draft,
+        );
+        let app = &mut app;
+        let full = crate::prototype::workspace_presentation(app).unwrap();
+        let field = crate::prototype::prepare_shared_field(app)
+            .unwrap()
+            .unwrap();
+        let (quads, samples) = (field.quads(), field.raster_samples());
+        let all = full.scene.quads();
+        let editor: Vec<_> = all
+            .iter()
+            .copied()
+            .filter(|quad| quad.semantic_id.0 < SHARED_FIRST_SEMANTIC)
+            .collect();
+        // The field's counts are exactly what it adds to the frame.
+        assert_eq!(all.len() - editor.len(), quads, "{draft:?}");
+        let total = raster_samples(&full.scene, all);
+        assert_eq!(raster_samples(&full.scene, &editor) + samples, total);
+        // Exactly enough room: drawn whole.
+        app.frame_limits.maximum_quads = all.len();
+        app.frame_limits.maximum_raster_samples = total;
+        let fitted = crate::prototype::workspace_presentation(app).unwrap();
+        assert_eq!(fitted.scene.quads(), all, "{draft:?}");
+        // One quad or one sample short: the field's share is set aside
+        // first, so the editor's own frame gives way within the rest, or is
+        // what does not fit; the field is never drawn over the budget.
+        for short in [(1, 0), (0, 1)] {
+            app.frame_limits = tilewright_scene::SceneLimits {
+                maximum_quads: all.len() - short.0,
+                maximum_raster_samples: total - short.1,
+                ..tilewright_scene::SceneLimits::default()
+            };
+            app.refresh_ui();
+            match crate::prototype::workspace_presentation(app) {
+                Ok(fitted) => {
+                    assert!(field_drawn(&fitted.scene), "{draft:?} {short:?}");
+                    assert!(fitted.scene.quads().len() <= all.len() - short.0);
+                    assert!(raster_samples(&fitted.scene, fitted.scene.quads()) <= total - short.1);
+                }
+                Err(error) => assert!(
+                    error.contains("LimitExceeded") && !error.starts_with("shared field"),
+                    "{draft:?} {short:?}: {error}"
+                ),
+            }
+            assert!(app.tools.shared_draft().is_some(), "the draft is kept");
+        }
+        // Less than the field alone: the editor's share is nothing, so its
+        // frame is refused and editing pauses with the draft kept.
+        app.frame_limits = tilewright_scene::SceneLimits {
+            maximum_raster_samples: samples - 1,
+            ..tilewright_scene::SceneLimits::default()
+        };
+        let error = crate::prototype::workspace_presentation(app).err().unwrap();
+        assert!(
+            error.contains("LimitExceeded") && !error.starts_with("shared field"),
+            "{draft:?}: {error}"
+        );
+        assert!(app.tools.shared_draft().is_some(), "the draft is kept");
+        app.blocked = Some(crate::prototype::Blocked::new(
+            crate::prototype::BlockCause::Present,
+            &error,
+        ));
+        let mut input = crate::native_input::NativeInput::new(7);
+        let mut clipboard = String::new();
+        let escape = input_key(7, Keycode::Escape, false);
+        route(app, &mut input, &escape, &mut clipboard).unwrap();
+        assert!(app.tools.draft_text().is_none(), "the draft is discarded");
+        let _ = route(app, &mut input, &escape, &mut clipboard);
+        assert!(app.blocked.is_none());
+        app.frame_limits = tilewright_scene::SceneLimits::default();
+        open_zone(app, draft).unwrap();
+        acknowledge_ui(app);
+        let again = crate::prototype::workspace_presentation(app).unwrap();
+        assert!(field_drawn(&again.scene));
+    }
+}
+
+/// The road fence and the pause refuse a zone draft the same way with the
+/// switch on: nothing opens, with the editor's own message.
+#[test]
+fn the_road_fence_and_the_pause_refuse_zone_drafts_with_either_field() {
+    use crate::prototype::ROAD_IN_PROGRESS;
+    let mut paused = Vec::new();
+    for implementation in FieldImplementation::ALL {
+        let (_temporary, mut app) = super::road::road_application(1, |_| {});
+        if implementation == FieldImplementation::Shared {
+            app.share_string_field().unwrap();
+        }
+        let world = app.session.world().clone();
+        app.tools
+            .choose_zone(
+                &world,
+                app.session.catalog(),
+                ZoneChoice::Zone("meadow".into()),
+            )
+            .unwrap();
+        super::road::click(&mut app, [0, 0]).unwrap();
+        assert!(app.tools.road().is_some());
+        for control in [
+            Control::ZoneName,
+            Control::ZoneCreate(None),
+            Control::ZoneCreate(Some("meadow".into())),
+        ] {
+            assert_eq!(
+                app.control(control.clone()).unwrap_err(),
+                ROAD_IN_PROGRESS,
+                "{control:?}"
+            );
+            assert!(app.tools.draft_text().is_none(), "{control:?}");
+            assert_eq!(super::road::points(&app), [[0, 0]]);
+        }
+        // Paused: no zone draft opens, and an open one cannot be reviewed.
+        let (_temporary, mut app) = zoned(
+            implementation,
+            Some("Quiet meadow"),
+            (960, 640),
+            1,
+            ZoneDraft::Name,
+        );
+        app.tools.select_all().unwrap();
+        app.tools.input("Open meadow").unwrap();
+        app.blocked = Some(crate::prototype::Blocked::new(
+            crate::prototype::BlockCause::Present,
+            "test",
+        ));
+        let review = app.control(Control::ApplyDraft).unwrap_err();
+        assert_eq!(app.tools.draft_text(), Some("Open meadow"));
+        assert!(app.session.history().pending().is_none());
+        let refusals: Vec<_> = [ZoneDraft::Name, ZoneDraft::Create]
+            .into_iter()
+            .map(|draft| open_zone(&mut app, draft).unwrap_err())
+            .collect();
+        assert_eq!(app.tools.draft_text(), Some("Open meadow"), "kept");
+        paused.push((review, refusals));
+    }
+    assert_eq!(paused[0], paused[1]);
 }
