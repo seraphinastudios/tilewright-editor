@@ -265,7 +265,8 @@ meadow, "Edit display name"; and "New zone under meadow").
     behave exactly as before.
 13. **Zone drafts.** "Edit display name" shows the name with "Name of
     meadow; empty = none" below; clearing it and pressing Enter reviews
-    "Removes the display name 'Quiet meadow' of zone meadow". In "New zone
+    "Removes the display name 'Quiet meadow' of zone meadow; it shows no
+    display name.". In "New zone
     under meadow", `Bridge` and Enter keep the draft open with the id
     message; `meadow.bridge Old bridge` reviews "Creates zone meadow.bridge
     under meadow, named 'Old bridge'.".

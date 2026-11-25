@@ -295,6 +295,28 @@ fn only_string_fields_and_zone_names_use_the_shared_field() {
         }
         tools.set_mode(ToolMode::Anchor);
         assert!(tools.draft_text().is_none());
+        // A new anchor's id and a portal's typed location keep the editor's
+        // own field with the switch on.
+        let tile = SelectionKey::Cell {
+            plane: "main".into(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 3,
+            y: 3,
+        };
+        tools
+            .begin_anchor_create(catalog, Some(&tile), document.revision(), false)
+            .unwrap();
+        assert!(tools.anchor_draft().is_some());
+        assert!(tools.shared_draft().is_none(), "an anchor id");
+        let gate = SelectionKey::Object {
+            uid: "gate_east".into(),
+        };
+        tools
+            .begin_portal_location(world, catalog, Some(&gate), document.revision(), false)
+            .unwrap();
+        assert!(tools.portal_draft().is_some());
+        assert!(tools.shared_draft().is_none(), "a portal location");
         tools.set_mode(ToolMode::Place);
         tools.focus_filter().unwrap();
         assert!(tools.shared_draft().is_none(), "the palette filter");

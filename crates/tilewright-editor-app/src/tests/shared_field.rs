@@ -1303,12 +1303,10 @@ fn caret_and_underline(scene: &tilewright_scene::SceneBundle) -> Vec<[f32; 4]> {
 }
 
 #[test]
-// The two fields must agree exactly, not within a tolerance.
-#[allow(clippy::float_cmp)]
 #[allow(clippy::too_many_lines)] // The cases are listed inline.
 fn the_shared_zone_name_fields_cover_and_paint_what_the_editors_own_fields_do() {
     let long = "A long display name past the width of the field, so it scrolls 0123";
-    let cases: [(&str, ZoneDraft, Option<&str>, Edit); 9] = [
+    let cases: [(&str, ZoneDraft, Option<&str>, Edit); 11] = [
         ("name", ZoneDraft::Name, Some("Quiet meadow"), |_| {}),
         ("no name", ZoneDraft::Name, None, |_| {}),
         (
@@ -1343,6 +1341,22 @@ fn the_shared_zone_name_fields_cover_and_paint_what_the_editors_own_fields_do() 
         ("new zone, typed", ZoneDraft::Create, None, |app| {
             app.tools.input("meadow.bridge Old bridge").unwrap();
         }),
+        // A character the font pack lacks: the toolbar's banner counts the
+        // draft's mark in both fields.
+        (
+            "name, unsupported glyph",
+            ZoneDraft::Name,
+            Some("Odd \u{e000} name"),
+            |_| {},
+        ),
+        (
+            "new zone, unsupported glyph",
+            ZoneDraft::Create,
+            None,
+            |app| {
+                app.tools.input("meadow.b Odd \u{e000} name").unwrap();
+            },
+        ),
     ];
     for (logical, scale) in [((1280, 800), 1), ((720, 480), 1), ((720, 480), 2)] {
         for (name, draft, stored, edit) in cases {
@@ -1354,64 +1368,134 @@ fn the_shared_zone_name_fields_cover_and_paint_what_the_editors_own_fields_do() 
                     (temporary, app)
                 });
             let case = format!("{name} at {logical:?}x{scale}");
-            assert!(shared.tools.shared_draft().is_some(), "{case}");
-            let frames = [&mut own, &mut shared]
-                .map(|app| crate::prototype::workspace_presentation(app).unwrap());
-            let row = |app: &Application| {
-                app.ui
-                    .widgets
-                    .iter()
-                    .find(|widget| widget.control == Some(Control::EditDraft))
-                    .map(|widget| widget.layout)
+            let banner = same_frames(&mut own, &mut shared, &case, stored == Some(long));
+            let expected = match name {
+                "name, unsupported glyph" => Some("Unsupported text: 4 marks / fields read-only"),
+                "new zone, unsupported glyph" => {
+                    Some("Unsupported text: 1 marks / fields read-only")
+                }
+                _ => None,
             };
-            assert_eq!(row(&own), row(&shared), "{case}");
-            assert_eq!(shared.ui.shared_field, row(&own), "{case}");
-            assert_eq!(
-                row(&own).map(|row| row.height),
-                Some(crate::workspace_render::FIELD_ROW_HEIGHT)
-            );
-            let [mine, theirs] = frames
-                .each_ref()
-                .map(|frame| frame.editable.as_ref().unwrap());
-            assert_eq!(mine.origin, theirs.origin, "{case}");
-            assert_eq!(mine.clip, theirs.clip, "{case}");
-            assert_eq!(mine.layout.size(), theirs.layout.size(), "{case}");
-            if stored == Some(long) {
-                assert!(mine.origin[0] < mine.clip.x, "{case}: {:?}", mine.origin);
+            // At 720 px the toolbar has no room left for the banner.
+            if logical.0 >= 1280 {
+                assert_eq!(banner.as_deref(), expected, "{case}");
             }
+        }
+    }
+}
+
+/// The toolbar's unsupported-text banner, if it shows.
+fn banner(app: &Application) -> Option<String> {
+    app.ui
+        .widgets
+        .iter()
+        .find(|widget| widget.text.starts_with("Unsupported text:"))
+        .map(|widget| widget.text.clone())
+}
+
+/// Present both fields' frames and check that they agree: the same draft
+/// row and reserved row, text origin, clip and size, the same quads where
+/// they are and their colours, the same toolbar unsupported-text count and
+/// banner (returned), and, rendered, the same pixels except where the caret
+/// or the underline is. `scrolled`: the text must be scrolled.
+// The two fields must agree exactly, not within a tolerance.
+#[allow(clippy::float_cmp)]
+fn same_frames(
+    own: &mut Application,
+    shared: &mut Application,
+    case: &str,
+    scrolled: bool,
+) -> Option<String> {
+    assert!(shared.tools.shared_draft().is_some(), "{case}");
+    let frames =
+        [&mut *own, &mut *shared].map(|app| crate::prototype::workspace_presentation(app).unwrap());
+    let row = |app: &Application| {
+        app.ui
+            .widgets
+            .iter()
+            .find(|widget| widget.control == Some(Control::EditDraft))
+            .map(|widget| widget.layout)
+    };
+    assert_eq!(row(own), row(shared), "{case}");
+    assert_eq!(shared.ui.shared_field, row(own), "{case}");
+    assert_eq!(
+        row(own).map(|row| row.height),
+        Some(crate::workspace_render::FIELD_ROW_HEIGHT)
+    );
+    assert_eq!(own.unsupported_runs, shared.unsupported_runs, "{case}");
+    assert_eq!(banner(own), banner(shared), "{case}");
+    let [mine, theirs] = frames
+        .each_ref()
+        .map(|frame| frame.editable.as_ref().unwrap());
+    assert_eq!(mine.origin, theirs.origin, "{case}");
+    assert_eq!(mine.clip, theirs.clip, "{case}");
+    assert_eq!(mine.layout.size(), theirs.layout.size(), "{case}");
+    if scrolled {
+        assert!(mine.origin[0] < mine.clip.x, "{case}: {:?}", mine.origin);
+    }
+    assert_eq!(
+        coverage(&frames[0].scene),
+        coverage(&frames[1].scene),
+        "{case}"
+    );
+    assert!(field_drawn(&frames[1].scene), "{case}");
+    // Rendered, the frames are the same pixels except where the caret or
+    // the underline is.
+    let allowed: Vec<_> = frames
+        .iter()
+        .flat_map(|frame| caret_and_underline(&frame.scene))
+        .collect();
+    assert!(!allowed.is_empty(), "{case}");
+    let width = frames[0].scene.viewport().width;
+    let pixels = frames.each_ref().map(rendered);
+    for (index, (a, b)) in pixels[0]
+        .chunks_exact(4)
+        .zip(pixels[1].chunks_exact(4))
+        .enumerate()
+    {
+        if a == b {
+            continue;
+        }
+        let index = u32::try_from(index).unwrap();
+        #[allow(clippy::cast_precision_loss)]
+        let (x, y) = ((index % width) as f32 + 0.5, (index / width) as f32 + 0.5);
+        assert!(
+            allowed.iter().any(|[left, top, right, bottom]| {
+                (*left..=*right).contains(&x) && (*top..=*bottom).contains(&y)
+            }),
+            "{case}: pixel ({x}, {y}) differs: {a:?} {b:?}"
+        );
+    }
+    banner(own)
+}
+
+/// A string field holding a character the font pack lacks: the toolbar's
+/// banner counts its mark in both fields, and the frames agree.
+#[test]
+fn an_unsupported_glyph_in_the_string_field_counts_in_the_banner_with_either_field() {
+    for (logical, scale) in [((1280, 800), 1), ((720, 480), 1), ((720, 480), 2)] {
+        let [(_own, mut own), (_shared, mut shared)] =
+            FieldImplementation::ALL.map(|implementation| {
+                opened(
+                    implementation,
+                    "Odd \u{e000} marker",
+                    logical,
+                    scale,
+                    |_| {},
+                )
+            });
+        let case = format!("string field at {logical:?}x{scale}");
+        let banner = same_frames(&mut own, &mut shared, &case, false);
+        assert!(own.unsupported_runs >= 1, "{case}");
+        if logical.0 >= 1280 {
             assert_eq!(
-                coverage(&frames[0].scene),
-                coverage(&frames[1].scene),
+                banner,
+                Some(format!(
+                    "Unsupported text: {} marks / fields read-only",
+                    own.unsupported_runs
+                )),
                 "{case}"
             );
-            assert!(field_drawn(&frames[1].scene), "{case}");
-            // Rendered, the frames are the same pixels except where the
-            // caret or the underline is.
-            let allowed: Vec<_> = frames
-                .iter()
-                .flat_map(|frame| caret_and_underline(&frame.scene))
-                .collect();
-            assert!(!allowed.is_empty(), "{case}");
-            let width = frames[0].scene.viewport().width;
-            let pixels = frames.each_ref().map(rendered);
-            for (index, (a, b)) in pixels[0]
-                .chunks_exact(4)
-                .zip(pixels[1].chunks_exact(4))
-                .enumerate()
-            {
-                if a == b {
-                    continue;
-                }
-                let index = u32::try_from(index).unwrap();
-                #[allow(clippy::cast_precision_loss)]
-                let (x, y) = ((index % width) as f32 + 0.5, (index / width) as f32 + 0.5);
-                assert!(
-                    allowed.iter().any(|[left, top, right, bottom]| {
-                        (*left..=*right).contains(&x) && (*top..=*bottom).contains(&y)
-                    }),
-                    "{case}: pixel ({x}, {y}) differs: {a:?} {b:?}"
-                );
-            }
         }
     }
 }
