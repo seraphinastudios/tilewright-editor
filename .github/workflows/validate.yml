@@ -9,11 +9,13 @@ permissions:
 concurrency:
   group: editor-validation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+# The Linux jobs each run one stage of tools/validate.sh; together they run
+# all of it, as it runs locally with no argument.
 jobs:
-  linux:
-    name: Linux validation
+  checks:
+    name: Linux checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,30 +25,59 @@ jobs:
       - name: Install pinned Rust quality tools
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
-          install -d "${RUNNER_TEMP}/tools/cargo-deny" "${RUNNER_TEMP}/tools/cargo-auditable" "${RUNNER_TEMP}/bin"
-          curl --fail --silent --show-error --location https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz --output "${RUNNER_TEMP}/cargo-deny.tar.gz"
-          printf '%s  %s\n' 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f "${RUNNER_TEMP}/cargo-deny.tar.gz" | sha256sum --check --strict
-          tar -xzf "${RUNNER_TEMP}/cargo-deny.tar.gz" -C "${RUNNER_TEMP}/tools/cargo-deny" --strip-components=1
-          install "${RUNNER_TEMP}/tools/cargo-deny/cargo-deny" "${RUNNER_TEMP}/bin/cargo-deny"
-          curl --fail --silent --show-error --location https://github.com/rust-secure-code/cargo-auditable/releases/download/v0.7.5/cargo-auditable-x86_64-unknown-linux-gnu.tar.xz --output "${RUNNER_TEMP}/cargo-auditable.tar.xz"
-          printf '%s  %s\n' 322eda09f24e5dba97371c6c2c6949569c411ddf893852e88135cc5b51d5a719 "${RUNNER_TEMP}/cargo-auditable.tar.xz" | sha256sum --check --strict
-          tar -xJf "${RUNNER_TEMP}/cargo-auditable.tar.xz" -C "${RUNNER_TEMP}/tools/cargo-auditable" --strip-components=1
-          install "${RUNNER_TEMP}/tools/cargo-auditable/cargo-auditable" "${RUNNER_TEMP}/bin/cargo-auditable"
-          curl --fail --silent --show-error --location https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz --output "${RUNNER_TEMP}/syft.tar.gz"
-          printf '%s  %s\n' bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788 "${RUNNER_TEMP}/syft.tar.gz" | sha256sum --check --strict
-          tar -xzf "${RUNNER_TEMP}/syft.tar.gz" -C "${RUNNER_TEMP}/bin" syft
+          tools/install-linux-ci-tools.sh "${RUNNER_TEMP}" cargo-deny
           echo "${RUNNER_TEMP}/bin" >>"${GITHUB_PATH}"
       - run: cargo fetch --locked
       - name: Prepare immutable font data explicitly
         run: python3 tools/prepare-font-pack.py prepare --acquire --output "${RUNNER_TEMP}/unicode-font-pack"
-      - run: tools/validate.sh
+      - run: tools/validate.sh checks
         env:
           TILEWRIGHT_PREPARED_FONT_PACK: ${{ runner.temp }}/unicode-font-pack
 
-  windows:
-    name: Windows build, tests, and package
+  tests:
+    name: Linux tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install Linux native build dependencies
+        run: tools/install-linux-native-deps.sh
+      - run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - run: cargo fetch --locked
+      - name: Prepare immutable font data explicitly
+        run: python3 tools/prepare-font-pack.py prepare --acquire --output "${RUNNER_TEMP}/unicode-font-pack"
+      - run: tools/validate.sh tests
+        env:
+          TILEWRIGHT_PREPARED_FONT_PACK: ${{ runner.temp }}/unicode-font-pack
+
+  package:
+    name: Linux package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install Linux native build dependencies
+        run: tools/install-linux-native-deps.sh
+      - name: Install pinned packaging tools
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+          tools/install-linux-ci-tools.sh "${RUNNER_TEMP}" cargo-auditable syft
+          echo "${RUNNER_TEMP}/bin" >>"${GITHUB_PATH}"
+      - run: cargo fetch --locked
+      - name: Prepare immutable font data explicitly
+        run: python3 tools/prepare-font-pack.py prepare --acquire --output "${RUNNER_TEMP}/unicode-font-pack"
+      - run: tools/validate.sh package
+        env:
+          TILEWRIGHT_PREPARED_FONT_PACK: ${{ runner.temp }}/unicode-font-pack
+
+  windows-package:
+    name: Windows package
     runs-on: windows-2025
-    timeout-minutes: 35
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
@@ -54,9 +85,6 @@ jobs:
       - name: Prepare immutable font data explicitly
         shell: pwsh
         run: python tools/prepare-font-pack.py prepare --acquire --output "$env:RUNNER_TEMP/unicode-font-pack"
-      - run: cargo test --locked --workspace --all-targets
-        env:
-          TILEWRIGHT_UNICODE_FONT_ROOT: ${{ runner.temp }}/unicode-font-pack
       - name: Install pinned packaging tools
         shell: pwsh
         run: |
@@ -72,14 +100,33 @@ jobs:
         shell: pwsh
         run: tools/package-windows.ps1 -Output dist -Version 0.1.0-test.1 -FontPack "$env:RUNNER_TEMP/unicode-font-pack"
 
+  # tools/test_validation_font_input.py reads this job up to `aggregate:`.
+  windows:
+    name: Windows tests
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - run: cargo fetch --locked
+      - name: Prepare immutable font data explicitly
+        shell: pwsh
+        run: python tools/prepare-font-pack.py prepare --acquire --output "$env:RUNNER_TEMP/unicode-font-pack"
+      - run: cargo test --locked --workspace --all-targets
+        env:
+          TILEWRIGHT_UNICODE_FONT_ROOT: ${{ runner.temp }}/unicode-font-pack
+
   aggregate:
     name: Editor validation
     if: always()
-    needs: [linux, windows]
+    needs: [checks, tests, package, windows-package, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
+      # Every job must succeed: a failed, cancelled or skipped job fails this one,
+      # and the count stops an empty or shortened needs list from passing.
       - env:
-          LINUX_RESULT: ${{ needs.linux.result }}
-          WINDOWS_RESULT: ${{ needs.windows.result }}
-        run: test "${LINUX_RESULT}" = success -a "${WINDOWS_RESULT}" = success
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -e 'length == 5 and all(.[]; .result == "success")' <<<"${NEEDS}" ||
+            { echo "not every validation job succeeded:" >&2; jq -r 'to_entries[] | "\(.key): \(.result)"' <<<"${NEEDS}" >&2; exit 1; }

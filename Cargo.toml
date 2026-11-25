@@ -66,3 +66,15 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+
+# Tests and `cargo run` use the dev profile. Optimise dependencies (not the
+# workspace's own crates) so the editor's scripted tests run in seconds, not
+# minutes. Debug assertions and overflow checks stay on, and Rust has no
+# fast-math, so results are the same; release builds are not affected.
+[profile.dev.package."*"]
+opt-level = 1
+
+# sdl3-sys builds SDL from source with CMake, which takes its build type from
+# this opt-level: keep SDL's debug build as it was.
+[profile.dev.package.sdl3-sys]
+opt-level = 0
