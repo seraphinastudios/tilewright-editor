@@ -171,7 +171,8 @@ other worlds are unchanged. Every report with a `catalog` member has it:
   filter does; it takes at most 64 bytes.
 - `tilewright.editor-lint/1`: `counts` by severity and `findings`, each with a
   stable `code`, a `severity`, a `location` (some of `path`, `plane`,
-  `layer`, `tile`, `uid`, `carried`, `anchor`, `zone`, `grid`, `codes`), a `message`
+  `layer`, `tile`, `uid`, `carried`, `anchor`, `zone`, `grid`, `codes`,
+  `resources`), a `message`
   this editor wrote and a `detail` quoting the loader when there is one.
 - `tilewright.editor-load-failure/1`: `problems` and `diagnostics` (path,
   line, column, byte span, code and message), when the world does not load.
@@ -222,6 +223,7 @@ wrong.
 | `catalog.absent` | error | The world has no `preview.jsonc`. The editing entry point cannot open it; `open ROOT` and these commands can. |
 | `catalog.invalid` | error | `preview.jsonc` is there but does not load. |
 | `preview.unprepared` | error | The catalog's view cannot be prepared for display, for example an object in it whose prototype the catalog cannot draw. |
+| `catalog.heights_undrawable` | warning | The catalog's `editing.heights` lets neighbouring tiles lie further apart than the preview can bend its isometric ground art over at the largest zoom (8, or for art too large to draw flat there, the largest zoom at which it draws flat); see below. The message gives the zoom, both numbers and a range that can be bent; `location.resources` lists the ground resources of the tightest art size, in id order (empty when the limit is the tile-picking art). |
 | `catalog.project_art` | info | The catalog contains project art: resources with the license `project`, under the project's own license. The message gives their number; every image the editor makes of the world is marked (see [render](#render)). |
 | `preview.*` (others) | info | A note the preview adds when it prepares the view, such as `preview.effects-neutral`. |
 | `portal.target_own_tile` | warning | A portal leads to the tile its object stands on. |
@@ -229,6 +231,33 @@ wrong.
 | `portal.target_no_ground` | warning | A location target has no ground on the pick grid. |
 | `anchor.unreferenced` | info | No portal names the anchor. |
 | `zone.unused` | info | No tile, chunk palette or child zone uses the zone and it is not the plane default. |
+
+`catalog.heights_undrawable` is decided from the catalog alone. The
+renderer draws a bent isometric tile as a mesh over its corner heights,
+the means of its 3 x 3 neighbourhood, and refuses the whole view when a
+mesh quad spans more than its scene's largest dimension (8,192 pixels,
+less one). That span depends on the art's size, the diamond, the zoom and
+the differences between those heights, not on the window or on where the
+tile lies, and it grows linearly with the zoom. So lint compiles one tile
+of each size of ground art the catalog's prototypes draw (used or not,
+and the diamond-sized tile-picking art), with the renderer itself, under
+every pattern of its neighbourhood at the two ends of the grant, where 0
+always counts as an end because tiles without a height have 0. It does so
+at the largest zoom, 8, or, for art too large to draw even flat at 8 (a
+side over about 1,023 pixels), at the largest zoom at which it draws flat,
+which the message gives rounded down to hundredths. Above that zoom a flat
+tile of the art does not draw; a bent tile is 16 smaller quads, so a view
+in which every tile of the art is bent can draw at higher zooms, and such
+views are not covered. When a pattern cannot be drawn, lint finds the largest difference
+that can: tile by tile, heights at most that far apart can be bent at
+that zoom and every lower one. For 32 x 32 ground art on a 32 x 16 diamond
+(the neutral sample's art, made isometric) it is 921, from -460 to 461 for
+example; ADR 0006 has a table. Only the tightest art size is named; other
+art may fall short too. The warning does not cover the scene's quad and
+raster-sample budgets, which count the whole view and depend on the window
+and on how many tiles are bent, so a whole view within the range can still
+be refused. A catalog without `editing.heights`, and any top-down one, has
+no such finding.
 
 The portal checks are the ones the desktop review shows when a portal is
 edited; the pick grid is the first grid the catalog grants terrain editing

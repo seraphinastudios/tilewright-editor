@@ -8,7 +8,7 @@ SBOM.
   (tilewright-world): MIT.
 - `tilewright-scene` and `tilewright-render-*` 0.7.2 (tilewright-renderer): MIT
   implementation; `tilewright-render-ui` also bundles OFL-1.1 font data.
-- `tilewright-ui` and `tilewright-ui-render` 0.1.1 (tilewright-ui): MIT. They
+- `tilewright-ui` and `tilewright-ui-render` 0.1.2 (tilewright-ui): MIT. They
   draw the opt-in shared string field and bring no further crate.
 - `sdl3` Rust bindings: MIT.
 - SDL native library: Zlib License.

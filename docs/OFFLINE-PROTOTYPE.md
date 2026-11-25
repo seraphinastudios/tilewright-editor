@@ -155,13 +155,13 @@ invalidate earlier masks.
 ### Shared string field
 
 `--shared-string-field` (given to `tools/provision-prototype.py`, which records
-`"string_field": "tilewright-ui 0.1.1"` in the receipt and passes the flag to
+`"string_field": "tilewright-ui 0.1.2"` in the receipt and passes the flag to
 the editor) switches the inspector's **string** fields to the shared text
-field of `tilewright-ui` 0.1.1, drawn by `tilewright-ui-render` with the
+field of `tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the
 editor's own text system and font pack. It is off by default; without it
 nothing changes, and the frame records and images of a session are
 byte-identical. With it, each frame record carries the same
-`"string_field": "tilewright-ui 0.1.1"` member and the editor prints it at
+`"string_field": "tilewright-ui 0.1.2"` member and the editor prints it at
 start.
 
 Only string field drafts change hands. Numbers, booleans and references,
@@ -171,37 +171,55 @@ messages, stored line breaks as the same markers (now drawn by the shared
 field), the same keys, clipboard and input method events, and Enter or
 Review hands the engine the same `SetField` with the shared field's
 committed text. The arrows step the caret with the shared field's own
-`step_caret`, which steps over a marker's zero-width space in one press;
-every press beside a marker moves the caret, as in the editor's own field.
-Its text is 20 px rather than 18 px, so in mixed-direction text an arrow or
-a click can land on another visual stop (or the same position with another
-side) than in the editor's own field.
+`step_caret`, which steps over a marker's zero-width space in one press and
+counts two caret stops at the same place as one, so every press moves the
+caret. Its text is the editor's own size (18 px), so an arrow or a click
+lands on the same visual stop, with the same side, as in the editor's own
+field. The editor's own field steps its caret by the same rule, so neither
+field has a press that moves nothing on screen, including two caret stops
+at the same place at a change of direction, U+0600 before a stored break,
+some emoji sequences beside right-to-left text or breaks, and a value of
+breaks only.
 
-The field looks different: a taller row (52 px, so the rows below move down
-22 px), its own dark box inset in the row, and a white caret and preedit
-underline. It has no button of its own: the shared field's Apply control is
-switched off, its text area takes the row's whole width, and Enter or the
-editor's Review control reviews, as with the editor's own field.
+The field looks like the editor's own: it is laid out with the editor's own
+field row values (`workspace_render`'s `FIELD_ROW_HEIGHT`, `text_size`,
+`TEXT_INSET`, `FIELD_SCROLL_MARGIN` and colours), so it takes the same
+30 px row, the rows below stay where they are, and its text has the same
+origin, size and colour, its selection, caret and preedit underline the
+same accent, and long text scrolls at the same point. One difference
+remains: the editor draws the selection, caret and underline under the
+text, the shared field draws the caret and the underline over it, so the
+pixels where the caret or the underline crosses a glyph's edge differ (a
+few pixels, and only there). It has no
+button of its own: the shared field's Apply control is switched off, its
+text area takes the row's whole width, and Enter or the editor's Review
+control reviews, as with the editor's own field.
 
 The shared field is composed into the editor's frame under the editor's own
-scene limits, quads and raster samples both. The editor fits its own frame
-to leave room for the field's quads; `tilewright-ui-render` 0.1.1 does not
-report the field's raster samples, so a field that would take the frame past
-the sample limit is refused instead. If the shared field cannot be drawn
-(such a refusal, or a structural refusal from its renderer), editing pauses
-with the draft kept. Esc discards the draft; a second Esc, a zoom or a pan
-then ends the pause (if the cause is the frame budget, zooming in avoids it
-next time).
+scene limits, quads and raster samples both. The field is compiled first
+and the editor fits its own frame to leave room for the field's quads and
+its raster samples (`tilewright-ui-render`'s `quad_count` and
+`raster_sample_count`), so near the budget the proposal highlight and the
+preview give way, as they do without the switch. The composed frame is then
+checked against the editor's whole limits as a backstop. If the frame cannot
+be drawn (no room even for the editor's share, or a structural refusal from
+the shared renderer), editing pauses with the draft kept. Esc discards the
+draft; a second Esc, a zoom or a pan then ends the pause (if the cause is
+the frame budget, zooming in avoids it next time).
 
 What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints
-`string field: tilewright-ui 0.1.1 (opt-in)`. Select a marker and click its
+`string field: tilewright-ui 0.1.2 (opt-in)`. Select a marker and click its
 `label` row.
 
-1. **Looks.** The field is taller, with a dark box and a white caret, and has
-   no button of its own: its text runs the width of the row. Every row below
-   stays reachable, in a 720×480 window too (scroll the sidebar with the
-   mouse wheel).
+1. **Looks.** Open the same field with and without the switch: the row has
+   the same height and blue fill, the hint and the Review and Discard
+   buttons below it do not move, and the text starts at the same place in
+   the same size and colour. The caret is the same thin blue line; where it
+   crosses a glyph it is drawn over the glyph instead of under it. There is
+   no button of the field's own: the text runs the width of the row. Every
+   row below stays reachable, in a 720×480 window too (scroll the sidebar
+   with the mouse wheel).
 2. **Typing and paste.** Type, paste a short text and a long one. Pasting two
    lines is refused with "Input exceeds byte budget or contains control
    characters or line breaks" and leaves the field as it was.

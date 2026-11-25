@@ -112,12 +112,8 @@ fn stored_breaks_show_as_markers_on_one_line_in_the_row_and_the_draft(
     assert_eq!(geometry.snapshot.display_text, shown());
     assert_eq!(geometry.layout.text(), shown());
     assert!(geometry.layout.missing_glyphs().is_empty());
-    // The shared field's composer text is 20 px, the editor's 18 px.
-    let size = if implementation == FieldImplementation::Editor {
-        18.0
-    } else {
-        20.0
-    };
+    // Both fields draw their text at the editor's field size.
+    let size = crate::workspace_render::text_size(crate::workspace_render::FIELD_ROW_HEIGHT);
     let plain = app.text.layout("Trail", size, None).unwrap();
     assert_eq!(
         geometry.layout.size()[1].to_bits(),

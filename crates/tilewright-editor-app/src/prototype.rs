@@ -3359,7 +3359,11 @@ impl Application {
         {
             let supported = self
                 .text
-                .layout(&snapshot.display_text, 18.0, None)
+                .layout(
+                    &snapshot.display_text,
+                    crate::workspace_render::text_size(crate::workspace_render::FIELD_ROW_HEIGHT),
+                    None,
+                )
                 .is_ok_and(|layout| layout.missing_glyphs().is_empty());
             y = self.draft_field(
                 ui,
@@ -3368,7 +3372,7 @@ impl Application {
                     x,
                     y,
                     width,
-                    height: 30,
+                    height: crate::workspace_render::FIELD_ROW_HEIGHT,
                 },
             );
             ui.widget(
@@ -3414,7 +3418,8 @@ impl Application {
     }
 
     /// The open draft's text field at `bounds`: the editor's own, or the
-    /// taller row the shared string field draws. Returns the next free row.
+    /// same row reserved for the shared string field to draw. Returns the
+    /// next free row.
     fn draft_field(
         &self,
         ui: &mut WorkspaceUi,
@@ -3422,13 +3427,11 @@ impl Application {
         bounds: Rect,
     ) -> u32 {
         if self.tools.shared_draft().is_some() {
-            let height = crate::shared_field::ROW_HEIGHT;
-            ui.shared_editable(Rect { height, ..bounds });
-            bounds.y + height + 4
+            ui.shared_editable(bounds);
         } else {
             ui.editable(bounds, snapshot);
-            bounds.y + 34
         }
+        bounds.y + bounds.height + 4
     }
 
     /// The hint under a text draft. A zone draft names the zone it edits,
@@ -3627,11 +3630,11 @@ impl Application {
                     x,
                     y,
                     width,
-                    height: 30,
+                    height: crate::workspace_render::FIELD_ROW_HEIGHT,
                 },
                 snapshot,
             );
-            y += 34;
+            y += crate::workspace_render::FIELD_ROW_HEIGHT + 4;
             ui.widget(
                 Rect {
                     x,
@@ -7094,15 +7097,18 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     overlay.extend(stroke.iter().copied());
     person.extend(stroke);
     // The shared string field is compiled first, so the editor's frame is
-    // fitted with room for its quads: near the budget the highlight and the
-    // preview give way, as without it, instead of the frame failing. The
-    // field is then composed under the same limits, raster samples
-    // included; it reports no sample count to set aside, so a field that
-    // takes the samples over is refused there (`PreparedField::attach`).
+    // fitted with room for its quads and its raster samples: near the
+    // budget the highlight and the preview give way, as without it, instead
+    // of the frame failing. The field is then composed under the editor's
+    // whole limits as a backstop (`PreparedField::attach`).
     let mut field = prepare_shared_field(app)?;
-    let compose = |app: &mut Application, reserved: usize| {
+    let compose = |app: &mut Application, (quads, samples): (usize, u64)| {
         let limits = tilewright_scene::SceneLimits {
-            maximum_quads: app.frame_limits.maximum_quads.saturating_sub(reserved),
+            maximum_quads: app.frame_limits.maximum_quads.saturating_sub(quads),
+            maximum_raster_samples: app
+                .frame_limits
+                .maximum_raster_samples
+                .saturating_sub(samples),
             ..app.frame_limits
         };
         compose_highlight_first(
@@ -7115,9 +7121,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         )
         .map_err(|error| error.to_string())
     };
-    let reserved = field
-        .as_ref()
-        .map_or(0, crate::shared_field::PreparedField::quads);
+    let reserved = shared_field_reservation(field.as_ref());
     let (mut presentation, mut omitted, mut highlight) = compose(app, reserved)?;
     if app.unsupported_runs != presentation.unsupported_runs
         || app.preview_omitted != omitted
@@ -7130,9 +7134,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         // The new layout may move the row, show it or hide it: prepare the
         // field and its reservation again.
         field = prepare_shared_field(app)?;
-        let reserved = field
-            .as_ref()
-            .map_or(0, crate::shared_field::PreparedField::quads);
+        let reserved = shared_field_reservation(field.as_ref());
         (presentation, omitted, highlight) = compose(app, reserved)?;
         app.preview_omitted = omitted;
         app.highlight_omitted = highlight;
@@ -7141,6 +7143,11 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         field.attach(&mut presentation, app.frame_limits)?;
     }
     Ok(presentation)
+}
+
+/// The quads and raster samples the prepared shared field adds to a frame.
+fn shared_field_reservation(field: Option<&crate::shared_field::PreparedField>) -> (usize, u64) {
+    field.map_or((0, 0), |field| (field.quads(), field.raster_samples()))
 }
 
 /// The shared string field compiled for the current layout, while it edits

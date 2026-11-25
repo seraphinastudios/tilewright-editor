@@ -782,6 +782,27 @@ pub fn text_size(height: u32) -> f32 {
     if height <= 22 { 14.0 } else { 18.0 }
 }
 
+/// The look of the editor's own text field row, in logical pixels. The
+/// opt-in shared string field is styled from these same values
+/// (`shared_field::layout_options`), so the two rows match.
+///
+/// The open draft's field row height; its text is `text_size` of it.
+pub const FIELD_ROW_HEIGHT: u32 = 30;
+/// Where a row's text starts, from the row's top left corner.
+pub const TEXT_INSET: [f32; 2] = [4.0, 1.0];
+/// The field's text scrolls left once the caret would pass the row's
+/// width less this.
+pub const FIELD_SCROLL_MARGIN: f32 = 12.0;
+/// The width of the renderer's caret (`UnicodeLayout::caret`).
+pub const CARET_WIDTH: f32 = 1.0;
+/// Enabled row text.
+pub const TEXT_COLOR: [f32; 4] = [0.91, 0.94, 0.98, 1.0];
+/// The fill of an active row: the open field's row, a chosen tool.
+pub const ACTIVE_ROW_COLOR: [f32; 4] = [0.12, 0.32, 0.47, 1.0];
+/// The field's selection, caret and input method underline, drawn under
+/// its text.
+pub const FIELD_ACCENT: [f32; 4] = [0.28, 0.48, 0.66, 1.0];
+
 /// Elision uses shared shaped measurements and original grapheme boundaries.
 #[allow(clippy::cast_precision_loss)]
 pub fn fit_text(system: &mut TextSystem, text: &str, width: u32, height: u32) -> String {
@@ -1003,7 +1024,7 @@ fn row_background<'a>(
         return Ok(None);
     }
     let color = if widget.active {
-        [0.12, 0.32, 0.47, 1.0]
+        ACTIVE_ROW_COLOR
     } else if widget.enabled {
         [0.14, 0.18, 0.24, 1.0]
     } else {
@@ -1090,12 +1111,12 @@ fn display_list<'a>(
             .ok_or(CompositionError::PainterOrderExhausted)?;
         primitives.extend(row_background(widget, &mut identity, order)?);
         let color = if widget.enabled {
-            [0.91, 0.94, 0.98, 1.0]
+            TEXT_COLOR
         } else {
             [0.50, 0.56, 0.63, 1.0]
         };
         primitives.extend(swatch(widget, &mut identity, order)?);
-        let mut origin = [bounds.x + 4.0, bounds.y + 1.0];
+        let mut origin = [bounds.x + TEXT_INSET[0], bounds.y + TEXT_INSET[1]];
         if widget.thumbnail.is_some() || widget.swatch.is_some() {
             // Text sits beside the thumbnail, centred on a 26 px text row.
             origin[0] += thumbnail_indent(widget.layout.height) as f32;
@@ -1107,7 +1128,7 @@ fn display_list<'a>(
                 .map_err(CompositionError::Text)?;
             let cursor = renderer_cursor(snapshot.display_selection.focus);
             if let Some(caret) = layout.caret(cursor) {
-                origin[0] -= (caret.x - (bounds.width - 12.0).max(0.0)).max(0.0);
+                origin[0] -= (caret.x - (bounds.width - FIELD_SCROLL_MARGIN).max(0.0)).max(0.0);
             }
             let mut selection =
                 layout.selection_rects(renderer_cursor(snapshot.display_selection.anchor), cursor);
@@ -1127,7 +1148,7 @@ fn display_list<'a>(
                 primitives.push(UiPrimitive::Solid {
                     bounds: selected,
                     clip: bounds,
-                    paint: paint(&mut identity, order, [0.28, 0.48, 0.66, 1.0])?,
+                    paint: paint(&mut identity, order, FIELD_ACCENT)?,
                     pickable: false,
                 });
             }
