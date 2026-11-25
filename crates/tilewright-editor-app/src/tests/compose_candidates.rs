@@ -524,16 +524,22 @@ fn assert_boundaries(app: &mut Application) -> usize {
     checked
 }
 
+/// An app state to test, made when its turn comes, and its name.
+type State = (fn() -> Twin, &'static str);
+
+/// The app states with a highlight on screen.
+const HIGHLIGHTED: [State; 4] = [
+    (highlighted_with_zones, "highlight, zones and badges"),
+    (highlighted_alone, "highlight alone"),
+    (highlighted_with_stroke, "highlight and brush preview"),
+    (highlighted_with_shared_field, "highlight and shared field"),
+];
+
 #[test]
 fn every_candidate_presents_at_its_own_limit_and_gives_way_one_below() {
     let mut checked = 0;
-    for mut twin in [
-        highlighted_with_zones(),
-        highlighted_alone(),
-        highlighted_with_stroke(),
-        highlighted_with_shared_field(),
-    ] {
-        checked += assert_boundaries(&mut twin.app);
+    for state in HIGHLIGHTED {
+        checked += assert_boundaries(&mut state.0().app);
     }
     let (_temporary, mut app) = stroke_only();
     checked += assert_boundaries(&mut app);
@@ -555,16 +561,8 @@ fn the_candidates_compose_what_the_nested_fallback_composed() {
             *answered.entry(key).or_insert(0) += count;
         }
     };
-    for (mut twin, name) in [
-        (highlighted_with_zones(), "highlight, zones and badges"),
-        (highlighted_alone(), "highlight alone"),
-        (highlighted_with_stroke(), "highlight and brush preview"),
-        (
-            highlighted_with_shared_field(),
-            "highlight and shared field",
-        ),
-    ] {
-        run(&mut twin.app, name);
+    for (state, name) in HIGHLIGHTED {
+        run(&mut state().app, name);
     }
     let (_temporary, mut app) = stroke_only();
     run(&mut app, "brush preview, no proposal");
