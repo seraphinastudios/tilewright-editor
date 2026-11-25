@@ -112,9 +112,7 @@ jobs:
       - name: Prepare immutable font data explicitly
         shell: pwsh
         run: python tools/prepare-font-pack.py prepare --acquire --output "$env:RUNNER_TEMP/unicode-font-pack"
-      # The Windows tests gain little from optimised dependencies, and the
-      # Windows build takes minutes longer with them: build as main did.
-      - run: cargo test --locked --workspace --all-targets --config 'profile.dev.package."*".opt-level=0' --config 'profile.dev.package."*".debug=true'
+      - run: cargo test --locked --workspace --all-targets
         env:
           TILEWRIGHT_UNICODE_FONT_ROOT: ${{ runner.temp }}/unicode-font-pack
 
