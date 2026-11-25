@@ -536,9 +536,10 @@ Keys while a road is drawn, before the global keys:
   first." when it comes from a key or a direct control, and laid out
   disabled (a press on a disabled row does nothing, as for every disabled
   row): Undo, Redo, Delete, the inspector's
-  position, field and portal controls of an object selected before, and the
-  proposal's controls; so are the keys Z, Y, R, Delete and, with a proposal
-  open, G. So nothing else is prepared while a road is drawn.
+  position, field and portal controls of an object selected before, the
+  proposal's controls and the [Grade road](#grading-a-road) rows; so are
+  the keys Z, Y, R, Delete, L, E and, with a proposal open, G. So nothing
+  else is prepared while a road is drawn.
 
 A road needs two points: with one, Enter prepares nothing and the road
 stays. A click on the last point adds none. A click that hits no tile of
@@ -575,8 +576,8 @@ seed changes; the status line names it ("Road from palette speckle (seed
 
 What is recorded is the ordinary edit: its cells, terrain or palette and
 seed, never the points. A proposal, Undo and Redo treat a road as the one
-paint or scatter it is, one step each; a later "grade this road" step is
-not part of this version.
+paint or scatter it is, one step each; grading it is a second edit of its
+own ([Grading a road](#grading-a-road)).
 
 To try it by hand in a real window on the unedited neutral sample:
 
@@ -589,6 +590,92 @@ To try it by hand in a real window on the unedited neutral sample:
    the status line says "Review changes, then Accept or Cancel." and the
    pending scene shows the sand road.
 4. Press Enter to accept, then Z and Enter: one step takes the road away.
+
+#### Grading a road
+
+Once a road's change is accepted, the editor remembers the cells that
+change recorded (every cell of the corridor, also those that already held
+the terrain) and the road's first point. Under a catalog with a
+[height range](#height-range), Terrain mode's sidebar then offers, after
+the rules, "Road from (0, 1), 21 cells" (the first point, then the
+cells) and two rows:
+
+- **Grade road: Flatten** (`L`, for level) prepares a `flatten_heights`
+  over exactly those cells to the committed height at the road's first
+  point, read once, when the row or key is pressed, as a Flatten stroke
+  reads its start tile at the press ([Sculpt mode](#sculpt-mode)).
+- **Grade road: Smooth** (`E`, for even out) prepares a `smooth_heights`
+  over exactly those cells with kernel 1. It reads only inside the active
+  view ([ADR 0008](../decisions/0008-smooth-heights.md)): a road's cells
+  within two tiles of the view's edge depend on where the view ends, as
+  for a smooth stroke.
+
+Either goes to Review like every other change: Enter accepts, Esc
+cancels, and Undo and Redo take it as one step of its own, so a graded road
+is two Reviews and two Undo steps (the grade, then the road). Nothing new
+is recorded: a proposal, the MCP editing server and the World see an
+ordinary `flatten_heights` or `smooth_heights` with the road's cells, which
+replays exactly. The keys work in Terrain mode only. Every refusal of
+those edits applies unchanged: the granted range (a first point whose
+height is outside it refuses the flatten: "Grade road refused: the road's
+first point (1, 1) has height 20, outside the granted range -8 to 8; a
+flatten target must lie inside it."), nothing to change, the cell cap (a
+road never has more cells than an edit may cover), and a result that cannot
+be drawn at this view, which is cancelled as any edit is, with a grade's
+own advice: its target and cells are the road's, so "Zoom out and grade
+again, or smooth the road instead." for a flatten and "Zoom out and grade
+again." for a smooth. The road stays remembered.
+
+The rows are laid out disabled, and the line above them says why, when the
+catalog grants no heights ("Grading needs editing.heights"), when no road
+is remembered ("Grading: no road since last edit": grading needs a road
+accepted since the last other accepted change, Undo or Redo, even when an
+older road is still on the map), while a change is pending,
+the grade's own too ("Grading: a change is pending"), and while editing is
+paused ("Grading: editing is paused"); the keys and controls are then
+refused in the words of the cause. While a road is drawn they are fenced
+like every other edit.
+
+The remembered road is one road, the last accepted, and is kept only while
+its cells are still what it covers:
+
+- accepting a grade of it keeps it (its cells are still the road's), so it
+  can be smoothed again, or flattened and then smoothed; cancelling a grade
+  keeps it too;
+- accepting any other change forgets it, and so does accepting an Undo or
+  a Redo of any step, including the road's own Undo; a Redo never brings it
+  back;
+- any change of the committed World or of the active view (plane, layer,
+  bounds) that did not come from its grade forgets it; a World or catalog
+  changed on disk pauses or blocks every edit, grades included;
+- leaving Terrain mode, pans and zooms, a Reopen (also during the road's
+  or a grade's Review: the change accepted after it is remembered as
+  usual), drawing another road (until that one is accepted) and dropping
+  it keep it.
+
+The scripted demonstration does not grade: the neutral sample grants no
+height range.
+
+To try it by hand on a copy (the sample has no heights grant):
+
+1. Copy `crates/tilewright-editor-testkit/fixtures/prototype-neutral` to a
+   directory of your own, give the copy's `preview.jsonc` the range
+   `"heights": {"min": -8, "max": 8}` inside `"editing"` and its
+   `planes/main/layers/0/0_0.jsonc` a height grid of 32 rows of 32 numbers
+   `x - y`, written as in the [Heights](#heights) hand test, and provision
+   it as above.
+2. Press T, choose "floor / sand", press F until the rule row says Road,
+   press `]` once (3 x 3), click (0,1) and (5,1), and press Enter twice:
+   the road is accepted, and the sidebar's last rows read "Road from (0,
+   1), 21 cells", "Grade road: Flatten  L" and "Grade road: Smooth  E".
+3. Press L: the review shows the chunk's `height` rows; press Enter. Press
+   H: the road's three rows from x 0 to 6 are one band, height -1, the
+   height of (0,1); the inspector on (6,2) reads "Height: -1" and on (7,2)
+   "Height: 5".
+4. Press Z and Enter: the heights come back ((2,1) reads "Height: 1")
+   and the sand stays, but the Undo forgot the road: the line above the
+   grade rows reads "Grading: no road since last edit" and L is refused.
+   Z and Enter again: the road goes too.
 
 ### Deleting objects
 
@@ -1610,7 +1697,8 @@ whose JSON has a `road` member with the points, the brush, the covered and
 changed cells, or, while editing is paused, `refused` with the pause's
 words in place of the changed cells), presses Enter (`road`, pending) and accepts (`road-built`);
 the rule and the brush are restored. The sample grants no height range, so the
-demonstration does not sculpt ([Sculpt mode](#sculpt-mode)). It is a
+demonstration does not sculpt ([Sculpt mode](#sculpt-mode)) or grade the road
+([Grading a road](#grading-a-road)). It is a
 deterministic scripted demonstration,
 not a claim of human input. `--reference` produces composed workspace CPU
 reference evidence and
