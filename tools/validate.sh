@@ -4,7 +4,8 @@
 #   checks   tool tests, formatting, Clippy, dependency and foundation gates
 #   tests    workspace and doc tests, and the CLI smoke runs
 #   package  two Linux packages of one version, compared byte for byte
-# Every stage checks the toolchain first and `git diff --check` last.
+# Every stage checks the toolchain first, and last `git diff --check` and that
+# it left the checkout as it found it (`git status --porcelain`).
 set -euo pipefail
 
 repository=$(git rev-parse --show-toplevel)
@@ -28,6 +29,7 @@ tools=(cargo)
 if ${checks}; then tools+=(cargo-deny jq); fi
 if ${package}; then tools+=(cargo-auditable jq syft); fi
 
+before=$(git status --porcelain --untracked-files=all)
 if ${checks}; then python3 -m unittest discover -s tools -p 'test_*.py'; fi
 test "$(rustc --version | awk '{print $2}')" = 1.97.1
 for command in "${tools[@]}"; do command -v "${command}" >/dev/null || { echo "missing required tool: ${command}" >&2; exit 1; }; done
@@ -61,3 +63,12 @@ if ${package}; then
   cmp "${first}/tilewright-editor-0.1.0-test.1-source.tar.gz" "${second}/tilewright-editor-0.1.0-test.1-source.tar.gz"
 fi
 git diff --check
+# Nothing a stage runs may add, change or remove files in the checkout: CI runs
+# each stage in a fresh checkout, so a later stage would not notice them. Work
+# in progress that was there before is allowed; in CI the checkout starts clean.
+after=$(git status --porcelain --untracked-files=all)
+if [[ ${after} != "${before}" ]]; then
+  echo 'validation changed the checkout (git status --porcelain, before and after):' >&2
+  diff <(printf '%s\n' "${before}") <(printf '%s\n' "${after}") >&2 || true
+  exit 1
+fi
