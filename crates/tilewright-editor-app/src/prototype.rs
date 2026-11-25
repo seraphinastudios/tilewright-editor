@@ -7207,12 +7207,13 @@ fn compose_candidates<'a>(
 }
 
 /// Compose a frame with the first of `candidates` that fits, composing each
-/// at most once. A candidate whose non-empty overlay would take the frame
-/// past the scene limits gives way to the next; any other error, or any
-/// error composing an empty overlay, is returned. Returns the presentation
-/// and the candidate's flags: whether the person's overlays were left out
-/// and whether the highlight was. Only a list with no empty overlay can run
-/// out, which reports the limit it exceeded.
+/// at most once. `candidates` must end with the bare frame, as
+/// [`compose_candidates`] builds it. A candidate before the last whose
+/// overlay would take the frame past the scene limits gives way to the
+/// next; any other error is returned, and so is whatever the last (bare)
+/// candidate gives. Returns the presentation and the candidate's flags:
+/// whether the person's overlays were left out and whether the highlight
+/// was.
 fn compose_first_fitting(
     candidates: &[ComposeCandidate<'_>],
     mut compose: impl FnMut(
@@ -7225,25 +7226,31 @@ fn compose_first_fitting(
     (crate::workspace_render::Presentation, bool, bool),
     crate::workspace_render::CompositionError,
 > {
-    for candidate in candidates {
+    debug_assert!(
+        candidates
+            .last()
+            .is_some_and(|candidate| candidate.overlay.is_empty()),
+        "the candidates end with the bare frame"
+    );
+    let Some((last, before)) = candidates.split_last() else {
+        unreachable!("the candidates end with the bare frame");
+    };
+    let flagged = |candidate: &ComposeCandidate<'_>, presentation| {
+        (
+            presentation,
+            candidate.preview_omitted,
+            candidate.highlight_omitted,
+        )
+    };
+    for candidate in before {
         match compose(candidate.overlay) {
             Err(crate::workspace_render::CompositionError::Scene(
                 tilewright_scene::Error::LimitExceeded,
-            )) if !candidate.overlay.is_empty() => {}
-            result => {
-                return result.map(|presentation| {
-                    (
-                        presentation,
-                        candidate.preview_omitted,
-                        candidate.highlight_omitted,
-                    )
-                });
-            }
+            )) => {}
+            result => return result.map(|presentation| flagged(candidate, presentation)),
         }
     }
-    Err(crate::workspace_render::CompositionError::Scene(
-        tilewright_scene::Error::LimitExceeded,
-    ))
+    compose(last.overlay).map(|presentation| flagged(last, presentation))
 }
 
 fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {

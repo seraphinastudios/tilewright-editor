@@ -373,7 +373,7 @@ fn the_candidates_are_the_whole_overlay_then_the_persons_then_none() {
 }
 
 #[test]
-fn only_an_exceeded_limit_with_an_overlay_moves_to_the_next_candidate() {
+fn only_an_exceeded_limit_before_the_last_candidate_moves_to_the_next() {
     let quad = any_quad();
     let (whole, person) = (vec![quad; 3], vec![quad; 2]);
     let candidates = crate::prototype::compose_candidates(&whole, &person, true);
