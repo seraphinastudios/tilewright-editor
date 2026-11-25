@@ -20,6 +20,7 @@ use tilewright_editor_preview::{
 use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
 use tilewright_editor_ui::brush::StrokeTarget;
 use tilewright_editor_ui::inspector::{self, SelectionSummary};
+use tilewright_editor_ui::road::{BuiltRoad, RoadGrade, RoadMemory};
 use tilewright_editor_ui::tools::{
     self, PortalStep, SculptTool, TerrainRule, ToolMode, ToolState, ZoneChoice,
 };
@@ -33,7 +34,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | L flattens, E smooths the last road | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -51,6 +52,11 @@ const ROAD_ENDED_BY_MODE: &str = "Road dropped: the mode changed; nothing was pr
 const ROAD_ENDED_BY_RULE: &str = "Road dropped: the rule changed; nothing was prepared.";
 const ROAD_ENDED_BY_GRID: &str = "Road dropped: the grid changed; nothing was prepared.";
 const ROAD_IN_PROGRESS: &str = "Finish the road with Enter or drop it with Esc first.";
+/// Grade road's refusal with no remembered road, and the line above its
+/// rows: a road is remembered only from its Accept until the next other
+/// accepted change, Undo or Redo.
+pub(crate) const GRADE_NO_ROAD: &str = "Grade road needs a road accepted since the last other change, Undo or Redo: draw one with the Road rule, review it and accept it.";
+pub(crate) const GRADE_NO_ROAD_ROW: &str = "Grading: no road since last edit";
 const ROAD_OFF_VIEW: &str =
     "Road points are tiles of the view: no tile under the pointer, so no point was added.";
 
@@ -507,6 +513,10 @@ struct Application {
     proposal_layout: Option<proposal_view::State>,
     /// The shared string field's compiler, only with `--shared-string-field`.
     shared_field: Option<crate::shared_field::SharedField>,
+    /// The last accepted road, which Grade road flattens or smooths, and
+    /// the road a pending change comes from ([`RoadMemory`]); settled by
+    /// every dispatch in [`Self::funnel`].
+    roads: RoadMemory,
 }
 
 /// This command is intentionally a deployment seam, not arbitrary recovery-path
@@ -594,6 +604,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         proposal: None,
         proposal_layout: None,
         shared_field: None,
+        roads: RoadMemory::default(),
     };
     if arguments.iter().any(|arg| arg == "--shared-string-field") {
         app.share_string_field()?;
@@ -859,6 +870,13 @@ impl Application {
     }
 
     fn action(&mut self, action: Action) -> Result<()> {
+        let advice = undrawable_advice(Some(&action));
+        self.advised_action(action, advice)
+    }
+
+    /// [`Self::action`] with `advice` for a change that cannot be drawn at
+    /// this view, in place of its kind's.
+    fn advised_action(&mut self, action: Action, advice: &str) -> Result<()> {
         // Cancel stays open while rendering blocks editing: it changes no
         // source and goes back to the committed World.
         if !matches!(action, Action::Cancel) {
@@ -869,7 +887,6 @@ impl Application {
             return Err(REVIEW_LIMIT_MESSAGE.into());
         }
         let accept = matches!(action, Action::Accept);
-        let advice = undrawable_advice(Some(&action));
         let paused_cancel = self.blocked.is_some() && self.session.history().pending().is_some();
         let result = self.funnel(accept, false, advice, |app| {
             app.session
@@ -903,6 +920,7 @@ impl Application {
     ) -> Result<()> {
         let records = self.recovery.records().len();
         let was_pending = self.session.history().pending().is_some();
+        let before = self.session.history().document().revision();
         let mut result = dispatch(self);
         if let Some(error) = self.recovery.last_error() {
             self.session.set_recovery_descriptor(error.to_string());
@@ -947,6 +965,15 @@ impl Application {
                 }
             }
         }
+        // The remembered road follows what this dispatch did to History.
+        let (plane, layer, bounds) = self.session.catalog().view();
+        self.roads.settle(tilewright_editor_ui::road::Settled {
+            was_pending,
+            pending: self.session.history().pending().is_some(),
+            before,
+            after: self.session.history().document().revision(),
+            view: (plane, layer, bounds),
+        });
         self.report();
         let settled = self.settle_proposal(accept.then_some(records), prepare);
         self.refresh_highlight();
@@ -1530,9 +1557,83 @@ impl Application {
                 !self.session.can_prepare(),
             )
             .map_err(|error| error.to_string())?;
-        self.action(action)?;
+        // The road's cells are remembered for Grade road once this change
+        // is accepted ([`RoadMemory`]).
+        if let Some(built) = self
+            .tools
+            .road()
+            .and_then(|road| BuiltRoad::of(road, &action))
+        {
+            self.roads.stage(built);
+        }
+        let result = self.action(action);
+        self.roads.unstage();
+        result?;
         self.tools.drop_road();
         Ok(())
+    }
+
+    /// The remembered road Grade road acts on: the last accepted road, at
+    /// the committed revision and active view its change (or a grade of
+    /// it) left.
+    fn graded_road(&self) -> Option<&BuiltRoad> {
+        self.roads.road(
+            self.session.history().document().revision(),
+            self.session.catalog().view(),
+        )
+    }
+
+    /// Why Grade road is unavailable now, as its sidebar row says it and as
+    /// a control or key is refused; `None` when it can prepare. A road
+    /// being drawn is the road fence's ([`road_allows`]).
+    fn grade_unavailable(&self) -> Option<(&'static str, String)> {
+        if self.session.catalog().editing().heights.is_none() {
+            return Some((
+                "Grading needs editing.heights",
+                tilewright_editor_ui::road::GRADE_UNGRANTED.into(),
+            ));
+        }
+        if self.graded_road().is_none() {
+            return Some((GRADE_NO_ROAD_ROW, GRADE_NO_ROAD.into()));
+        }
+        if let Err(reason) = self.refuse_while_paused() {
+            return Some(("Grading: editing is paused", reason));
+        }
+        if self.session.history().pending().is_some() {
+            return Some((
+                "Grading: a change is pending",
+                "Accept or cancel the pending edit first".into(),
+            ));
+        }
+        if !self.session.can_prepare() {
+            return Some((
+                "Grading: editing unavailable",
+                self.session.status().message.clone(),
+            ));
+        }
+        None
+    }
+
+    /// Grade road: the existing height edit `grade` over the remembered
+    /// road's cells, dispatched as every edit is, so it goes to Review.
+    /// The flatten target is read now from the committed World at the
+    /// road's first point. Accepting it keeps the road remembered (its
+    /// cells are still the road's); cancelling it does too.
+    fn grade_road(&mut self, grade: RoadGrade) -> Result<()> {
+        if let Some((_, reason)) = self.grade_unavailable() {
+            return Err(reason);
+        }
+        let road = self.graded_road().cloned().ok_or(GRADE_NO_ROAD)?;
+        let action = road.grade(
+            grade,
+            self.session.history().document().world(),
+            self.session.catalog(),
+            self.session.history().document().revision(),
+        )?;
+        self.roads.stage(road);
+        let result = self.advised_action(action, grade_advice(grade));
+        self.roads.unstage();
+        result
     }
 
     /// What finishing the road would prepare now, or `None` without one.
@@ -1952,6 +2053,7 @@ impl Application {
             }
             self.scatter_rows(&mut rows, ready);
             self.rule_rows(&mut rows);
+            self.grade_rows(&mut rows);
         }
         if mode == ToolMode::Place {
             self.place_rows(&mut rows, ready);
@@ -2951,6 +3053,36 @@ impl Application {
                 Some(Control::TerrainRule(rule)),
                 true,
                 self.tools.terrain_rule() == rule,
+            ));
+        }
+    }
+
+    /// Terrain mode's Grade road rows, after the rules: what the last
+    /// accepted road is, or why grading is unavailable, then one row per
+    /// grade, laid out disabled while it is unavailable (and, by the road
+    /// fence, while a road is drawn).
+    fn grade_rows(&self, rows: &mut UiRows) {
+        let unavailable = self.grade_unavailable();
+        rows.push((
+            match (&unavailable, self.graded_road()) {
+                (Some((row, _)), _) => (*row).to_owned(),
+                (None, Some(road)) => grade_label(road.first(), road.cells().len()),
+                (None, None) => GRADE_NO_ROAD_ROW.to_owned(),
+            },
+            None,
+            true,
+            false,
+        ));
+        for grade in RoadGrade::ALL {
+            rows.push((
+                match grade {
+                    RoadGrade::Flatten => "Grade road: Flatten  L",
+                    RoadGrade::Smooth => "Grade road: Smooth  E",
+                }
+                .into(),
+                Some(Control::GradeRoad(grade)),
+                unavailable.is_none(),
+                false,
             ));
         }
     }
@@ -4258,6 +4390,7 @@ impl Application {
                 self.forget_hover();
                 Ok(())
             }
+            Control::GradeRoad(grade) => self.grade_road(grade),
             Control::ScatterPalette(name) => self.choose_scatter_palette(&name),
             Control::Palette { grid, prototype } => {
                 self.tools
@@ -6539,7 +6672,22 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         | Keycode::Plus
         | Keycode::Equals
         | Keycode::Minus => view_key(app, key),
-        _ => Ok(()),
+        _ => grade_key(app, key),
+    }
+}
+
+/// Grade road's keys in Terrain mode: L levels (flattens), E evens out
+/// (smooths) the last accepted road. Every other key does nothing.
+fn grade_key(app: &mut Application, key: Keycode) -> Result<()> {
+    let grade = match key {
+        Keycode::L => RoadGrade::Flatten,
+        Keycode::E => RoadGrade::Smooth,
+        _ => return Ok(()),
+    };
+    if app.tools.mode() == ToolMode::Terrain {
+        app.control(Control::GradeRoad(grade))
+    } else {
+        Ok(())
     }
 }
 
@@ -6603,6 +6751,26 @@ fn road_key(app: &mut Application, key: Keycode) -> Option<Result<()>> {
         Keycode::G if app.proposal.is_some() => Err(ROAD_IN_PROGRESS.into()),
         _ => return None,
     })
+}
+
+/// The line above the Grade road rows for a remembered road: its first
+/// point (where a flatten reads its target) first, so a narrow row cuts
+/// the count, never the point.
+pub(crate) fn grade_label([x, y]: [i64; 2], count: usize) -> String {
+    format!(
+        "Road from ({x}, {y}), {count} {}",
+        if count == 1 { "cell" } else { "cells" }
+    )
+}
+
+/// What to do after [`UNDRAWABLE_CHANGE`] refused a grade: its target and
+/// cells are the road's, so zoom out; a flatten can be swapped for a
+/// smooth, which keeps each cell nearer its neighbours.
+pub(crate) fn grade_advice(grade: RoadGrade) -> &'static str {
+    match grade {
+        RoadGrade::Flatten => "Zoom out and grade again, or smooth the road instead.",
+        RoadGrade::Smooth => "Zoom out and grade again.",
+    }
 }
 
 /// A pan (WASD) or zoom (+/-) key: one step through [`Application::change_view`].
