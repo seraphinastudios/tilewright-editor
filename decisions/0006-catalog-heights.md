@@ -65,7 +65,10 @@ them.
   | isometric 32 × 16 | 32 × 48 | ±215 |
   | isometric 64 × 32 | 64 × 128 | ±129 |
 
-  At a lower zoom the drawable range is wider. The range a
+  At a lower zoom the drawable range is wider. Lint's
+  `catalog.heights_undrawable` warning
+  ([docs/CLI.md](../docs/CLI.md#lint-findings)) computes this bound for a
+  catalog; its unit tests reproduce this table on renderer 0.7.2. The range a
   stroke can produce is what counts: every height in the view and the
   ring around it, and the 0 of tiles without a height grid. The desktop
   refuses an edit whose result cannot be drawn at its current view: the

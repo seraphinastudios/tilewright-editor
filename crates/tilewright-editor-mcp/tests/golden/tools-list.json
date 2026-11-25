@@ -3714,6 +3714,13 @@
                             "items": {
                               "type": "string"
                             }
+                          },
+                          "resources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "x-world-text": true
+                            }
                           }
                         },
                         "required": [],
@@ -3899,6 +3906,13 @@
                             "type": "array",
                             "items": {
                               "type": "string"
+                            }
+                          },
+                          "resources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "x-world-text": true
                             }
                           }
                         },

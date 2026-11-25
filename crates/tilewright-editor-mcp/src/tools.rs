@@ -681,6 +681,8 @@ fn finding_schema() -> Schema {
         .maybe("at", integers())
         .maybe_world("zone")
         .maybe("codes", Schema::Text.list())
+        // `catalog.heights_undrawable`: the ids of the limiting art.
+        .maybe("resources", Schema::World.list())
         .build();
     Shape::new()
         .with("code", Schema::Text)
