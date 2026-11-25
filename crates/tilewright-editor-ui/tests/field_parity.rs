@@ -375,6 +375,7 @@ fn zone_start(random: &mut Seeded) -> String {
 /// The randomised parity run of [`both_fields_agree_on_every_step_and_on_the_reviewed_action`]
 /// for both zone drafts: every step, refusal and the reviewed zone action.
 #[test]
+#[allow(clippy::too_many_lines)] // The stored names and outcomes are listed inline.
 fn both_fields_agree_on_every_zone_draft_step_and_on_the_reviewed_zone_action() {
     let mut random = Seeded(0x2073_0e5e);
     let full = "😀".repeat(256);
