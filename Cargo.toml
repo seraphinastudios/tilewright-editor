@@ -69,12 +69,16 @@ missing_panics_doc = "allow"
 
 # Tests and `cargo run` use the dev profile. Optimise dependencies (not the
 # workspace's own crates) so the editor's scripted tests run in seconds, not
-# minutes. Debug assertions and overflow checks stay on, and Rust has no
-# fast-math, so results are the same; release builds are not affected.
+# minutes, and keep only their line tables, which backtraces need, so they
+# build and link quickly. Debug assertions and overflow checks stay on, and
+# Rust has no fast-math, so results are the same; release builds are not
+# affected.
 [profile.dev.package."*"]
 opt-level = 1
+debug = "line-tables-only"
 
-# sdl3-sys builds SDL from source with CMake, which takes its build type from
-# this opt-level: keep SDL's debug build as it was.
+# sdl3-sys builds SDL from source with CMake, which takes its build type and
+# debug flags from this profile: keep SDL's debug build as it was.
 [profile.dev.package.sdl3-sys]
 opt-level = 0
+debug = true
