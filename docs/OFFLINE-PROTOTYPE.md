@@ -156,21 +156,31 @@ invalidate earlier masks.
 
 `--shared-string-field` (given to `tools/provision-prototype.py`, which records
 `"string_field": "tilewright-ui 0.1.2"` in the receipt and passes the flag to
-the editor) switches the inspector's **string** fields to the shared text
-field of `tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the
-editor's own text system and font pack. It is off by default; without it
+the editor) switches the inspector's **string** fields and the two **zone
+name** drafts to the shared text field of `tilewright-ui` 0.1.2, drawn by
+`tilewright-ui-render` with the editor's own text system and font pack. It is off by default; without it
 nothing changes, and the frame records and images of a session are
 byte-identical. With it, each frame record carries the same
 `"string_field": "tilewright-ui 0.1.2"` member and the editor prints it at
 start.
 
-Only string field drafts change hands. Numbers, booleans and references,
-coordinates, zone names, anchors, portal locations and the palette filter
-keep the editor's own field. A string draft keeps the same refusals and
-messages, stored line breaks as the same markers (now drawn by the shared
-field), the same keys, clipboard and input method events, and Enter or
-Review hands the engine the same `SetField` with the shared field's
-committed text. The arrows step the caret with the shared field's own
+Only string field drafts and zone name drafts change hands: a zone's
+display name ("Edit display name") and a new zone's id and name ("New zone
+under X", "New top-level zone"), see [Managing zones](#managing-zones).
+Numbers, booleans and references, coordinates, anchors, portal locations
+and the palette filter keep the editor's own field. A shared draft keeps
+the same refusals and messages, stored line breaks as the same markers (now
+drawn by the shared field), the same keys, clipboard and input method
+events, and Enter or Review hands the engine the same action with the
+shared field's committed text: `SetField` for a string field,
+`RenameZone` or `CreateZone` for a zone draft. A zone draft keeps its own
+byte limit (1,024 bytes for a display name, 1,153 for a new zone's id,
+space and name), refused in the editor's own words, its own hint ("Name of
+meadow; empty = none", "New zone under meadow: id, name"), the review-time
+checks (an empty name is no name; the id's syntax, a used id and the
+256-character name, each with its message; text the font pack cannot draw)
+and the same road fence and pause: no zone draft opens while a road is
+drawn or editing is paused. The arrows step the caret with the shared field's own
 `step_caret`, which steps over a marker's zero-width space in one press and
 counts two caret stops at the same place as one, so every press moves the
 caret. Its text is the editor's own size (18 px), so an arrow or a click
@@ -210,7 +220,8 @@ the frame budget, zooming in avoids it next time).
 What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints
 `string field: tilewright-ui 0.1.2 (opt-in)`. Select a marker and click its
-`label` row.
+`label` row; then repeat 1, 2, 6, 9 and 12 in a zone draft (N, choose
+meadow, "Edit display name"; and "New zone under meadow").
 
 1. **Looks.** Open the same field with and without the switch: the row has
    the same height and blue fill, the hint and the Review and Discard
@@ -250,8 +261,15 @@ session with `--shared-string-field`; the terminal prints
 11. **Scaling.** At 125 % or 150 % display scaling the caret, clicks and the
     candidate window line up with the text.
 12. **Esc and the other fields.** Esc discards the draft. Numbers,
-    coordinates, zone names and the palette filter look and behave exactly
-    as before.
+    coordinates, anchors, portal locations and the palette filter look and
+    behave exactly as before.
+13. **Zone drafts.** "Edit display name" shows the name with "Name of
+    meadow; empty = none" below; clearing it and pressing Enter reviews
+    "Removes the display name 'Quiet meadow' of zone meadow; it shows no
+    display name.". In "New zone
+    under meadow", `Bridge` and Enter keep the draft open with the id
+    message; `meadow.bridge Old bridge` reviews "Creates zone meadow.bridge
+    under meadow, named 'Old bridge'.".
 
 ### Terrain palette
 

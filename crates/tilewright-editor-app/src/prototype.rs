@@ -736,8 +736,8 @@ pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
 }
 
 impl Application {
-    /// Switch the inspector's string fields to the shared field
-    /// (`--shared-string-field`), from the next field draft on.
+    /// Switch the inspector's string fields and the zone name drafts to the
+    /// shared field (`--shared-string-field`), from the next such draft on.
     fn share_string_field(&mut self) -> Result<()> {
         self.shared_field = Some(crate::shared_field::SharedField::new()?);
         self.tools
@@ -3489,14 +3489,7 @@ impl Application {
             .draft_snapshot()
             .filter(|_| !self.tools.filter_focused())
         {
-            let supported = self
-                .text
-                .layout(
-                    &snapshot.display_text,
-                    crate::workspace_render::text_size(crate::workspace_render::FIELD_ROW_HEIGHT),
-                    None,
-                )
-                .is_ok_and(|layout| layout.missing_glyphs().is_empty());
+            let supported = self.draft_missing_glyphs(&snapshot) == Some(0);
             y = self.draft_field(
                 ui,
                 snapshot,
@@ -3547,6 +3540,24 @@ impl Application {
             y += 36;
         }
         self.sidebar_rows(ui, rows, y);
+    }
+
+    /// How many runs of the draft's display text the font pack cannot draw,
+    /// laid out at the field row's text size: what the hint checks, and
+    /// what the editor's own field adds to the toolbar's unsupported-text
+    /// count. `None` when the text cannot be laid out.
+    fn draft_missing_glyphs(
+        &mut self,
+        snapshot: &tilewright_editor_ui::text_input::TextInputSnapshot,
+    ) -> Option<usize> {
+        self.text
+            .layout(
+                &snapshot.display_text,
+                crate::workspace_render::text_size(crate::workspace_render::FIELD_ROW_HEIGHT),
+                None,
+            )
+            .ok()
+            .map(|layout| layout.missing_glyphs().len())
     }
 
     /// The open draft's text field at `bounds`: the editor's own, or the
@@ -7316,6 +7327,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     };
     let reserved = shared_field_reservation(field.as_ref());
     let (mut presentation, mut omitted, mut highlight) = compose(app, reserved)?;
+    presentation.unsupported_runs += shared_field_unsupported(app, field.as_ref());
     if app.unsupported_runs != presentation.unsupported_runs
         || app.preview_omitted != omitted
         || app.highlight_omitted != highlight
@@ -7329,6 +7341,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         field = prepare_shared_field(app)?;
         let reserved = shared_field_reservation(field.as_ref());
         (presentation, omitted, highlight) = compose(app, reserved)?;
+        presentation.unsupported_runs += shared_field_unsupported(app, field.as_ref());
         app.preview_omitted = omitted;
         app.highlight_omitted = highlight;
     }
@@ -7336,6 +7349,19 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
         field.attach(&mut presentation, app.frame_limits)?;
     }
     Ok(presentation)
+}
+
+/// The unsupported-text runs the shared field draws, counted as the editor's
+/// own field counts its own ([`Application::draft_missing_glyphs`]), while
+/// the field is drawn: the editor's compiled interface leaves its row out.
+fn shared_field_unsupported(
+    app: &mut Application,
+    field: Option<&crate::shared_field::PreparedField>,
+) -> usize {
+    match (field, app.tools.draft_snapshot()) {
+        (Some(_), Some(snapshot)) => app.draft_missing_glyphs(&snapshot).unwrap_or(0),
+        _ => 0,
+    }
 }
 
 /// The quads and raster samples the prepared shared field adds to a frame.

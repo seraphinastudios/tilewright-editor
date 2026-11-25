@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 //! The text a field draft edits: the editor's own [`TextInput`], or, opt-in
-//! for the inspector's string fields, the shared `tilewright-ui` field.
+//! for the inspector's string fields and the zone name drafts, the shared
+//! `tilewright-ui` field.
 //!
 //! Both answer the same calls with the same results and the same
 //! [`ToolError`] wording, so every caller (native events, the clipboard,
@@ -23,7 +24,8 @@ use crate::{
 };
 
 /// Which implementation edits a draft. The editor's own is the default;
-/// only the inspector's string fields can use the shared one.
+/// only the inspector's string fields and the zone name drafts can use the
+/// shared one.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum FieldImplementation {
     #[default]
