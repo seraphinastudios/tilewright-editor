@@ -431,8 +431,9 @@ pub struct ToolState {
     anchor: Option<String>,
     /// The open portal step of the selected object, if any.
     portal: Option<OpenPortalStep>,
-    /// What edits the inspector's string fields: the editor's own field
-    /// unless the shared field was switched on.
+    /// What edits the inspector's string fields and the zone name drafts
+    /// (a zone's display name and a new zone's id and name): the editor's
+    /// own field unless the shared field was switched on.
     string_field: FieldImplementation,
     /// Sculpt mode's tool and step, kept across modes.
     sculpt: SculptTool,
@@ -682,7 +683,7 @@ impl ToolState {
             .and_then(|plane| plane.zones.get(&zone))
             .and_then(|zone| zone.name.clone())
             .unwrap_or_default();
-        let input = self.new_limited_input(name, MAX_ZONE_NAME_BYTES)?;
+        let input = self.new_shareable_input(name, MAX_ZONE_NAME_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: None,
@@ -717,7 +718,7 @@ impl ToolState {
             return Err(ToolError("The parent zone is not defined in this plane"));
         }
         let (plane, _, _) = catalog.view();
-        let input = self.new_limited_input(String::new(), MAX_ZONE_CREATE_BYTES)?;
+        let input = self.new_shareable_input(String::new(), MAX_ZONE_CREATE_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: None,
@@ -1490,8 +1491,8 @@ impl ToolState {
         if text.len() > MAX_INPUT_BYTES {
             return Err(ToolError("Input exceeds byte budget"));
         }
-        // Only string fields may use the shared field; every other draft
-        // kind keeps the editor's own.
+        // Of the inspector's fields only string fields may use the shared
+        // field; the others keep the editor's own.
         let implementation = if matches!(row.spec.field_type, FieldType::String { .. }) {
             self.string_field
         } else {
@@ -1599,8 +1600,9 @@ impl ToolState {
         self.input_mut()?.cancel_preedit()
     }
 
-    /// Choose what edits the inspector's string fields from the next field
-    /// draft on. Other draft kinds always use the editor's own field.
+    /// Choose what edits the inspector's string fields and the zone name
+    /// drafts from the next such draft on. Other draft kinds always use
+    /// the editor's own field.
     pub fn set_string_field(&mut self, implementation: FieldImplementation) {
         self.string_field = implementation;
     }
@@ -1621,6 +1623,12 @@ impl ToolState {
 
     fn new_limited_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
         self.new_input_with(text, limit, FieldImplementation::Editor)
+    }
+
+    /// A draft of at most `limit` bytes edited by the field the switch
+    /// chose ([`Self::set_string_field`]).
+    fn new_shareable_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
+        self.new_input_with(text, limit, self.string_field)
     }
 
     fn new_input(&mut self, text: String) -> Result<FieldInput, ToolError> {
