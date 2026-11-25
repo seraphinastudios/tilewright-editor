@@ -7162,75 +7162,88 @@ fn cell_shape(app: &Application) -> crate::workspace_render::CellShape {
     }
 }
 
-/// Compose the cached prepared World with `overlay` and the interface. If
-/// the overlay would take the frame past the scene limits, compose without
-/// it and report that it was left out; the release still reviews every
-/// cell. Returns the presentation and whether the overlay was left out.
-fn compose_with_preview(
-    system: &mut tilewright_render_ui::TextSystem,
-    ui: &WorkspaceUi,
-    prepared: &PreparedPreview,
-    overlay: &[tilewright_scene::Quad],
-    limits: tilewright_scene::SceneLimits,
-) -> std::result::Result<
-    (crate::workspace_render::Presentation, bool),
-    crate::workspace_render::CompositionError,
-> {
-    let compose = |system: &mut tilewright_render_ui::TextSystem, overlay| {
-        crate::workspace_render::compose_with_overlay(
-            system,
-            ui,
-            &prepared.scene,
-            prepared.resources.clone(),
-            overlay,
-            limits,
-        )
-    };
-    match compose(system, overlay) {
-        Err(crate::workspace_render::CompositionError::Scene(
-            tilewright_scene::Error::LimitExceeded,
-        )) if !overlay.is_empty() => compose(system, &[]).map(|presentation| (presentation, true)),
-        result => result.map(|presentation| (presentation, false)),
-    }
+/// An overlay a frame may be composed with, and what composing with it
+/// leaves out: the person's own overlays (the zone and height tints, badges,
+/// marks and brush preview) and the proposal highlight.
+#[derive(Clone, Copy, Debug)]
+struct ComposeCandidate<'a> {
+    overlay: &'a [tilewright_scene::Quad],
+    preview_omitted: bool,
+    highlight_omitted: bool,
 }
 
-/// Compose the cached prepared World with `overlay` (the person's own
-/// overlays with `highlight` among them) and the interface. The proposal
-/// highlight gives way first: when the whole overlay would take the frame
-/// past the scene limits it is composed again without the highlight
-/// (`person`, the zone tints, badges and brush preview), and only when that
-/// still does not fit without any overlay ([`compose_with_preview`]).
-/// Returns the presentation, whether the person's overlays were left out
-/// and whether the highlight was.
-fn compose_highlight_first(
-    system: &mut tilewright_render_ui::TextSystem,
-    ui: &WorkspaceUi,
-    prepared: &PreparedPreview,
-    overlay: &[tilewright_scene::Quad],
-    person: &[tilewright_scene::Quad],
-    limits: tilewright_scene::SceneLimits,
+/// The overlays to compose a frame with, in the order they are tried: the
+/// whole `overlay` (the person's own overlays with the proposal highlight,
+/// when `highlighted`, among them); then, when highlighted, `person`
+/// alone, so the highlight gives way first; then no overlay at all. An
+/// empty overlay before the last is the same frame as the last, so it is
+/// not listed; the last is always the bare frame.
+fn compose_candidates<'a>(
+    overlay: &'a [tilewright_scene::Quad],
+    person: &'a [tilewright_scene::Quad],
+    highlighted: bool,
+) -> Vec<ComposeCandidate<'a>> {
+    let whole = ComposeCandidate {
+        overlay,
+        preview_omitted: false,
+        highlight_omitted: false,
+    };
+    let without_highlight = ComposeCandidate {
+        overlay: person,
+        preview_omitted: false,
+        highlight_omitted: true,
+    };
+    let bare = ComposeCandidate {
+        overlay: &[],
+        preview_omitted: !person.is_empty(),
+        highlight_omitted: highlighted,
+    };
+    [Some(whole), highlighted.then_some(without_highlight)]
+        .into_iter()
+        .flatten()
+        .filter(|candidate| !candidate.overlay.is_empty())
+        .chain([bare])
+        .collect()
+}
+
+/// Compose a frame with the first of `candidates` that fits, composing each
+/// at most once. A candidate whose non-empty overlay would take the frame
+/// past the scene limits gives way to the next; any other error, or any
+/// error composing an empty overlay, is returned. Returns the presentation
+/// and the candidate's flags: whether the person's overlays were left out
+/// and whether the highlight was. Only a list with no empty overlay can run
+/// out, which reports the limit it exceeded.
+fn compose_first_fitting(
+    candidates: &[ComposeCandidate<'_>],
+    mut compose: impl FnMut(
+        &[tilewright_scene::Quad],
+    ) -> std::result::Result<
+        crate::workspace_render::Presentation,
+        crate::workspace_render::CompositionError,
+    >,
 ) -> std::result::Result<
     (crate::workspace_render::Presentation, bool, bool),
     crate::workspace_render::CompositionError,
 > {
-    if overlay.len() == person.len() {
-        return compose_with_preview(system, ui, prepared, overlay, limits)
-            .map(|(presentation, omitted)| (presentation, omitted, false));
+    for candidate in candidates {
+        match compose(candidate.overlay) {
+            Err(crate::workspace_render::CompositionError::Scene(
+                tilewright_scene::Error::LimitExceeded,
+            )) if !candidate.overlay.is_empty() => {}
+            result => {
+                return result.map(|presentation| {
+                    (
+                        presentation,
+                        candidate.preview_omitted,
+                        candidate.highlight_omitted,
+                    )
+                });
+            }
+        }
     }
-    match crate::workspace_render::compose_with_overlay(
-        system,
-        ui,
-        &prepared.scene,
-        prepared.resources.clone(),
-        overlay,
-        limits,
-    ) {
-        Err(crate::workspace_render::CompositionError::Scene(
-            tilewright_scene::Error::LimitExceeded,
-        )) => compose_with_preview(system, ui, prepared, person, limits)
-            .map(|(presentation, omitted)| (presentation, omitted, true)),
-        result => result.map(|presentation| (presentation, false, false)),
-    }
+    Err(crate::workspace_render::CompositionError::Scene(
+        tilewright_scene::Error::LimitExceeded,
+    ))
 }
 
 fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_render::Presentation> {
@@ -7261,7 +7274,9 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     person.extend(road_point_marks(app));
     person.extend(badge_overlay(app));
     let mut overlay = person.clone();
-    overlay.extend(proposal_overlay(app));
+    let highlight = proposal_overlay(app);
+    let highlighted = !highlight.is_empty();
+    overlay.extend(highlight);
     overlay.extend(stroke.iter().copied());
     person.extend(stroke);
     // The shared string field is compiled first, so the editor's frame is
@@ -7270,6 +7285,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     // of the frame failing. The field is then composed under the editor's
     // whole limits as a backstop (`PreparedField::attach`).
     let mut field = prepare_shared_field(app)?;
+    let candidates = compose_candidates(&overlay, &person, highlighted);
     let compose = |app: &mut Application, (quads, samples): (usize, u64)| {
         let limits = tilewright_scene::SceneLimits {
             maximum_quads: app.frame_limits.maximum_quads.saturating_sub(quads),
@@ -7279,14 +7295,16 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
                 .saturating_sub(samples),
             ..app.frame_limits
         };
-        compose_highlight_first(
-            &mut app.text,
-            &app.ui,
-            &app.prepared,
-            &overlay,
-            &person,
-            limits,
-        )
+        compose_first_fitting(&candidates, |overlay| {
+            crate::workspace_render::compose_with_overlay(
+                &mut app.text,
+                &app.ui,
+                &app.prepared.scene,
+                app.prepared.resources.clone(),
+                overlay,
+                limits,
+            )
+        })
         .map_err(|error| error.to_string())
     };
     let reserved = shared_field_reservation(field.as_ref());

@@ -614,15 +614,9 @@ fn a_preview_past_the_scene_limits_is_left_out_and_reported_not_blocking() {
             tilewright_scene::Error::LimitExceeded
         ))
     ));
-    let (presentation, omitted) = crate::prototype::compose_with_preview(
-        &mut app.text,
-        &app.ui,
-        &app.prepared,
-        &overlay,
-        SceneLimits::default(),
-    )
-    .unwrap();
-    assert!(omitted);
+    let (presentation, omitted, highlight_omitted) =
+        compose_candidates_with(&mut app, &overlay).unwrap();
+    assert!(omitted && !highlight_omitted);
     assert!(!presentation.scene.quads().iter().any(is_preview));
     // Any other composition failure is not mistaken for a too-large
     // preview: identities colliding with an interface texture fail as is.
@@ -635,16 +629,29 @@ fn a_preview_past_the_scene_limits_is_left_out_and_reported_not_blocking() {
         .filter(|id| id.0 != u64::MAX)
         .max()
         .unwrap();
-    assert!(
-        crate::prototype::compose_with_preview(
+    assert!(compose_candidates_with(&mut app, &[colliding]).is_err());
+}
+
+/// Compose the frame with `overlay` as the person's own, no highlight
+/// among it, the way the native loop tries its candidates.
+fn compose_candidates_with(
+    app: &mut Application,
+    overlay: &[Quad],
+) -> Result<
+    (crate::workspace_render::Presentation, bool, bool),
+    crate::workspace_render::CompositionError,
+> {
+    let candidates = crate::prototype::compose_candidates(overlay, overlay, false);
+    crate::prototype::compose_first_fitting(&candidates, |overlay| {
+        crate::workspace_render::compose_with_overlay(
             &mut app.text,
             &app.ui,
-            &app.prepared,
-            &[colliding],
+            &app.prepared.scene,
+            app.prepared.resources.clone(),
+            overlay,
             SceneLimits::default(),
         )
-        .is_err()
-    );
+    })
 }
 
 #[test]

@@ -2254,6 +2254,9 @@ mod proposal;
 #[path = "proposal_highlight.rs"]
 mod proposal_highlight;
 
+#[path = "compose_candidates.rs"]
+mod compose_candidates;
+
 #[path = "view_refusal.rs"]
 mod view_refusal;
 
