@@ -2229,6 +2229,8 @@ mod flatten_mode;
 #[path = "smooth_mode.rs"]
 mod smooth_mode;
 
+#[path = "own_field_caret.rs"]
+mod own_field_caret;
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]

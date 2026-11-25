@@ -911,6 +911,59 @@ pub fn model_cursor(cursor: TextCursor) -> tilewright_editor_ui::text_input::Tex
     }
 }
 
+/// How far apart, in logical pixels on each axis, two caret positions may be
+/// and still be the same drawn place: 1/64 px, the rule of the shared field's
+/// `TextGeometry::step_caret` (`tilewright-ui-render` 0.1.1). The layout can
+/// give one place two caret stops a few float ULPs apart (4.6800003 against
+/// 4.68); a real direction boundary puts its stops a glyph advance apart.
+const SAME_CARET_POSITION: f32 = 1.0 / 64.0;
+
+/// Layout steps one press may take: a committed position has at most two
+/// display positions (beside a marker's guard), each with two affinities.
+const MAXIMUM_CARET_STEPS: usize = 4;
+
+/// One arrow, Home or End press in the editor's own field: the new focus in
+/// `display_text`, from `snapshot`'s display focus, over `layout` of that
+/// text (map it with `snapshot.committed_cursor`). It follows the shared
+/// field's `step_caret` rule. A layout step that changes the affinity alone
+/// and leaves the caret where it was drawn (within [`SAME_CARET_POSITION`]),
+/// or that crosses a marker's guard without moving the committed position,
+/// is not a stop and is repeated, so a press that can move the caret moves
+/// it. Any other step is the press's result, as with a single layout step;
+/// a step that does not move ends it.
+pub fn step_caret(
+    snapshot: &TextInputSnapshot,
+    layout: &UnicodeLayout,
+    motion: tilewright_render_ui::VisualMotion,
+) -> std::result::Result<TextCursor, String> {
+    let same = |a: Option<UiRect>, b: Option<UiRect>| {
+        a.zip(b).is_some_and(|(a, b)| {
+            (a.x - b.x).abs() <= SAME_CARET_POSITION && (a.y - b.y).abs() <= SAME_CARET_POSITION
+        })
+    };
+    let start = snapshot.selection.focus.byte;
+    let mut display = renderer_cursor(snapshot.display_selection.focus);
+    for _ in 0..MAXIMUM_CARET_STEPS {
+        let next = layout.move_visual(display, motion);
+        if next == display {
+            break;
+        }
+        let moved = next.byte != display.byte;
+        let unseen = !moved && same(layout.caret(display), layout.caret(next));
+        display = next;
+        if unseen {
+            continue;
+        }
+        let committed = snapshot
+            .committed_cursor(model_cursor(display))
+            .map_err(|error| error.to_string())?;
+        if committed.byte != start || !moved {
+            break;
+        }
+    }
+    Ok(display)
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn rect(rect: Rect) -> UiRect {
     // SDL dimensions are constrained by SceneLimits before scene construction.

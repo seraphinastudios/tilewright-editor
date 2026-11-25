@@ -585,10 +585,11 @@ fn visual_presses(
 
 /// At the 18 px field text the renderer gives display position 7 of this
 /// value two caret stops a float apart (x 4.68 after the letters and
-/// 4.6800003 before the Hebrew letter): the editor's own field takes one
-/// press to step between them, and nothing moves on screen.
-/// tilewright-ui-render 0.1.0 also took that step for a move; 0.1.1 counts
-/// the two stops as one place, so every press of the shared field moves.
+/// 4.6800003 before the Hebrew letter). tilewright-ui-render 0.1.0 took the
+/// step between them for a move, so one press moved nothing on screen;
+/// 0.1.1 counts the two stops as one place, and the editor's own field
+/// steps by the same rule, so every press of either field moves, to the
+/// same stops.
 #[test]
 fn every_arrow_press_moves_the_shared_caret_where_two_stops_are_a_float_apart() {
     let stored = "\u{5d0}abb\u{5d0} ";
@@ -600,14 +601,11 @@ fn every_arrow_press_moves_the_shared_caret_where_two_stops_are_a_float_apart() 
     };
     let (_own, mut own) = labelled(FieldImplementation::Editor, stored, (960, 640));
     own.control(Control::Field("label".into())).unwrap();
-    // The value still has the pair: one press of the editor's own field
-    // does not move.
-    let stops = visual_presses(&mut own, Keycode::Home, Keycode::Right, 7);
-    assert_eq!(
-        moved(&stops).iter().filter(|moved| !**moved).count(),
-        1,
-        "{stops:?}"
-    );
+    // The editor's own field steps over the pair too.
+    let stops = visual_presses(&mut own, Keycode::Home, Keycode::Right, 6);
+    let bytes: Vec<_> = stops.iter().map(|stop| stop.0).collect();
+    assert_eq!(bytes, [8, 7, 2, 3, 4, 2, 0], "{stops:?}");
+    assert!(moved(&stops).iter().all(|moved| *moved), "{stops:?}");
     let (_shared, mut shared) = labelled(FieldImplementation::Shared, stored, (960, 640));
     shared.control(Control::Field("label".into())).unwrap();
     for (from, arrow, expected) in [
