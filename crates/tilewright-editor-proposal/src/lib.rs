@@ -65,6 +65,12 @@ pub mod limits {
     pub const TEXT_BYTES: usize = 4096;
     /// Most cells of a stroke action: the brush's own limit.
     pub const CELLS: usize = tilewright_editor_ui::brush::MAXIMUM_STROKE_CELLS;
+    /// Most objects of a stamp (`place_objects`), and so most uids one
+    /// step records: the engine's own bound.
+    pub const STAMP_OBJECTS: usize = tilewright_editor_ui::stamp::MAXIMUM_STAMP_OBJECTS;
+    /// The largest offset of a stamp object from its anchor tile, on
+    /// either axis and either way: the engine's own bound.
+    pub const STAMP_OFFSET: i64 = tilewright_editor_ui::stamp::MAXIMUM_STAMP_OFFSET;
     /// The largest `amount` of a height adjustment either way: the
     /// engine's own bound. 0 is not an amount.
     pub const HEIGHT_AMOUNT: i32 = tilewright_editor_ui::sculpt::MAXIMUM_AMOUNT;

@@ -8,7 +8,7 @@
 //! format's integer range. Selection, review, history and reopen actions
 //! have no form: they never appear in a proposal.
 use serde_json::{Map, Number, Value, json};
-use tilewright_editor_ui::{Action, PortalTarget};
+use tilewright_editor_ui::{Action, PortalTarget, stamp::StampObject};
 use tilewright_jsonc as jsonc;
 
 use crate::{ProposalError, budget, hex, invalid, limits, unhex};
@@ -131,6 +131,17 @@ pub fn encode_action(action: &Action) -> Result<Value, ProposalError> {
             expected,
         } => json!({"kind": "place", "plane": text(plane)?, "layer": layer, "x": integer(*x)?,
             "y": integer(*y)?, "proto": text(proto)?, "expected": hex(expected)}),
+        Action::PlaceObjects {
+            plane,
+            layer,
+            x,
+            y,
+            objects,
+            expected,
+        } => {
+            json!({"kind": "place_objects", "plane": text(plane)?, "layer": layer, "x": integer(*x)?,
+            "y": integer(*y)?, "objects": encode_objects(objects)?, "expected": hex(expected)})
+        }
         Action::RenameZone {
             plane,
             zone,
@@ -239,6 +250,7 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
         "paint_zones" => &["plane", "layer", "cells", "zone"],
         "remove" => &["uid"],
         "place" => &["plane", "layer", "x", "y", "proto"],
+        "place_objects" => &["plane", "layer", "x", "y", "objects"],
         "rename_zone" => &["plane", "zone", "name"],
         "set_zone_parent" => &["plane", "zone", "parent"],
         "create_zone" => &["plane", "zone", "name", "parent"],
@@ -341,6 +353,14 @@ pub fn decode_action(value: &jsonc::Value) -> Result<Action, ProposalError> {
             x: fields.integer("x")?,
             y: fields.integer("y")?,
             proto: fields.text("proto")?,
+            expected,
+        },
+        "place_objects" => Action::PlaceObjects {
+            plane: fields.text("plane")?,
+            layer: fields.layer("layer")?,
+            x: fields.integer("x")?,
+            y: fields.integer("y")?,
+            objects: fields.objects("objects")?,
             expected,
         },
         "rename_zone" => Action::RenameZone {
@@ -496,6 +516,30 @@ impl<'v> Fields<'v> {
             .and_then(unhex)
             .ok_or_else(|| invalid(format!("action member {key} is a revision")))
     }
+    /// A stamp's members: 1 to [`limits::STAMP_OBJECTS`] objects of
+    /// exactly `proto` and `offset`, each offset at most
+    /// [`limits::STAMP_OFFSET`] either way, the engine's rule.
+    fn objects(&self, key: &str) -> Result<Vec<StampObject>, ProposalError> {
+        let items = self
+            .get(key)
+            .as_array()
+            .ok_or_else(|| invalid(format!("action member {key} is an array of objects")))?;
+        if items.len() > limits::STAMP_OBJECTS {
+            return Err(budget("a stamp has too many objects"));
+        }
+        let objects = items
+            .iter()
+            .map(|item| {
+                let fields = Fields::of(item, &["proto", "offset"], &[])?;
+                Ok(StampObject {
+                    proto: fields.text("proto")?,
+                    offset: cell(fields.get("offset"))?,
+                })
+            })
+            .collect::<Result<Vec<_>, ProposalError>>()?;
+        stamp_objects(&objects)?;
+        Ok(objects)
+    }
     fn cells(&self, key: &str) -> Result<Vec<[i64; 2]>, ProposalError> {
         let items = self
             .get(key)
@@ -593,6 +637,38 @@ fn stroke_cells(cells: &[[i64; 2]]) -> Result<(), ProposalError> {
         ));
     }
     Ok(())
+}
+/// The engine's rule for a stamp's members
+/// ([`tilewright_editor_ui::stamp::check_objects`]): 1 to
+/// [`limits::STAMP_OBJECTS`], each offset at most [`limits::STAMP_OFFSET`]
+/// either way. Too many is over a bound; none, or an offset past it, is not
+/// a stamp the engine could record.
+fn stamp_objects(objects: &[StampObject]) -> Result<(), ProposalError> {
+    if objects.len() > limits::STAMP_OBJECTS {
+        return Err(budget("a stamp has too many objects"));
+    }
+    if objects.is_empty() {
+        return Err(invalid("a stamp has at least one object"));
+    }
+    if !objects
+        .iter()
+        .all(|object| tilewright_editor_ui::stamp::offset_in_bounds(object.offset))
+    {
+        return Err(invalid(
+            "a stamp object's offset is an integer from -4095 to 4095 on each axis",
+        ));
+    }
+    Ok(())
+}
+fn encode_objects(objects: &[StampObject]) -> Result<Value, ProposalError> {
+    stamp_objects(objects)?;
+    objects
+        .iter()
+        .map(|object| {
+            Ok(json!({"proto": text(&object.proto)?, "offset": [object.offset[0], object.offset[1]]}))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
 }
 fn encode_cells(cells: &[[i64; 2]]) -> Result<Value, ProposalError> {
     stroke_cells(cells)?;

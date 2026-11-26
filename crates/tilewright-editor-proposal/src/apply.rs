@@ -12,7 +12,8 @@
 //!    chain the session is at.
 //! 2. [`Progress::prepare_step`] dispatches the next step's Action through
 //!    [`Session::dispatch`], under the person's catalog grants and with the
-//!    person's actor (a placement with the uid it recorded), and requires
+//!    person's actor (a placement with the uid it recorded, a stamp with
+//!    the uids it recorded), and requires
 //!    the transaction it prepares to equal the recorded one in everything
 //!    but the actor ([`compare_transactions`]). The step is then pending
 //!    for the person's normal Review and Accept.
@@ -238,6 +239,9 @@ impl Progress {
         let action = step.action().clone();
         let dispatched = match (step.placed(), &action) {
             (Some(uid), Action::Place { .. }) => session.dispatch_placing(action, uid, recovery),
+            (_, Action::PlaceObjects { .. }) => {
+                session.dispatch_placing_objects(action, step.placed_objects(), recovery)
+            }
             _ => session.dispatch(action, recovery),
         };
         if let Err(error) = dispatched {

@@ -16,11 +16,47 @@ use crate::{
 /// The format tag of a proposal document.
 pub const FORMAT: &str = "tilewright.editor-proposal/1";
 
+/// The uids a step records as `placed`: `null`, one string (a `place`)
+/// or a list (a `place_objects`, one uid per object in object order). The
+/// form is part of what is recorded: verification requires the one its
+/// action's kind writes.
+#[derive(Clone, Debug, PartialEq)]
+enum Placed {
+    None,
+    One(String),
+    List(Vec<String>),
+}
+impl Placed {
+    fn of(origin: &tilewright_editor_ui::StepOrigin) -> Self {
+        match origin.action() {
+            Action::Place { .. } => origin
+                .placed()
+                .map_or(Self::None, |uid| Self::One(uid.to_owned())),
+            Action::PlaceObjects { .. } => Self::List(origin.placed_objects().to_vec()),
+            _ => Self::None,
+        }
+    }
+    fn uids(&self) -> &[String] {
+        match self {
+            Self::None => &[],
+            Self::One(uid) => std::slice::from_ref(uid),
+            Self::List(uids) => uids,
+        }
+    }
+    fn encode(&self) -> Value {
+        match self {
+            Self::None => Value::Null,
+            Self::One(uid) => Value::from(uid.as_str()),
+            Self::List(uids) => Value::from(uids.clone()),
+        }
+    }
+}
+
 /// One applied step of a proposal.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProposalStep {
     action: Action,
-    placed: Option<String>,
+    placed: Placed,
     transaction: String,
     transaction_sha256: [u8; 32],
     before: [u8; 32],
@@ -34,7 +70,18 @@ impl ProposalStep {
     }
     /// For a placement, the uid it assigned.
     pub fn placed(&self) -> Option<&str> {
-        self.placed.as_deref()
+        match &self.placed {
+            Placed::One(uid) => Some(uid),
+            Placed::None | Placed::List(_) => None,
+        }
+    }
+    /// For a stamp (`place_objects`), the uids it assigned, one per object
+    /// in object order; empty for every other step.
+    pub fn placed_objects(&self) -> &[String] {
+        match &self.placed {
+            Placed::List(uids) => uids,
+            Placed::None | Placed::One(_) => &[],
+        }
     }
     /// The sealed transaction the step was accepted as, with the actor of
     /// the session that accepted it.
@@ -144,7 +191,7 @@ impl Proposal {
                 .ok_or_else(|| invalid("the step was not prepared by this session").at(index))?;
             steps.push(ProposalStep {
                 action: origin.action().clone(),
-                placed: origin.placed().map(str::to_owned),
+                placed: Placed::of(origin),
                 transaction: step.transaction.to_owned(),
                 transaction_sha256: sha256(step.transaction),
                 before: step.before,
@@ -399,7 +446,7 @@ fn encode_body(fields: &Fields<'_>) -> Result<String, ProposalError> {
         }
         steps.push(json!({
             "action": encode_action(&step.action).map_err(|error| error.at(index))?,
-            "placed": step.placed,
+            "placed": step.placed.encode(),
             "transaction": step.transaction,
             "transaction_sha256": hex(&step.transaction_sha256),
             "before": hex(&step.before),
@@ -483,8 +530,27 @@ fn step(value: &jsonc::Value) -> Result<ProposalStep, ProposalError> {
         ],
     )?;
     let placed = match members.get("placed") {
-        jsonc::Value::Null { .. } => None,
-        _ => Some(members.text("placed", limits::TEXT_BYTES)?.to_owned()),
+        jsonc::Value::Null { .. } => Placed::None,
+        jsonc::Value::Array { items, .. } => {
+            if items.len() > limits::STAMP_OBJECTS {
+                return Err(budget("placed lists too many uids"));
+            }
+            Placed::List(
+                items
+                    .iter()
+                    .map(|item| {
+                        let uid = item
+                            .as_str()
+                            .ok_or_else(|| invalid("placed lists strings"))?;
+                        if uid.len() > limits::TEXT_BYTES {
+                            return Err(budget("placed is too long"));
+                        }
+                        Ok(uid.to_owned())
+                    })
+                    .collect::<Result<_, ProposalError>>()?,
+            )
+        }
+        _ => Placed::One(members.text("placed", limits::TEXT_BYTES)?.to_owned()),
     };
     Ok(ProposalStep {
         action: decode_action(members.get("action"))?,
@@ -514,8 +580,13 @@ fn verify(fields: &Fields<'_>) -> Result<(), ProposalError> {
             return Err(chain("the action names another revision than the step's").at(index));
         }
         verify_transaction(step, fields.actor).map_err(|error| error.at(index))?;
-        if let Some(uid) = &step.placed
-            && !placed.insert(uid.as_str())
+        // A stamp's own uids are distinct (checked with its transaction);
+        // across steps, no uid is placed twice.
+        if !step
+            .placed
+            .uids()
+            .iter()
+            .all(|uid| placed.insert(uid.as_str()))
         {
             return Err(invalid("two steps place the same uid").at(index));
         }
@@ -559,22 +630,19 @@ fn verify_transaction(step: &ProposalStep, actor: &Actor) -> Result<(), Proposal
     if root.get("actor").and_then(jsonc::Value::as_str) != Some(actor.as_str()) {
         return Err(invalid("the transaction's actor is not the proposal's"));
     }
-    let inserted = root
+    let operations = root
         .get("operations")
         .and_then(jsonc::Value::as_array)
-        .and_then(|operations| match operations {
-            [operation]
-                if operation.get("op").and_then(jsonc::Value::as_str) == Some("object.insert") =>
-            {
-                operation.get("object")
-            }
-            _ => None,
-        });
-    let insert = inserted
-        .and_then(|object| object.get("uid"))
-        .and_then(jsonc::Value::as_str);
-    match (&step.action, step.placed.as_deref()) {
-        (Action::Place { .. }, Some(uid)) => {
+        .unwrap_or_default();
+    match (&step.action, &step.placed) {
+        (Action::Place { .. }, Placed::One(uid)) => {
+            let inserted = match operations {
+                [operation] if is_insert(operation) => operation.get("object"),
+                _ => None,
+            };
+            let insert = inserted
+                .and_then(|object| object.get("uid"))
+                .and_then(jsonc::Value::as_str);
             if uid_material(uid).is_none() {
                 return Err(invalid("the placed uid is not a generated uid"));
             }
@@ -590,11 +658,103 @@ fn verify_transaction(step: &ProposalStep, actor: &Actor) -> Result<(), Proposal
                 return Err(invalid("a placement inserts no inventory"));
             }
         }
-        (Action::Place { .. }, None) => {
+        (Action::Place { .. }, _) => {
             return Err(invalid("a placement records the uid it assigned"));
         }
-        (_, Some(_)) => return Err(invalid("only a placement records a uid")),
-        (_, None) => {}
+        (Action::PlaceObjects { .. }, Placed::List(uids)) => {
+            verify_stamp(&step.action, uids, operations)?;
+        }
+        (Action::PlaceObjects { .. }, _) => {
+            return Err(invalid("a stamp records the list of uids it assigned"));
+        }
+        (_, Placed::One(_) | Placed::List(_)) => {
+            return Err(invalid("only a placement records a uid"));
+        }
+        (_, Placed::None) => {}
+    }
+    Ok(())
+}
+
+fn is_insert(operation: &jsonc::Value) -> bool {
+    operation.get("op").and_then(jsonc::Value::as_str) == Some("object.insert")
+}
+
+/// A stamp's transaction is exactly one `object.insert` per object, in
+/// object order: each on the action's plane and spatial layer, at the
+/// anchor plus the object's offset, of the object's prototype, with the
+/// object's recorded uid (generated, and distinct within the stamp) and
+/// no inventory; and nothing else.
+fn verify_stamp(
+    action: &Action,
+    uids: &[String],
+    operations: &[jsonc::Value],
+) -> Result<(), ProposalError> {
+    let Action::PlaceObjects {
+        plane,
+        layer,
+        x,
+        y,
+        objects,
+        ..
+    } = action
+    else {
+        return Err(invalid("not a stamp"));
+    };
+    if uids.len() != objects.len() {
+        return Err(invalid("a stamp records one uid per object"));
+    }
+    for (index, uid) in uids.iter().enumerate() {
+        if uid_material(uid).is_none() {
+            return Err(invalid("a placed uid is not a generated uid"));
+        }
+        if uids[..index].contains(uid) {
+            return Err(invalid("a stamp places the same uid twice"));
+        }
+    }
+    if operations.len() != objects.len() {
+        return Err(invalid(
+            "the stamp's transaction does not insert exactly its objects",
+        ));
+    }
+    for ((operation, object), uid) in operations.iter().zip(objects).zip(uids) {
+        let tile = tilewright_editor_ui::stamp::member_tile([*x, *y], object.offset);
+        let at = operation
+            .get("at")
+            .and_then(jsonc::Value::as_array)
+            .and_then(|axes| match axes {
+                [ax, ay] => Some([ax.as_i64()?, ay.as_i64()?]),
+                _ => None,
+            });
+        let inserted = operation.get("object");
+        let member = |key: &str| {
+            inserted
+                .and_then(|object| object.get(key))
+                .and_then(jsonc::Value::as_str)
+        };
+        if !is_insert(operation)
+            || operation.get("plane").and_then(jsonc::Value::as_str) != Some(plane.as_str())
+            || operation.get("layer").and_then(jsonc::Value::as_i64) != Some(i64::from(*layer))
+            || tile.is_none()
+            || at != tile
+            || operation.get("index").is_some()
+        {
+            return Err(invalid(
+                "the stamp's transaction does not insert its objects on their tiles",
+            ));
+        }
+        if member("uid") != Some(uid.as_str()) {
+            return Err(invalid(
+                "the stamp's transaction does not insert its uids in object order",
+            ));
+        }
+        if member("proto") != Some(object.proto.as_str()) {
+            return Err(invalid(
+                "the stamp's transaction inserts another prototype than its object",
+            ));
+        }
+        if inserted.is_some_and(|object| object.get("inventory").is_some()) {
+            return Err(invalid("a stamp inserts no inventory"));
+        }
     }
     Ok(())
 }
@@ -614,6 +774,7 @@ fn expected(action: &Action) -> [u8; 32] {
         | Action::PaintZones { expected, .. }
         | Action::Remove { expected, .. }
         | Action::Place { expected, .. }
+        | Action::PlaceObjects { expected, .. }
         | Action::RenameZone { expected, .. }
         | Action::SetZoneParent { expected, .. }
         | Action::CreateZone { expected, .. }

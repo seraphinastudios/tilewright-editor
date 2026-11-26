@@ -12,6 +12,7 @@ use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewLimits, SelectionKey, loader};
 use tilewright_editor_testkit::fixture_world;
 use tilewright_editor_ui::review::{ChangeKind, MAXIMUM_REVIEW_FILES, REVIEW_LIMIT_MESSAGE};
+use tilewright_editor_ui::stamp::StampObject;
 use tilewright_editor_ui::uid::SeededUidSource;
 use tilewright_editor_ui::{Action, Actor, PortalTarget, RefusalCode, Session, SessionPhase};
 
@@ -127,6 +128,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         Action::PaintZones { .. } => Some("PaintZones"),
         Action::Remove { .. } => Some("Remove"),
         Action::Place { .. } => Some("Place"),
+        Action::PlaceObjects { .. } => Some("PlaceObjects"),
         Action::RenameZone { .. } => Some("RenameZone"),
         Action::SetZoneParent { .. } => Some("SetZoneParent"),
         Action::CreateZone { .. } => Some("CreateZone"),
@@ -144,7 +146,7 @@ fn edit_kind(action: &Action) -> Option<&'static str> {
         | Action::Reopen => None,
     }
 }
-const EDIT_KINDS: [&str; 20] = [
+const EDIT_KINDS: [&str; 21] = [
     "Move",
     "SetField",
     "Paint",
@@ -157,6 +159,7 @@ const EDIT_KINDS: [&str; 20] = [
     "PaintZones",
     "Remove",
     "Place",
+    "PlaceObjects",
     "RenameZone",
     "SetZoneParent",
     "CreateZone",
@@ -259,6 +262,17 @@ fn edits(expected: [u8; 32]) -> Vec<Action> {
             x: 2,
             y: 2,
             proto: "marker".into(),
+            expected,
+        },
+        Action::PlaceObjects {
+            plane: main(),
+            layer: 0,
+            x: 3,
+            y: 2,
+            objects: vec![
+                stamp_object("marker", [0, 0]),
+                stamp_object("stone", [1, -1]),
+            ],
             expected,
         },
         Action::RenameZone {
@@ -407,6 +421,23 @@ fn the_apps_transactions_are_byte_identical_to_the_fixed_actor_text() {
             let placed = sealed["operations"][0]["object"]["uid"].as_str().unwrap();
             format!(
                 "{{\"format\":\"tilewright.transaction/1\",\"title\":\"Editor semantic action\",\"actor\":\"editor:prototype\",\"operations\":[{{\"op\":\"object.insert\",\"plane\":\"main\",\"layer\":0,\"at\":[2,2],\"object\":{{\"uid\":\"{placed}\",\"proto\":\"marker\",\"layer\":\"item\"}}}}]}}"
+            )
+        }),
+    ));
+    cases.push((
+        Action::PlaceObjects {
+            plane: "main".into(),
+            layer: 0,
+            x: 2,
+            y: 2,
+            objects: vec![stamp_object("marker", [0, 0]), stamp_object("stone", [1, -1])],
+            expected,
+        },
+        Box::new(|sealed| {
+            let first = sealed["operations"][0]["object"]["uid"].as_str().unwrap();
+            let second = sealed["operations"][1]["object"]["uid"].as_str().unwrap();
+            format!(
+                "{{\"format\":\"tilewright.transaction/1\",\"title\":\"Editor semantic action\",\"actor\":\"editor:prototype\",\"operations\":[{{\"op\":\"object.insert\",\"plane\":\"main\",\"layer\":0,\"at\":[2,2],\"object\":{{\"uid\":\"{first}\",\"proto\":\"marker\",\"layer\":\"item\"}}}},{{\"op\":\"object.insert\",\"plane\":\"main\",\"layer\":0,\"at\":[3,1],\"object\":{{\"uid\":\"{second}\",\"proto\":\"stone\",\"layer\":\"item\",\"fields\":{{\"label\":\"New stone\",\"settings\":{{\"active\":false,\"visits\":0}}}}}}}}]}}"
             )
         }),
     ));
@@ -716,6 +747,12 @@ fn refusals_carry_codes_by_meaning() {
 fn main_plane() -> String {
     "main".into()
 }
+fn stamp_object(proto: &str, offset: [i64; 2]) -> StampObject {
+    StampObject {
+        proto: proto.into(),
+        offset,
+    }
+}
 
 /// One coded refusal or more for every edit kind, on the neutral fixture,
 /// where every kind is granted. The codes are the check that failed.
@@ -924,6 +961,58 @@ fn granted_refusals(expected: [u8; 32]) -> Vec<(Action, RefusalCode)> {
                 expected,
             },
             RefusalCode::GrantMissing,
+        ),
+        // A stamp is refused whole: one member outside the view, or one
+        // member's prototype not granted, refuses every member.
+        (
+            Action::PlaceObjects {
+                plane: main_plane(),
+                layer: 0,
+                x: 7,
+                y: 1,
+                objects: vec![
+                    stamp_object("marker", [0, 0]),
+                    stamp_object("marker", [1, 0]),
+                ],
+                expected,
+            },
+            RefusalCode::ScopeOutsideView,
+        ),
+        (
+            Action::PlaceObjects {
+                plane: main_plane(),
+                layer: 0,
+                x: 1,
+                y: 1,
+                objects: vec![
+                    stamp_object("marker", [0, 0]),
+                    stamp_object("grass", [1, 0]),
+                ],
+                expected,
+            },
+            RefusalCode::GrantMissing,
+        ),
+        (
+            Action::PlaceObjects {
+                plane: main_plane(),
+                layer: 0,
+                x: 1,
+                y: 1,
+                objects: Vec::new(),
+                expected,
+            },
+            RefusalCode::InputInvalid,
+        ),
+        (
+            Action::PlaceObjects {
+                plane: main_plane(),
+                layer: 0,
+                x: 1,
+                y: 1,
+                objects: vec![stamp_object("marker", [0, 0]); 65],
+                expected,
+            },
+            RefusalCode::InputBudget,
         ),
         (
             Action::RenameZone {
