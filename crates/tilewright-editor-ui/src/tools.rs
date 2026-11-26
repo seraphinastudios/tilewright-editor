@@ -1386,7 +1386,8 @@ impl ToolState {
     /// Give keyboard focus to the palette filter, keeping its text, with the
     /// caret at the end. Only in Place mode; a pending diff does not block
     /// it because the filter never touches the World. Any other draft is
-    /// discarded, as when another field is begun.
+    /// discarded and an open portal step ends, as when another field is
+    /// begun.
     pub fn focus_filter(&mut self) -> Result<(), ToolError> {
         if self.mode != ToolMode::Place {
             return Err(ToolError("The palette filter is only in Place mode"));
@@ -1411,6 +1412,9 @@ impl ToolState {
             }
         };
         self.next_draft = identity;
+        // A new draft ends an open portal step: a tile click while the
+        // filter is focused places, it does not pick.
+        self.portal = None;
         self.draft = Some(Draft {
             stamp: None,
             kind: DraftKind::Filter,

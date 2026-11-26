@@ -16,7 +16,7 @@ use tilewright_editor_ui::{
     field_input::FieldImplementation,
     inspector::inspect,
     text_input::{TextCursor, TextInputSnapshot, TextRevision, TextSelection},
-    tools::{ToolError, ToolMode, ToolState, ZoneChoice, ZoneDraft},
+    tools::{PortalStep, ToolError, ToolMode, ToolState, ZoneChoice, ZoneDraft},
 };
 use tilewright_source::World;
 use unicode_segmentation::UnicodeSegmentation;
@@ -816,5 +816,47 @@ fn both_fields_refuse_the_filter_past_its_byte_limit_and_drop_a_composition_on_r
             ("", false)
         );
         assert!(!tools.clear_filter(), "{case}: nothing left to clear");
+    }
+}
+
+/// Focusing the filter ends an open portal step, as every other draft does,
+/// with either field: the next tile click places instead of picking.
+#[test]
+fn focusing_the_filter_ends_an_open_portal_step_with_either_field() {
+    let dir = tempfile::tempdir().unwrap();
+    world_with(dir.path(), "Trail marker");
+    let document = WorldDocument::open(dir.path()).unwrap();
+    let (catalog, _) = loader::load(
+        document.source(),
+        document.world(),
+        PreviewLimits::default(),
+    )
+    .unwrap();
+    let gate = SelectionKey::Object {
+        uid: "gate_west".into(),
+    };
+    for implementation in FieldImplementation::ALL {
+        for step in [PortalStep::PickTile, PortalStep::Anchors] {
+            let mut tools = ToolState::default();
+            tools.set_string_field(implementation);
+            tools.set_mode(ToolMode::Place);
+            assert!(
+                tools
+                    .toggle_portal_step(
+                        document.world(),
+                        &catalog,
+                        Some(&gate),
+                        step,
+                        document.revision(),
+                        false,
+                    )
+                    .unwrap()
+            );
+            assert_eq!(tools.portal_step(), Some(("gate_west", step)));
+            tools.focus_filter().unwrap();
+            assert!(tools.filter_focused(), "{implementation:?} {step:?}");
+            assert_eq!(tools.portal_step(), None, "{implementation:?} {step:?}");
+            assert!(!tools.portal_picking());
+        }
     }
 }
