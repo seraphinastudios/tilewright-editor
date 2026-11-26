@@ -15,7 +15,9 @@ use common::Layout;
 use serde_json::{Value, json};
 
 fn stamp(x: i64, y: i64, objects: Value) -> Value {
-    json!({"kind": "place_objects", "plane": "main", "layer": 0, "x": x, "y": y, "objects": objects})
+    let mut action = json!({"kind": "place_objects", "plane": "main", "layer": 0, "x": x, "y": y});
+    action["objects"] = objects;
+    action
 }
 
 #[test]

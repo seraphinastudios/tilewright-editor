@@ -18,6 +18,9 @@ use std::{collections::BTreeMap, fs, path::Path};
 use tilewright_editor_proposal::{Progress, Proposal, Settled};
 use tilewright_editor_ui::{Action, RefusalCode, Session, uid::format_uid};
 
+/// A change to a proposal body.
+type Change = Box<dyn Fn(&mut Value)>;
+
 /// The fixture's stamp, then a single placement, accepted in a sandbox.
 const STAMP: usize = 20;
 const PLACE: usize = 6;
@@ -135,7 +138,7 @@ fn verification_accepts_exactly_the_listed_inserts() {
     let proposal = recorded(agent_world.path());
     let uids = proposal.steps()[0].placed_objects().to_vec();
     let place_uid = proposal.steps()[1].placed().unwrap().to_owned();
-    let cases: Vec<(&str, Box<dyn Fn(&mut Value)>)> = vec![
+    let cases: Vec<(&str, Change)> = vec![
         (
             "one uid fewer",
             Box::new(|b| {
