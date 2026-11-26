@@ -134,7 +134,11 @@ fn an_arrow_that_used_to_do_nothing_now_moves_the_caret() {
 }
 
 /// Two different positions drawn at one place stay two stops, as in the
-/// shared field: only an affinity change or a guard is stepped over.
+/// shared field: only an affinity change, a guard crossing, or a stop beside
+/// a guard whose edge is drawn where the press began or behind it is stepped
+/// over. That last rule can pass over a committed position drawn at the same
+/// place as a neighbour, leaving it reachable only with the pointer; every
+/// drawn place stays reachable by the arrows.
 #[test]
 fn two_positions_drawn_at_one_place_stay_two_stops() {
     let stored = "Trail \u{5e2}\u{5d1}\u{5e8}\u{5d9}\u{5ea} 123 marker";

@@ -919,7 +919,11 @@ pub fn model_cursor(cursor: TextCursor) -> tilewright_editor_ui::text_input::Tex
 const SAME_CARET_POSITION: f32 = 1.0 / 64.0;
 
 /// Layout steps one press may take: a committed position has at most two
-/// display positions (beside a marker's guard), each with two affinities.
+/// display positions (beside a marker's guard), each with two affinities. A
+/// press can also step past stops beside a guard on other committed
+/// positions ([`lands_behind`]); on the measured values it passes at most
+/// two, after an affinity-only step, and no press needed more than four
+/// steps. A press cut off by the bound would end on such a stop.
 const MAXIMUM_CARET_STEPS: usize = 4;
 
 /// One arrow, Home or End press in the editor's own field: the new focus in

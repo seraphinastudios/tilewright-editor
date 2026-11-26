@@ -122,7 +122,7 @@ repository; the two adaptations are recorded below. Their text editing was itsel
   for a step beside a marker's guard in mixed-direction text, from
   seraphinastudios/tilewright-ui pull request #18 (crate version 0.1.3, not
   yet released when this was recorded). The recorded revision is that pull
-  request's head, `a74ba9649cf70c20f6b4f8f230eadf48fb481369`; after a squash
+  request's head, `6ac3579582ed59f1fb356ffdc22f86faeebf1486`; after a squash
   merge it is not on that repository's `main` but stays reachable as
   `refs/pull/18/head`. If the pull request changes before it merges, this
   code and this revision follow it. Adapted: `src/lib.rs` `toward`,
