@@ -56,7 +56,7 @@ Each step, exactly these members:
 | Member | Value |
 |---|---|
 | `action` | The edit Action that prepared the step, in the typed form below. |
-| `placed` | For `place`, the uid it assigned (a generated uid, `o.` and 26 base32 characters); `null` for every other action. |
+| `placed` | For `place`, the uid it assigned (a generated uid, `o.` and 26 base32 characters); for `place_objects`, the list of uids it assigned, one per object in object order; `null` for every other action. |
 | `transaction` | The sealed World transaction the step was accepted as, exactly, with the sandbox's actor. |
 | `transaction_sha256` | SHA-256 of `transaction`'s bytes. |
 | `before` | The World revision the step starts from. |
@@ -86,6 +86,7 @@ hold no NUL.
 | `paint_zones` | `plane`, `layer`, `cells` (as for `paint_stroke`), `zone` (string or `null`) |
 | `remove` | `uid` |
 | `place` | `plane`, `layer`, `x`, `y`, `proto` |
+| `place_objects` | `plane`, `layer`, `x`, `y` (the anchor tile), `objects`: 1 to 64 objects, each exactly `{"proto", "offset": [dx, dy]}` with `dx` and `dy` integers from -4,095 to 4,095 |
 | `rename_zone` | `plane`, `zone`, `name` (string or `null`) |
 | `set_zone_parent` | `plane`, `zone`, `parent` (string or `null`) |
 | `create_zone` | `plane`, `zone`, `name`, `parent` |
@@ -171,6 +172,24 @@ what another version means. An editor from before `smooth_heights`
 (1.61.0 and earlier) refuses a whole proposal that holds one with
 `proposal.invalid`.
 
+A `place_objects` step is a stamp ([docs/ENGINE.md](ENGINE.md#stamps),
+[ADR 0009](../decisions/0009-place-objects.md)): its objects are copied
+into the action, never named, so it replays without any stamp store.
+Each object's layer and fields come from the catalog's grant of its
+prototype when the step is prepared, exactly as for `place`; under a
+grant with another render layer or other defaults it prepares another
+transaction and diverges. Under a catalog that does not grant one of its
+prototypes, or whose view leaves out one of its tiles, the whole step is
+refused with `proposal.step_refused` and the engine's grant.missing or
+scope.outside_view; one of its uids already in the world is
+uid.unavailable. More than 64 objects is `proposal.budget`, none or an
+offset past 4,095 `proposal.invalid`, when the proposal is read. Its
+`placed` is a list even for one object, and a `place` step's a string:
+each kind has exactly one form. The format stays
+`tilewright.editor-proposal/1`: an editor from before `place_objects`
+refuses a whole proposal that holds one with `proposal.invalid` (an
+unknown action kind) before it reads `placed`.
+
 ### What a reader requires and what the writer emits
 
 A reader takes any document the strict reader accepts: whitespace, member
@@ -209,6 +228,7 @@ All in `tilewright_editor_proposal::limits`:
 | Files one step changes | 32, the engine's review limit, so each step can be reviewed completely |
 | Action strings | 4,096 bytes |
 | Stroke cells | 4,096, the brush's limit |
+| Stamp objects | 64, and as many uids in its `placed`; offsets at most 4,095 either way |
 | Field values | 8 levels of nesting, 4,096 values (itself included) and 64 KiB encoded, the engine's budget; objects at most 256 members, World's reader limit |
 | JSON values in one proposal | 256 × (3 × 4,096 + 64) + 64 = 3,162,176 (object keys are not counted); it follows from the bounds above, so no proposal within them reaches it. A hostile document just under it can take several hundred MB of memory for well under a second while it is read |
 | Client label | 256 bytes |
@@ -242,13 +262,19 @@ and every `Proposal` value has passed all of it:
 5. each transaction: a sealed World transaction (`base` and `result`
    recorded) by the proposal's actor that changes 1 to 32 files; a `place`
    step's transaction is one `object.insert` whose object has its `placed`
-   uid and no inventory (the engine's Place never writes one), no other
-   step records a uid, and no two steps place the same uid.
+   uid and no inventory (the engine's Place never writes one); a
+   `place_objects` step records one generated uid per object, all
+   distinct, and its transaction is exactly one `object.insert` per
+   object, in object order, each on the action's plane and spatial layer
+   at the anchor plus the object's offset, without `index`, of the
+   object's prototype, with its uid and no inventory, and no other
+   operation; no other step records a uid, and no two steps place the
+   same uid.
 
 None of this shows that a step's transaction is what its Action
 prepares: verification compares the Action's `expected` revision with the
 step's `before`, and checks the transaction's seal, actor and changed
-files and a placement's uid, but never that the transaction is what the
+files and a placement's uids, but never that the transaction is what the
 Action prepares. Only
 dispatching the Action again when the proposal is applied, and comparing
 what it prepares with the recorded transaction, establishes that.
@@ -278,7 +304,9 @@ person's session:
   result revision: nothing records who applied them.
 - `Progress::prepare_step` dispatches the next step's Action through
   `Session::dispatch` (a `place` through `Session::dispatch_placing` with
-  its recorded uid), with the person's actor and catalog. An engine refusal
+  its recorded uid, a `place_objects` through
+  `Session::dispatch_placing_objects` with its recorded uids), with the
+  person's actor and catalog. An engine refusal
   is `proposal.step_refused` with the engine's own code beside it (for
   example grant.missing when the person's catalog does not grant what the
   sandbox's did, uid.unavailable when the uid is taken). The transaction it
@@ -418,7 +446,10 @@ named N, on main", "Fill from (5, 0) with grass: 23 cells of sand (floor on
 main/0)", "Replace every sand in the view with grass: 23 cells, from
 (5, 0) (floor on main/0)", "Scatter palette speckle over 37 cells, 9 to
 change, seed 1234 (floor on main/0)", with "(not in this catalog)" after
-the palette's name when the person's catalog has none of that name), then the rest; from the world
+the palette's name when the person's catalog has none of that name, "Place
+4 objects (marker 2, stone 1, bush 1) anchored at (5, 3) on main/0", naming
+at most four prototypes in the order they first appear and counting the
+rest, with ", some outside the view" when an object's tile is), then the rest; from the world
 they add where an object or anchor being moved or deleted is now, how many
 objects a deleted object carries ("and the 3 objects it carries"), what a
 fill's start cell holds and how many cells the engine's fill would change
@@ -443,6 +474,7 @@ state changes, not per frame:
 | `paint_stroke`, `scatter_terrain`, `paint_zones` | every cell of the stroke (`cell`) |
 | `fill_terrain` | the cell it starts from, then every cell it would change in the person's committed world (`cell`), worked out by the engine's own fill; just the start cell when it would change none |
 | `place` | the tile it places on (`target`) |
+| `place_objects` | the tile of each object, in object order (`target`); a tile two objects share once, and the anchor not for itself |
 | `create_anchor`, `delete_anchor` | the anchor's tile (`anchor`); a new anchor is on the view's layer |
 | `move_anchor` | the anchor's tile now (`from`) and its destination (`to`) |
 | `create_zone`, `rename_zone`, `set_zone_parent`, `delete_zone` | nothing: the zone overlay shows zones |
