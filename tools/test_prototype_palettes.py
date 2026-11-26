@@ -327,7 +327,9 @@ out = os.open('favourites-0001.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o60
 os.write(out, data)
 os.close(out)
 for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-    signal.signal(number, lambda *_: sys.exit(0))
+    # A Ctrl-C reaches it twice (from the terminal and from the helper):
+    # quit at once, as the editor does, without unwinding.
+    signal.signal(number, lambda *_: os._exit(0))
 code = os.environ.get('FAKE_EXIT')
 if code:
     sys.exit(int(code))
