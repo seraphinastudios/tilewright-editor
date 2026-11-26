@@ -154,42 +154,50 @@ invalidate earlier masks.
 
 ### Shared string field
 
-`--shared-string-field` (given to `tools/provision-prototype.py`, which records
-`"string_field": "tilewright-ui 0.1.2"` in the receipt and passes the flag to
-the editor) switches the inspector's **string** fields and the two **zone
-name** drafts to the shared text field of `tilewright-ui` 0.1.2, drawn by
-`tilewright-ui-render` with the editor's own text system and font pack. It is off by default; without it
-nothing changes, and the frame records and images of a session are
-byte-identical. With it, each frame record carries the same
-`"string_field": "tilewright-ui 0.1.2"` member and the editor prints it at
-start.
+`--shared-string-field` (given to `tools/provision-prototype.py`, which
+records `"string_field": "tilewright-ui 0.1.2"` in the receipt and passes the
+flag to the editor) switches the inspector's **string** fields, the two **zone
+name** drafts and the Place **palette filter** to the shared text field of
+`tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the editor's own
+text system and font pack. It is off by default; without it nothing changes,
+and the frame records and images of a session are byte-identical. With it,
+each frame record carries the same `"string_field": "tilewright-ui 0.1.2"`
+member and the editor prints it at start.
 
-Only string field drafts and zone name drafts change hands: a zone's
-display name ("Edit display name") and a new zone's id and name ("New zone
-under X", "New top-level zone"), see [Managing zones](#managing-zones).
-Numbers, booleans and references, coordinates, anchors, portal locations
-and the palette filter keep the editor's own field. A shared draft keeps
-the same refusals and messages, stored line breaks as the same markers (now
-drawn by the shared field), the same keys, clipboard and input method
-events, and Enter or Review hands the engine the same action with the
-shared field's committed text: `SetField` for a string field,
-`RenameZone` or `CreateZone` for a zone draft. A zone draft keeps its own
-byte limit (1,024 bytes for a display name, 1,153 for a new zone's id,
-space and name), refused in the editor's own words, its own hint ("Name of
-meadow; empty = none", "New zone under meadow: id, name"), the review-time
-checks (an empty name is no name; the id's syntax, a used id and the
-256-character name, each with its message; text the font pack cannot draw)
-and the same road fence and pause: no zone draft opens while a road is
-drawn or editing is paused. The arrows step the caret with the shared field's own
-`step_caret`, which steps over a marker's zero-width space in one press and
-counts two caret stops at the same place as one, so every press moves the
-caret. Its text is the editor's own size (18 px), so an arrow or a click
-lands on the same visual stop, with the same side, as in the editor's own
-field. The editor's own field steps its caret by the same rule, so neither
-field has a press that moves nothing on screen, including two caret stops
-at the same place at a change of direction, U+0600 before a stored break,
-some emoji sequences beside right-to-left text or breaks, and a value of
-breaks only.
+Only string field drafts, zone name drafts and the palette filter change
+hands: a zone's display name ("Edit display name") and a new zone's id and
+name ("New zone under X", "New top-level zone"), see [Managing
+zones](#managing-zones), and the filter at the top of the sidebar in Place
+mode, see [Placing objects](#placing-objects). Numbers, booleans and
+references, coordinates, anchors and portal locations keep the editor's own
+field. A shared draft keeps the same refusals and messages, stored line breaks
+as the same markers (now drawn by the shared field), the same keys, clipboard
+and input method events, and Enter or Review hands the engine the same action
+with the shared field's committed text: `SetField` for a string field,
+`RenameZone` or `CreateZone` for a zone draft. A zone draft keeps its own byte
+limit (1,024 bytes for a display name, 1,153 for a new zone's id, space and
+name), refused in the editor's own words, its own hint ("Name of meadow; empty
+= none", "New zone under meadow: id, name"), the review-time checks (an empty
+name is no name; the id's syntax, a used id and the 256-character name, each
+with its message; text the font pack cannot draw) and the same road fence and
+pause: no zone draft opens while a road is drawn or editing is paused. The
+shared filter keeps the filter's own rules: the 64-byte limit with the same
+refusal, every key is text while it is focused (N and O type, they do not
+act), `/` or a click focuses it, Enter or a click elsewhere releases it and
+keeps the text, Esc clears and releases it, a composition is dropped on
+release, and it is never reviewed and never makes a change. Each committed
+edit filters the palette and pulls the sidebar's scroll back as before. It
+cannot be focused while a road is drawn (a road is only drawn in Terrain
+mode), and while editing is paused it is focused, edited, released and cleared
+as before. The arrows step the caret with the shared field's own `step_caret`,
+which steps over a marker's zero-width space in one press and counts two caret
+stops at the same place as one, so every press moves the caret. Its text is
+the editor's own size (18 px), so an arrow or a click lands on the same visual
+stop, with the same side, as in the editor's own field. The editor's own field
+steps its caret by the same rule, so neither field has a press that moves
+nothing on screen, including two caret stops at the same place at a change of
+direction, U+0600 before a stored break, some emoji sequences beside
+right-to-left text or breaks, and a value of breaks only.
 
 The field looks like the editor's own: it is laid out with the editor's own
 field row values (`workspace_render`'s `FIELD_ROW_HEIGHT`, `text_size`,
@@ -214,14 +222,16 @@ preview give way, as they do without the switch. The composed frame is then
 checked against the editor's whole limits as a backstop. If the frame cannot
 be drawn (no room even for the editor's share, or a structural refusal from
 the shared renderer), editing pauses with the draft kept. Esc discards the
-draft; a second Esc, a zoom or a pan then ends the pause (if the cause is
-the frame budget, zooming in avoids it next time).
+draft (or clears and releases the filter); a second Esc, a zoom or a pan
+then ends the pause (if the cause is the frame budget, zooming in avoids
+it next time).
 
 What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints
 `string field: tilewright-ui 0.1.2 (opt-in)`. Select a marker and click its
 `label` row; then repeat 1, 2, 6, 9 and 12 in a zone draft (N, choose
-meadow, "Edit display name"; and "New zone under meadow").
+meadow, "Edit display name"; and "New zone under meadow"), and 1, 2, 3, 6
+and 11 in the palette filter (P, then `/`), with step 14.
 
 1. **Looks.** Open the same field with and without the switch: the row has
    the same height and blue fill, the hint and the Review and Discard
@@ -261,8 +271,8 @@ meadow, "Edit display name"; and "New zone under meadow").
 11. **Scaling.** At 125 % or 150 % display scaling the caret, clicks and the
     candidate window line up with the text.
 12. **Esc and the other fields.** Esc discards the draft. Numbers,
-    coordinates, anchors, portal locations and the palette filter look and
-    behave exactly as before.
+    coordinates, anchors and portal locations look and behave exactly as
+    before.
 13. **Zone drafts.** "Edit display name" shows the name with "Name of
     meadow; empty = none" below; clearing it and pressing Enter reviews
     "Removes the display name 'Quiet meadow' of zone meadow; it shows no
@@ -270,6 +280,17 @@ meadow, "Edit display name"; and "New zone under meadow").
     under meadow", `Bridge` and Enter keep the draft open with the id
     message; `meadow.bridge Old bridge` reviews "Creates zone meadow.bridge
     under meadow, named 'Old bridge'.".
+14. **Palette filter.** In Place mode press `/` and type `a`: the palette
+    narrows as you type, and in a 720×480 window scrolled down it scrolls
+    back so the rows that match stay shown. N and O type letters. Enter
+    keeps `Filter: a` and releases the field; a click on a palette row
+    chooses it and releases the field too. `/` again, then Esc: the filter
+    is empty and the whole palette is back. Start a composition and click a
+    row: the composed text is dropped. Paste more than 64 bytes: refused
+    with the same message, and the filter is as it was. In steps 1 and 6
+    the filter has no Review or Discard: check that only its hint, "Enter
+    keeps the filter / Esc clears it", sits below the row, and that Enter
+    while composing does not release the field.
 
 ### Terrain palette
 
@@ -1474,7 +1495,9 @@ palette row is marked only while shown. When nothing matches, one neutral
 "No prototype matches the filter." row stands in for the list. The filter
 stays editable while a change is pending, when the rows are disabled as
 before. Re-entering Place keeps the filter; switching to another tool clears
-it, so Place opens with the whole palette.
+it, so Place opens with the whole palette. With `--shared-string-field` the
+shared text field edits the filter, by the same rules (see [Shared string
+field](#shared-string-field)).
 
 Each palette row is 40 logical pixels tall, and starts with a thumbnail of
 its prototype: the prototype's ready preview texture from the catalog, the
