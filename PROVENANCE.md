@@ -118,6 +118,17 @@ repository; the one adaptation is recorded below. Their text editing was itself 
   visible step; no composition check, because `visual_move` is never reached
   while composing; doc comments paraphrased. Same owner and licence: no
   notice beyond this record is needed.
+- **Adapted from tilewright-ui-render 0.1.3, before its release.** The fix
+  for a step beside a marker's guard in mixed-direction text, from
+  seraphinastudios/tilewright-ui pull request #18 at source revision
+  `66e3a3a8e6512538e0cf39ab23c4eccf6154815d` (crate version 0.1.3, not yet
+  released when this was recorded):
+  `src/lib.rs` `lands_behind`, and the guard-crossing comparison in
+  `step_visual` with the position the step left, into
+  `crates/tilewright-editor-app/src/workspace_render.rs` `lands_behind` and
+  `step_caret`. Transformation: the same conditions on the editor's
+  `TextInputSnapshot` markers and `UnicodeLayout` caret rectangles, comparing
+  committed bytes; doc comments paraphrased. Same owner and licence.
 
 ## Shared renderer UI font
 
