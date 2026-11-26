@@ -2227,6 +2227,10 @@ fn a_filter_frame_leaves_room_for_the_shared_field_and_pauses_without_it() {
     assert!(field_drawn(&again.scene));
 }
 
+/// One paused step's result, then the filter's text, focus and composition,
+/// whether the shared field edits it, and whether nothing is pending.
+type PausedStep = (Result<(), String>, String, bool, bool, bool, bool);
+
 /// The road fence and the pause treat the filter the same with the switch
 /// on: while a road is drawn the filter cannot be focused; while editing is
 /// paused it is focused, edited, released and cleared as without the
@@ -2295,7 +2299,7 @@ fn the_road_fence_and_the_pause_treat_the_filter_the_same_with_either_field() {
         outcomes.push(steps);
     }
     // The same results, text and focus; only which field edits differs.
-    let strip = |steps: &[(Result<(), String>, String, bool, bool, bool, bool)]| {
+    let strip = |steps: &[PausedStep]| {
         steps
             .iter()
             .map(|(result, text, focused, composing, _, nothing)| {
