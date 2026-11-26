@@ -834,3 +834,95 @@ fn random_stamps_undo_exactly_and_replay_identically() {
         "{accepted} {outside} {ungranted}"
     );
 }
+
+#[test]
+fn the_revision_is_checked_after_the_grants_and_view_and_before_the_uids() {
+    let (_dir, mut session) = fixture();
+    let stale = |objects: Vec<StampObject>, x: i64| Action::PlaceObjects {
+        plane: "main".into(),
+        layer: 0,
+        x,
+        y: 1,
+        objects,
+        expected: [7; 32],
+    };
+    // A stale stamp with an ungranted object, or an object outside the
+    // view: the grant and the view are judged first.
+    assert_eq!(
+        code(
+            &mut session,
+            stale(vec![object("marker", 0, 0), object("grass", 1, 0)], 1)
+        ),
+        RefusalCode::GrantMissing
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            stale(vec![object("marker", 0, 0), object("marker", 1, 0)], 7)
+        ),
+        RefusalCode::ScopeOutsideView
+    );
+    // A stale replay whose recorded uid the World already holds: the
+    // revision is judged before any uid.
+    let taken = "o.aaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
+    let (_dir, mut session) = fixture_with(|root| {
+        edit_json(root, CHUNK, |chunk| {
+            chunk["objects"].as_array_mut().unwrap().push(
+                json!({"uid": "o.aaaaaaaaaaaaaaaaaaaaaaaaaa", "at": [0, 0], "proto": "marker", "layer": "item"}),
+            );
+        });
+    });
+    let uids = vec![format_uid([1; 16]), taken];
+    let objects = vec![object("marker", 0, 0), object("stone", 1, 0)];
+    let error = session
+        .dispatch_placing_objects(stale(objects.clone(), 2), &uids, &mut Records::default())
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::RevisionStale);
+    assert!(session.history().pending().is_none());
+    // Current, the same replay reaches the uids.
+    let error = session
+        .dispatch_placing_objects(
+            stamp(&session, 2, 1, objects),
+            &uids,
+            &mut Records::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::UidUnavailable);
+}
+
+#[test]
+fn only_objects_on_the_stamps_spatial_layer_occupy_its_tiles() {
+    // An object on spatial layer 1 at (3, 4), inside the view's x/y
+    // bounds; nothing stands on (3, 4) of layer 0.
+    let (_dir, mut session) = fixture_with(|root| {
+        let upper = json!({"format": "tilewright.chunk/1", "plane": "main", "layer": 1, "chunk": [0, 0],
+            "objects": [{"uid": "upper_1", "at": [3, 4], "proto": "marker", "layer": "item"}]});
+        fs::create_dir_all(root.join("planes/main/layers/1")).unwrap();
+        fs::write(
+            root.join("planes/main/layers/1/0_0.jsonc"),
+            serde_json::to_vec_pretty(&upper).unwrap(),
+        )
+        .unwrap();
+    });
+    let objects = vec![object("bush", 0, 0)];
+    let world = session.world();
+    assert_eq!(
+        tilewright_editor_ui::stamp::occupied(world, "main", 0, [3, 4], &objects),
+        0
+    );
+    assert_eq!(
+        tilewright_editor_ui::stamp::occupied(world, "main", 1, [3, 4], &objects),
+        1
+    );
+    session
+        .dispatch(stamp(&session, 3, 4, objects), &mut Records::default())
+        .unwrap();
+    assert!(
+        session
+            .pending_warnings()
+            .iter()
+            .all(|line| !line.starts_with("Warning")),
+        "{:?}",
+        session.pending_warnings()
+    );
+}

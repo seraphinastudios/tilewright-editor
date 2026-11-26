@@ -28,8 +28,11 @@ and no footprints as data, so a stamp can only reason about head tiles.
   object is a prototype and its final offset, after any rotation or
   mirroring, so the engine has no transform rule to freeze.
 - **`placed` becomes a list for this kind**, and the proposal format stays
-  `tilewright.editor-proposal/1`: an editor from before it already refuses
-  the step on its unknown kind.
+  `tilewright.editor-proposal/1`: an editor from before it refuses the
+  whole proposal with `proposal.invalid` when it reads it. It reads a
+  step's `placed` before its action, so it stops at the list ("placed is a
+  string"; checked against main aabece9), and the unknown kind would
+  refuse it next.
 - **Refuse the whole stamp** when any object is outside the view or not
   granted; **warn** for occupied tiles, never refuse; objects only (no
   terrain); at most 64 objects.
@@ -84,7 +87,10 @@ any of them needs a new kind.
   singular forms for one). A tile is occupied when the committed World
   holds a top-level object there, on the same plane and spatial layer, or
   an earlier object of the same stamp lands on it. It never refuses and
-  never makes the review incomplete.
+  never makes the review incomplete. It is shown when the stamp is
+  prepared, not on the Undo or Redo of an accepted stamp: a Redo lands on
+  the same World the original review judged, and its review shows the
+  insertion notes only.
 - **Verification** of a proposal (no world needed) requires a
   `place_objects` step's `placed` to be a list of one distinct generated
   uid per object, and its transaction to be exactly one `object.insert`
@@ -103,7 +109,10 @@ them.
   plane tile in a portal), and an offset is neither.
 - **The offset bound, 4,095,** is the widest a view allows: a view holds at
   most 4,096 tiles, so no two of its tiles are further apart than 4,095 on
-  one axis, and every stamp that fits in a view fits the bound. It keeps
+  one axis. Every stamp that fits in a view therefore fits the bound when
+  its anchor is a tile of the view too (or, more generally, within 4,095
+  tiles of every object on each axis); a caller that anchors a stamp far
+  outside the view must move the anchor closer. It keeps
   every tile computation small and every recorded number short.
 - **64 objects, and the review's own limits.** A stamp's inserts are small
   and usually fall in one or a few chunks; 64 of them stay far inside the

@@ -187,8 +187,10 @@ offset past 4,095 `proposal.invalid`, when the proposal is read. Its
 `placed` is a list even for one object, and a `place` step's a string:
 each kind has exactly one form. The format stays
 `tilewright.editor-proposal/1`: an editor from before `place_objects`
-refuses a whole proposal that holds one with `proposal.invalid` (an
-unknown action kind) before it reads `placed`.
+refuses a whole proposal that holds one with `proposal.invalid` when it
+reads it, before anything is prepared. It reads a step's `placed` before
+its action, so it stops at the list ("placed is a string"); were the list
+a string, the unknown action kind would refuse it next.
 
 ### What a reader requires and what the writer emits
 

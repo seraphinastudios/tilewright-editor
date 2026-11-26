@@ -442,7 +442,9 @@ the 3 new objects land on tiles that already hold an object or another
 new one; each is added on top." A tile is occupied when the committed World
 holds a top-level object there, on the same plane and spatial layer, or
 an earlier object of the same stamp lands on it. The World format stacks
-objects, so this never refuses anything. An accepted stamp leaves the
+objects, so this never refuses anything. The warning is shown when the
+stamp is prepared, not on its Undo or Redo: a Redo lands on the same World
+the original review judged, and shows the insertion notes only. An accepted stamp leaves the
 selection as it was (a selection holds one object); its uids are its
 step's `StepOrigin::placed_objects`.
 
