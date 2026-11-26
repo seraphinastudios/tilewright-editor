@@ -1252,8 +1252,11 @@ fn a_stamp_step_reads_as_words_and_applies_through_the_panel() {
     prepare_and_accept(&mut twin, 0);
     let uids = twin.proposal.steps()[0].placed_objects().to_vec();
     assert_eq!(uids.len(), 4);
-    for uid in &uids {
-        assert!(twin.app.session.world().object(uid).is_some(), "{uid}");
+    for (index, uid) in uids.iter().enumerate() {
+        assert!(
+            twin.app.session.world().object(uid).is_some(),
+            "object {index}"
+        );
     }
     // Many prototypes are cut after four; an object outside the view is
     // said.

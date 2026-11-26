@@ -567,6 +567,7 @@ fn occupied_tiles_warn_and_never_refuse() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn a_recorded_stamp_assigns_exactly_its_uids_or_is_refused() {
     let (_dir, mut session) = fixture();
     let mut records = Records::default();
@@ -616,7 +617,7 @@ fn a_recorded_stamp_assigns_exactly_its_uids_or_is_refused() {
         refused(&mut session, &|_: &Session| place.clone(), &recorded[..1]),
         RefusalCode::InputInvalid
     );
-    for uids in [
+    for (case, uids) in [
         recorded[..1].to_vec(),
         vec![
             recorded[0].clone(),
@@ -625,15 +626,18 @@ fn a_recorded_stamp_assigns_exactly_its_uids_or_is_refused() {
         ],
         vec![recorded[0].clone(), "marker_9".into()],
         vec![recorded[0].clone(), recorded[0].clone()],
-    ] {
+    ]
+    .iter()
+    .enumerate()
+    {
         assert_eq!(
             refused(
                 &mut session,
                 &|s: &Session| stamp(s, 2, 2, objects.clone()),
-                &uids
+                uids
             ),
             RefusalCode::InputInvalid,
-            "{uids:?}"
+            "case {case}"
         );
     }
     // A taken uid is uid.unavailable, never drawn again, and only after
