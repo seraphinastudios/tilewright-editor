@@ -431,9 +431,10 @@ pub struct ToolState {
     anchor: Option<String>,
     /// The open portal step of the selected object, if any.
     portal: Option<OpenPortalStep>,
-    /// What edits the inspector's string fields and the zone name drafts
-    /// (a zone's display name and a new zone's id and name): the editor's
-    /// own field unless the shared field was switched on.
+    /// What edits the inspector's string fields, the zone name drafts (a
+    /// zone's display name and a new zone's id and name) and the Place
+    /// palette filter: the editor's own field unless the shared field was
+    /// switched on.
     string_field: FieldImplementation,
     /// Sculpt mode's tool and step, kept across modes.
     sculpt: SculptTool,
@@ -1398,12 +1399,10 @@ impl ToolState {
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        let input = FieldInput::with_limit(
-            text.clone(),
-            identity,
-            MAX_FILTER_BYTES,
-            FieldImplementation::Editor,
-        );
+        // The filter follows the switch, like the string fields and the
+        // zone name drafts.
+        let input =
+            FieldInput::with_limit(text.clone(), identity, MAX_FILTER_BYTES, self.string_field);
         let input = match input {
             Ok(input) => input,
             Err(error) => {
@@ -1600,9 +1599,9 @@ impl ToolState {
         self.input_mut()?.cancel_preedit()
     }
 
-    /// Choose what edits the inspector's string fields and the zone name
-    /// drafts from the next such draft on. Other draft kinds always use
-    /// the editor's own field.
+    /// Choose what edits the inspector's string fields, the zone name
+    /// drafts and the palette filter from the next such draft (or filter
+    /// focus) on. Other draft kinds always use the editor's own field.
     pub fn set_string_field(&mut self, implementation: FieldImplementation) {
         self.string_field = implementation;
     }

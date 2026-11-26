@@ -3,10 +3,10 @@
 
 //! Drawing the opt-in shared string field (`--shared-string-field`).
 //!
-//! The inspector's string field and the zone name drafts are edited by
-//! `tilewright-ui`'s field (see
+//! The inspector's string field, the zone name drafts and the palette
+//! filter are edited by `tilewright-ui`'s field (see
 //! `tilewright_editor_ui::field_input`); here its state is laid out in the
-//! sidebar row, compiled by `tilewright-ui-render`'s `UiCompiler` with the
+//! sidebar row (or, for the filter, the row at the top of the sidebar), compiled by `tilewright-ui-render`'s `UiCompiler` with the
 //! editor's own text system lent for each call, and composed into the
 //! editor's frame under the editor's own scene limits. Its geometry then
 //! serves pointer selection, caret steps and the input method area in place
