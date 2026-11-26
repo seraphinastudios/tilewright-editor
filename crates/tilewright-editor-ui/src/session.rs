@@ -190,6 +190,23 @@ pub enum Action {
         proto: String,
         expected: [u8; 32],
     },
+    /// Place a stamp: one new object per member of `objects`, each of a
+    /// granted prototype on the plane tile at its offset from the anchor
+    /// tile `x, y` of the active view, as one reviewed transaction of one
+    /// `object.insert` per member, in member order, each on top of its
+    /// tile's stack with a new uid and its grant's render layer and
+    /// defaults, exactly as [`Action::Place`] writes one. 1 to
+    /// [`crate::stamp::MAXIMUM_STAMP_OBJECTS`] members; the whole stamp is
+    /// refused when any member is not granted or lands outside the view.
+    /// The members are recorded, not named ([`crate::stamp`], ADR 0009).
+    PlaceObjects {
+        plane: String,
+        layer: i32,
+        x: i64,
+        y: i64,
+        objects: Vec<crate::stamp::StampObject>,
+        expected: [u8; 32],
+    },
     /// Set or clear the display name of zone `zone` of the active view's
     /// plane: one `set` (or `remove` when `name` is `None` or empty) on its
     /// `name` in `zones.jsonc`. Needs `editing.zones.manage`. Zone ids are
@@ -363,12 +380,15 @@ impl CoordinateGuards {
 }
 
 /// Where an applied step came from: the edit [`Action`] that prepared it,
-/// the actor in force, and, for a placement, the uid it assigned.
+/// the actor in force, and, for a placement, the uid it assigned (for a
+/// stamp, the uids, in member order).
 #[derive(Clone, Debug, PartialEq)]
 pub struct StepOrigin {
     action: Action,
     actor: Actor,
-    placed: Option<String>,
+    /// The uids the step assigned: one for a placement, one per member
+    /// for a stamp, none otherwise.
+    placed: Vec<String>,
 }
 impl StepOrigin {
     /// The edit action, exactly as it was dispatched.
@@ -381,7 +401,18 @@ impl StepOrigin {
     }
     /// The uid an [`Action::Place`] assigned; `None` for other actions.
     pub fn placed(&self) -> Option<&str> {
-        self.placed.as_deref()
+        match self.action {
+            Action::Place { .. } => self.placed.first().map(String::as_str),
+            _ => None,
+        }
+    }
+    /// The uids an [`Action::PlaceObjects`] assigned, one per member in
+    /// member order; empty for other actions.
+    pub fn placed_objects(&self) -> &[String] {
+        match self.action {
+            Action::PlaceObjects { .. } => &self.placed,
+            _ => &[],
+        }
     }
 }
 
@@ -428,6 +459,12 @@ pub struct Session {
     uids: Box<dyn UidSource>,
     /// The uid a pending placement adds; selected when it is accepted.
     placing: Option<String>,
+    /// The uids a pending stamp adds, in member order. Accepting a stamp
+    /// leaves the selection as it is: it holds one object.
+    placing_objects: Vec<String>,
+    /// The uids the next stamp must assign, for one dispatch
+    /// ([`Session::dispatch_placing_objects`]).
+    replaying: Option<Vec<String>>,
     /// The origin of every undo stack entry, in the same order; `None`
     /// for entries the History already had when the session was built.
     steps: Vec<Option<StepOrigin>>,
@@ -467,6 +504,8 @@ impl Session {
             actor,
             uids: Box::new(OsUidSource),
             placing: None,
+            placing_objects: Vec::new(),
+            replaying: None,
         };
         session.refresh_review();
         session
@@ -1168,6 +1207,48 @@ impl Session {
         self.uids = previous;
         result
     }
+    /// Dispatch an [`Action::PlaceObjects`] that assigns exactly `uids`,
+    /// one per member in member order, as when a recorded stamp is
+    /// prepared again: no uid is drawn from the session's source. Refused
+    /// with [`RefusalCode::InputInvalid`] for another action, a count other
+    /// than the members', a uid that is not a generated uid or one given
+    /// twice; with [`RefusalCode::UidUnavailable`] when the World already
+    /// has one (checked where a draw would be, after the stamp's grants and
+    /// view).
+    pub fn dispatch_placing_objects(
+        &mut self,
+        action: Action,
+        uids: &[String],
+        recovery: &mut impl RecoveryStore,
+    ) -> Result<(), SessionError> {
+        let Action::PlaceObjects { objects, .. } = &action else {
+            return Err(refuse(
+                RefusalCode::InputInvalid,
+                "fixed uids apply to a stamp only",
+            ));
+        };
+        if uids.len() != objects.len() {
+            return Err(refuse(
+                RefusalCode::InputInvalid,
+                "a stamp needs exactly one fixed uid per object",
+            ));
+        }
+        for (index, uid) in uids.iter().enumerate() {
+            if crate::uid::uid_material(uid).is_none() {
+                return Err(refuse(RefusalCode::InputInvalid, "not a generated uid"));
+            }
+            if uids[..index].contains(uid) {
+                return Err(refuse(
+                    RefusalCode::InputInvalid,
+                    "a stamp's fixed uids are distinct",
+                ));
+            }
+        }
+        self.replaying = Some(uids.to_vec());
+        let result = self.dispatch(action, recovery);
+        self.replaying = None;
+        result
+    }
     pub fn dispatch(
         &mut self,
         action: Action,
@@ -1179,7 +1260,7 @@ impl Session {
             action if is_edit(action) => Some(Preparing::Edit(StepOrigin {
                 action: action.clone(),
                 actor: self.actor.clone(),
-                placed: None,
+                placed: Vec::new(),
             })),
             _ => None,
         };
@@ -1189,6 +1270,7 @@ impl Session {
         self.refresh_review();
         if self.history.pending().is_none() {
             self.placing = None;
+            self.placing_objects.clear();
         }
         if let Err(error) = &result {
             self.status.message = error.to_string();
@@ -1244,7 +1326,12 @@ impl Session {
             self.preparing = None;
         } else if ok && let Some(mut preparing) = preparing {
             if let Preparing::Edit(origin) = &mut preparing {
-                origin.placed.clone_from(&self.placing);
+                origin.placed = self
+                    .placing
+                    .iter()
+                    .chain(&self.placing_objects)
+                    .cloned()
+                    .collect();
             }
             self.preparing = Some(preparing);
         }
@@ -1260,7 +1347,27 @@ impl Session {
     fn refresh_review(&mut self) {
         self.warnings = self.history.pending().map_or_else(Vec::new, |pending| {
             let committed = self.history.document().world();
-            let mut lines = crate::insertion::notes(committed, pending.sealed());
+            // A stamp's occupied tiles first, so that a long list of
+            // insertion notes never hides it.
+            let mut lines: Vec<String> = match &self.preparing {
+                Some(Preparing::Edit(origin)) => match origin.action() {
+                    Action::PlaceObjects {
+                        plane,
+                        layer,
+                        x,
+                        y,
+                        objects,
+                        ..
+                    } => {
+                        crate::stamp::occupied_warning(committed, plane, *layer, [*x, *y], objects)
+                            .into_iter()
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            };
+            lines.extend(crate::insertion::notes(committed, pending.sealed()));
             lines.extend(crate::zones::notes(committed, pending.sealed()));
             lines.extend(crate::zones::definition_notes(committed, pending.world()));
             lines.extend(crate::anchors::notes(committed, pending.world()));
@@ -1307,6 +1414,7 @@ impl Session {
                     | Action::PaintZones { .. }
                     | Action::Remove { .. }
                     | Action::Place { .. }
+                    | Action::PlaceObjects { .. }
                     | Action::RenameZone { .. }
                     | Action::SetZoneParent { .. }
                     | Action::CreateZone { .. }
@@ -1658,6 +1766,14 @@ impl Session {
                 proto,
                 expected,
             } => self.place(&plane, layer, [x, y], &proto, expected),
+            Action::PlaceObjects {
+                plane,
+                layer,
+                x,
+                y,
+                objects,
+                expected,
+            } => self.place_objects(&plane, layer, [x, y], &objects, expected),
             action @ (Action::RenameZone { .. }
             | Action::SetZoneParent { .. }
             | Action::CreateZone { .. }
@@ -1729,39 +1845,121 @@ impl Session {
             world.object_location(uid).is_some()
         })
         .map_err(|error| SessionError::new(RefusalCode::UidUnavailable, error.to_string()))?;
-        // Written as text so the placed object keeps this member order in
-        // source: uid, prototype, render layer, then the defaults in catalog
-        // order. Every value is JSON-encoded; defaults are canonical JSON.
-        let encode = |text: &str| Value::String(text.into()).to_string();
-        let mut object = format!(
-            "{{\"uid\":{},\"proto\":{},\"layer\":{}",
-            encode(&uid),
-            encode(proto),
-            encode(&grant.layer)
-        );
-        if !grant.defaults.is_empty() {
-            object.push_str(",\"fields\":{");
-            for (index, (name, value)) in grant.defaults.iter().enumerate() {
-                if index > 0 {
-                    object.push(',');
-                }
-                object.push_str(&encode(name));
-                object.push(':');
-                object.push_str(value);
-            }
-            object.push('}');
+        let operation = insert_operation(plane, layer, [x, y], proto, grant, &uid);
+        self.prepare_inserts(expected, &[operation])?;
+        self.placing = Some(uid);
+        self.status.phase = SessionPhase::Pending;
+        self.status.message = "Pending World diff; Accept publishes, Cancel writes nothing".into();
+        self.invalidate_frame()
+    }
+    /// A stamp: one `object.insert` per member, in member order, each
+    /// exactly what [`Session::place`] writes for one object on the
+    /// member's tile, in one transaction. Every refusal comes before
+    /// anything is prepared: the members (count and offsets), then every
+    /// member's grant, then every member's tile, then the revision, then
+    /// the uids (each unused in the World and among the stamp's own).
+    fn place_objects(
+        &mut self,
+        plane: &str,
+        layer: i32,
+        anchor: [i64; 2],
+        objects: &[crate::stamp::StampObject],
+        expected: [u8; 32],
+    ) -> Result<(), SessionError> {
+        crate::stamp::check_objects(objects)?;
+        let mut grants = Vec::with_capacity(objects.len());
+        for (index, object) in objects.iter().enumerate() {
+            let grant = self
+                .catalog
+                .editing()
+                .objects
+                .get(&object.proto)
+                .ok_or_else(|| {
+                    SessionError::new(
+                        RefusalCode::GrantMissing,
+                        format!(
+                            "placement capability refused: the catalog does not grant the prototype of stamp object {}",
+                            index + 1
+                        ),
+                    )
+                })?;
+            grants.push(grant);
         }
-        object.push('}');
-        let operation = format!(
-            "{{\"op\":\"object.insert\",\"plane\":{},\"layer\":{layer},\"at\":[{x},{y}],\"object\":{object}}}",
-            encode(plane)
-        );
+        let mut tiles = Vec::with_capacity(objects.len());
+        for (index, object) in objects.iter().enumerate() {
+            let tile = crate::stamp::member_tile(anchor, object.offset)
+                .filter(|[x, y]| self.catalog.tile_in_active_view(plane, layer, *x, *y))
+                .ok_or_else(|| {
+                    SessionError::new(
+                        RefusalCode::ScopeOutsideView,
+                        format!(
+                            "objects can only be placed on tiles of the active view: stamp object {} is outside it",
+                            index + 1
+                        ),
+                    )
+                })?;
+            tiles.push(tile);
+        }
+        self.verify_revision(expected)?;
+        let world = self.history.document().world();
+        let mut uids: Vec<String> = Vec::with_capacity(objects.len());
+        for index in 0..objects.len() {
+            let taken = |uid: &str| {
+                world.object_location(uid).is_some() || uids.iter().any(|drawn| drawn == uid)
+            };
+            let drawn = match &self.replaying {
+                // A recorded stamp assigns its recorded uids, each once:
+                // a taken one is refused, never drawn again.
+                Some(recorded) => {
+                    let mut one = recorded
+                        .get(index)
+                        .ok_or_else(|| {
+                            refuse(
+                                RefusalCode::InputInvalid,
+                                "a stamp needs exactly one fixed uid per object",
+                            )
+                        })
+                        .and_then(|uid| {
+                            FixedUidSource::new(uid).map_err(|error| {
+                                SessionError::new(RefusalCode::InputInvalid, error.to_string())
+                            })
+                        })?;
+                    crate::uid::unused_uid(&mut one, taken)
+                }
+                None => crate::uid::unused_uid(self.uids.as_mut(), taken),
+            }
+            .map_err(|error| SessionError::new(RefusalCode::UidUnavailable, error.to_string()))?;
+            uids.push(drawn);
+        }
+        let operations: Vec<String> = objects
+            .iter()
+            .zip(&grants)
+            .zip(tiles.iter().zip(&uids))
+            .map(|((object, grant), (tile, uid))| {
+                insert_operation(plane, layer, *tile, &object.proto, grant, uid)
+            })
+            .collect();
+        self.prepare_inserts(expected, &operations)?;
+        self.placing_objects = uids;
+        self.status.phase = SessionPhase::Pending;
+        self.status.message = "Pending World diff; Accept publishes, Cancel writes nothing".into();
+        self.invalidate_frame()
+    }
+    /// Prepare the transaction of `operations`, each an `object.insert`
+    /// already written as text by [`insert_operation`].
+    fn prepare_inserts(
+        &mut self,
+        expected: [u8; 32],
+        operations: &[String],
+    ) -> Result<(), SessionError> {
+        let encode = |text: &str| Value::String(text.into()).to_string();
         let text = format!(
-            "{{\"format\":\"tilewright.transaction/1\",\"title\":\"Editor semantic action\",\"actor\":{},\"operations\":[{operation}]}}",
-            encode(self.actor.as_str())
+            "{{\"format\":\"tilewright.transaction/1\",\"title\":\"Editor semantic action\",\"actor\":{},\"operations\":[{}]}}",
+            encode(self.actor.as_str()),
+            operations.join(",")
         );
         // History seals the complete consulted file base and enforces full
-        // World revision; World validates the new object, defaults included.
+        // World revision; World validates each new object, defaults included.
         self.history
             .prepare(expected, "editor:action", &text)
             .map_err(|error| {
@@ -1770,10 +1968,7 @@ impl Session {
                     format!("placement refused: {error}"),
                 )
             })?;
-        self.placing = Some(uid);
-        self.status.phase = SessionPhase::Pending;
-        self.status.message = "Pending World diff; Accept publishes, Cancel writes nothing".into();
-        self.invalidate_frame()
+        Ok(())
     }
     fn accept(&mut self, recovery: &mut impl RecoveryStore) -> Result<(), SessionError> {
         self.verify_revision(self.history.document().revision())?;
@@ -1883,6 +2078,7 @@ fn is_edit(action: &Action) -> bool {
         | Action::PaintZones { .. }
         | Action::Remove { .. }
         | Action::Place { .. }
+        | Action::PlaceObjects { .. }
         | Action::RenameZone { .. }
         | Action::SetZoneParent { .. }
         | Action::CreateZone { .. }
@@ -1899,6 +2095,44 @@ fn is_edit(action: &Action) -> bool {
         | Action::Redo
         | Action::Reopen => false,
     }
+}
+
+/// One `object.insert` of `proto` on plane tile `at`, on top of the tile's
+/// stack, as text. Written as text so the placed object keeps this member
+/// order in source: uid, prototype, render layer, then the defaults in
+/// catalog order. Every value is JSON-encoded; defaults are canonical JSON.
+fn insert_operation(
+    plane: &str,
+    layer: i32,
+    [x, y]: [i64; 2],
+    proto: &str,
+    grant: &tilewright_editor_preview::ObjectGrant,
+    uid: &str,
+) -> String {
+    let encode = |text: &str| Value::String(text.into()).to_string();
+    let mut object = format!(
+        "{{\"uid\":{},\"proto\":{},\"layer\":{}",
+        encode(uid),
+        encode(proto),
+        encode(&grant.layer)
+    );
+    if !grant.defaults.is_empty() {
+        object.push_str(",\"fields\":{");
+        for (index, (name, value)) in grant.defaults.iter().enumerate() {
+            if index > 0 {
+                object.push(',');
+            }
+            object.push_str(&encode(name));
+            object.push(':');
+            object.push_str(value);
+        }
+        object.push('}');
+    }
+    object.push('}');
+    format!(
+        "{{\"op\":\"object.insert\",\"plane\":{},\"layer\":{layer},\"at\":[{x},{y}],\"object\":{object}}}",
+        encode(plane)
+    )
 }
 
 /// A stroke's cells: at least one, at most the stroke cap, distinct and in

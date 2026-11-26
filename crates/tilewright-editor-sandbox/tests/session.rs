@@ -544,3 +544,27 @@ fn a_sandbox_opens_only_on_provisioned_stores_with_an_agent_actor() {
     drop(first);
     assert_eq!(open(&layout, ACTOR, None), Ok(()));
 }
+
+#[test]
+fn a_stamp_reports_its_uids_as_a_list_and_submits_them() {
+    let layout = Layout::new(|_| {});
+    let mut driver = layout.open(None);
+    ok(driver.edit(
+        json!({"kind": "place_objects", "plane": "main", "layer": 0, "x": 2, "y": 2,
+        "objects": [{"proto": "marker", "offset": [0, 0]}, {"proto": "stone", "offset": [1, -1]}]}),
+    ));
+    let accepted = ok(driver.simple("accept"));
+    let placed: Vec<String> = accepted["applied"]["placed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|uid| uid.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(placed.len(), 2);
+    assert!(placed.iter().all(|uid| uid.starts_with("o.")));
+    let submitted = ok(driver.simple("submit"));
+    let name = submitted["proposal"]["file"].as_str().unwrap().to_owned();
+    let read = read_proposal(&SourceRoot::new(&layout.path("proposals")), &name).unwrap();
+    assert_eq!(read.steps()[0].placed_objects(), placed.as_slice());
+    assert_eq!(read.steps()[0].placed(), None);
+}

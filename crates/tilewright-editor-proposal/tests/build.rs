@@ -61,6 +61,12 @@ fn a_proposal_records_the_undo_stack_of_every_edit_kind() {
         assert_eq!(*step.action(), edit(kind, step.before()), "kind {kind}");
         assert_eq!(step.placed().is_some(), kind == 6);
         assert_eq!(step.placed(), applied.origin.unwrap().placed());
+        // The stamp records its four uids as a list, in object order.
+        assert_eq!(step.placed_objects().len(), if kind == 20 { 4 } else { 0 });
+        assert_eq!(
+            step.placed_objects(),
+            applied.origin.unwrap().placed_objects()
+        );
         assert_eq!(step.transaction(), applied.transaction);
         assert_eq!(
             (step.before(), step.after()),

@@ -8,7 +8,9 @@ use std::fmt::Write as _;
 use tilewright_editor_observe::node::json_string;
 use tilewright_editor_proposal::{Proposal, ProposalError, StoredProposal, hex};
 use tilewright_editor_ui::review::{ChangeKind, PendingSummary};
-use tilewright_editor_ui::{AppliedStep, RefusalCode, Session, SessionError, SessionPhase};
+use tilewright_editor_ui::{
+    AppliedStep, RefusalCode, Session, SessionError, SessionPhase, StepOrigin,
+};
 
 /// Most bytes of a message taken into a reply, before escaping.
 const MAXIMUM_MESSAGE_BYTES: usize = 4096;
@@ -242,7 +244,22 @@ impl Reply {
             hex(&step.before),
             hex(&step.after)
         );
-        self.optional_string("placed", step.origin.and_then(|origin| origin.placed()));
+        // A stamp's uids, in object order, as a list; otherwise the one
+        // uid of a placement, or null.
+        match step.origin.map(StepOrigin::placed_objects) {
+            Some(uids) if !uids.is_empty() => {
+                self.key("placed");
+                self.text.push('[');
+                for (index, uid) in uids.iter().enumerate() {
+                    if index > 0 {
+                        self.text.push(',');
+                    }
+                    json_string(uid, &mut self.text);
+                }
+                self.text.push(']');
+            }
+            _ => self.optional_string("placed", step.origin.and_then(|origin| origin.placed())),
+        }
         self.text.push('}');
     }
 

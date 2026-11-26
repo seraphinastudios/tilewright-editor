@@ -44,6 +44,10 @@ pub enum Schema {
     /// An object that matches at least one of these; its strings are those
     /// of the first it matches.
     AnyOf(Vec<Schema>),
+    /// A value of any type that matches at least one of these, for example
+    /// a string or a list of them; its strings are those of the first it
+    /// matches. Nullable, it is one `anyOf` with `null` as its last choice.
+    Either(Vec<Schema>),
 }
 
 /// A property of an [`Schema::Object`].
@@ -184,8 +188,17 @@ impl Schema {
                 .push_str(r#"{"type":["string","number","boolean","null"],"x-world-text":true}"#),
             Self::Nullable(inner) => {
                 output.push_str(r#"{"anyOf":["#);
-                inner.write_json(output);
+                if let Self::Either(choices) = inner.as_ref() {
+                    write_choices(choices, output);
+                } else {
+                    inner.write_json(output);
+                }
                 output.push_str(r#",{"type":"null"}]}"#);
+            }
+            Self::Either(choices) => {
+                output.push_str(r#"{"anyOf":["#);
+                write_choices(choices, output);
+                output.push_str("]}");
             }
             Self::List(item) => {
                 output.push_str(r#"{"type":"array","items":"#);
@@ -345,8 +358,18 @@ impl Schema {
                 strings.extend(found);
                 Ok(())
             }
-            Self::AnyOf(choices) => any_of(choices, value, at, strings),
+            Self::AnyOf(choices) | Self::Either(choices) => any_of(choices, value, at, strings),
         }
+    }
+}
+
+/// `choices`, each as JSON Schema, separated by commas.
+fn write_choices(choices: &[Schema], output: &mut String) {
+    for (index, choice) in choices.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        choice.write_json(output);
     }
 }
 
@@ -433,6 +456,22 @@ mod tests {
         assert!(any.check(&value(r#"{"k":"a"}"#)).is_ok());
         assert!(any.check(&value(r#"{"k":"b"}"#)).is_err());
         assert!(any.to_json().starts_with(r#"{"type":"object","anyOf":["#));
+        // A string or a list of them, or null: one flat anyOf.
+        let either = Schema::Either(vec![Schema::World, Schema::World.list()]).nullable();
+        assert_eq!(
+            either.to_json(),
+            r#"{"anyOf":[{"type":"string","x-world-text":true},{"type":"array","items":{"type":"string","x-world-text":true}},{"type":"null"}]}"#
+        );
+        for accepted in ["\"o.a\"", "[\"o.a\",\"o.b\"]", "[]", "null"] {
+            assert!(either.check(&value(accepted)).is_ok(), "{accepted}");
+        }
+        assert_eq!(
+            either.check(&value("[\"o.a\"]")).unwrap(),
+            [("o.a".to_owned(), true)]
+        );
+        for refused in ["1", "[1]", "{}"] {
+            assert!(either.check(&value(refused)).is_err(), "{refused}");
+        }
         assert_eq!(Schema::Flag(true).to_json(), r#"{"const":true}"#);
         assert!(Schema::Flag(true).check(&value("true")).is_ok());
         for refused in ["false", "1", "\"true\""] {

@@ -117,6 +117,9 @@ fn random_request_lines_each_get_exactly_one_well_formed_reply() {
         format!(
             r#"{{"request":"edit","action":{{"kind":"set_field","uid":"marker_1","field":"label","value":{{"a":[1,2.5,null,true]}},"expected":"{base}"}}}}"#
         ),
+        format!(
+            r#"{{"request":"edit","action":{{"kind":"place_objects","plane":"main","layer":0,"x":2,"y":2,"objects":[{{"proto":"marker","offset":[0,0]}},{{"proto":"stone","offset":[1,-1]}}],"expected":"{base}"}}}}"#
+        ),
     ]
     .into();
     let alphabet: &[u8] = b"{}[]\":,\\ 0123456789-.eE+abcnrtufl\r\t\x00\x1b\x7f\xc3\xa9\xff";

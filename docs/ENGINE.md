@@ -39,7 +39,8 @@ bypass anything the desktop app enforces. See
   part): for each accepted edit its sealed forward transaction, exactly as
   accepted, the revisions before and after it, and, when this session
   prepared it, its origin: the edit `Action` as dispatched, the actor in
-  force and, for `Place`, the uid it assigned. An undone step leaves the
+  force and, for `Place`, the uid it assigned (for `PlaceObjects`, the
+  uids, `StepOrigin::placed_objects`). An undone step leaves the
   list (it moves to the redo stack with its origin); a redone one returns
   with its original Action; an edit that changes nothing, a cancelled one
   and undo and redo transactions themselves are never steps. Steps of a
@@ -49,7 +50,12 @@ bypass anything the desktop app enforces. See
   `Place` that assigns a given generated uid (refused with the code
   input.invalid for anything else, and with uid.unavailable when the
   World already has it), for one dispatch only; the session's own uid
-  source is restored after it. [Proposals](PROPOSALS.md) are built on
+  source is restored after it. `Session::dispatch_placing_objects` does
+  the same for a `PlaceObjects` with one recorded uid per object, in
+  object order (input.invalid for another action, another count, a uid
+  that is not generated or one given twice; uid.unavailable, after the
+  stamp's grants and view, for one the World already has); it draws
+  nothing from the session's source. [Proposals](PROPOSALS.md) are built on
   both. The kept origins add memory that History's 64 MiB byte budget
   does not count: one Action per undo and redo entry, so at most
   `MAX_HISTORY` (1,024, the bound on undo and redo together) times the
@@ -79,7 +85,8 @@ descriptor it reports back with `Session::set_recovery_descriptor`.
 Every edit action names its target by uid, plane, layer, grid and plane
 coordinates, never by the frame selection: `Move`, `SetField`, `Remove`
 and `SetPortal` by uid; `Paint`, `PaintStroke`, `FillTerrain`,
-`ScatterTerrain`, `AdjustHeights`, `FlattenHeights`, `PaintZones` and `Place` by plane tile; zone and anchor actions by plane and id. `Select` and
+`ScatterTerrain`, `AdjustHeights`, `FlattenHeights`, `PaintZones`, `Place` and
+`PlaceObjects` (its anchor tile and each object's offset) by plane tile; zone and anchor actions by plane and id. `Select` and
 `ClearSelection` only change what the desktop app highlights; an accepted
 placement selects the new object.
 
@@ -392,6 +399,54 @@ same code; a proposal step's words count them, and the desktop's
 [Sculpt mode](OFFLINE-PROTOTYPE.md#sculpt-mode) Smooth tool marks them
 while a stroke is dragged and releases the stroke as one
 `SmoothHeights` with kernel 1.
+
+## Stamps
+
+`PlaceObjects { plane, layer, x, y, objects, expected }` places a stamp:
+several new objects in one reviewed change
+([ADR 0009](../decisions/0009-place-objects.md)). `x, y` is the anchor
+tile; each of `objects` is a `StampObject { proto, offset }`, a prototype
+and its offset `[dx, dy]` from the anchor, after any rotation or
+mirroring the caller applied (the engine has no transform). The objects
+are copied into the action, never named: a catalog stamp and a copy
+captured from the map are two sources of the same list. When it is
+prepared, the engine (`tilewright_editor_ui::stamp` and the session), in
+this order:
+
+1. checks the objects: 1 to 64 (`MAXIMUM_STAMP_OBJECTS`; none is
+   input.invalid, more input.budget), each offset at most 4,095 either way
+   on both axes (`MAXIMUM_STAMP_OFFSET`, input.budget). Objects may repeat
+   and may share a tile;
+2. refuses, with grant.missing, a stamp any of whose prototypes the
+   catalog's `editing.objects` does not grant (checked before the view, as
+   for a `Place`), naming the object by its position;
+3. refuses, with scope.outside_view, a stamp any of whose objects lands
+   outside the active view (its plane, spatial layer and bounds), or whose
+   tile would overflow. The whole stamp is refused, never clipped; the
+   anchor itself need not be a tile of the view;
+4. refuses a stale revision with revision.stale;
+5. draws one new uid per object, in object order, each unused in the World
+   and among the stamp's own (uid.unavailable when the source cannot give
+   one);
+6. prepares one transaction of one `object.insert` per object, in object
+   order, each exactly the operation `Place` writes for one object on that
+   tile: on top of the tile's stack, with its uid, the grant's render
+   layer and its defaults. World validates every object; a refusal is
+   world.refused and leaves nothing pending.
+
+No refusal code is new. Undo is World's exact inverse of the whole
+transaction: one remove per object, every byte restored, a chunk the
+stamp created removed again. The review shows, before the notes of each
+insertion, one warning when objects land on occupied tiles: "Warning: 2 of
+the 3 new objects land on tiles that already hold an object or another
+new one; each is added on top." A tile is occupied when the committed World
+holds a top-level object there, on the same plane and spatial layer, or
+an earlier object of the same stamp lands on it. The World format stacks
+objects, so this never refuses anything. The warning is shown when the
+stamp is prepared, not on its Undo or Redo: a Redo lands on the same World
+the original review judged, and shows the insertion notes only. An accepted stamp leaves the
+selection as it was (a selection holds one object); its uids are its
+step's `StepOrigin::placed_objects`.
 
 ## Refusal codes
 

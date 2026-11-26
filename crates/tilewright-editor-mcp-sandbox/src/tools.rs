@@ -239,7 +239,11 @@ fn success(tool: Tool) -> Schema {
             Shape::new()
                 .with("before", Schema::Revision)
                 .with("after", Schema::Revision)
-                .with("placed", Schema::World.nullable())
+                // One uid for a placement, the list for a stamp.
+                .with(
+                    "placed",
+                    Schema::Either(vec![Schema::World, Schema::World.list()]).nullable(),
+                )
                 .build()
                 .nullable(),
         ),
