@@ -4,7 +4,8 @@
 //! The opt-in shared field in the application: the switch, the frame
 //! record, the reserved identities, refusals that pause rather than panic,
 //! and differential runs of real SDL events against the editor's own field,
-//! for the inspector's string field and both zone name drafts.
+//! for the inspector's string field, both zone name drafts and the palette
+//! filter.
 use super::{acknowledge_ui, application_with_source_using, input_key, modified_input_key};
 use crate::prototype::Application;
 use crate::shared_field::{
@@ -1646,4 +1647,686 @@ fn the_road_fence_and_the_pause_refuse_zone_drafts_with_either_field() {
         paused.push((review, refusals));
     }
     assert_eq!(paused[0], paused[1]);
+}
+
+/// The sample in Place mode, in a window of `logical` size at `scale`, with
+/// the palette filter edited by `implementation`.
+fn placed(
+    implementation: FieldImplementation,
+    logical: (u32, u32),
+    scale: u32,
+) -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = super::application_using(implementation);
+    let physical = (logical.0 * scale, logical.1 * scale);
+    app.ui = WorkspaceUi::new(logical, physical);
+    app.view.camera.width = physical.0;
+    app.view.camera.height = physical.1;
+    app.reflow().unwrap();
+    app.control(Control::Place).unwrap();
+    acknowledge_ui(&mut app);
+    (temporary, app)
+}
+
+/// Everything the filter's events can change that a person sees or that
+/// later events depend on.
+#[derive(Debug, PartialEq)]
+struct FilterState {
+    filter: String,
+    focused: bool,
+    composing: bool,
+    snapshot: Option<TextInputSnapshot>,
+    /// Each laid-out palette row: its text, whether enabled, whether chosen.
+    rows: Vec<(String, bool, bool)>,
+    scroll: usize,
+    /// The pending change's operations ([`operations`]).
+    pending: Option<String>,
+    mode: tilewright_editor_ui::tools::ToolMode,
+    zones: bool,
+    placement: Option<String>,
+    unsupported: usize,
+    banner: Option<String>,
+    status: String,
+    /// The sidebar's other rows (the filter's own row is drawn by the
+    /// field): hint, placeholder or `Filter: …`, Placing, the palette.
+    sidebar: Vec<String>,
+}
+
+/// A sealed change's operations, each placed object's uid left out: a
+/// placement mints a fresh random uid (and so a different result digest)
+/// in every run.
+fn operations(sealed: &str) -> String {
+    let operations = &sealed[sealed.find("\"operations\":").unwrap()..];
+    let mut out = String::new();
+    let mut rest = operations;
+    while let Some(at) = rest.find("\"uid\":\"") {
+        let value = at + "\"uid\":\"".len();
+        out.push_str(&rest[..value]);
+        rest = &rest[value..];
+        rest = &rest[rest.find('"').unwrap()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `text` with every placed object's uid (`o.` and 26 base-32 letters,
+/// fresh and random in every run) written `o.*`, elided or not.
+fn without_uids(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("o.") {
+        out.push_str(&rest[..at + 2]);
+        rest = &rest[at + 2..];
+        let uid = rest
+            .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit()))
+            .unwrap_or(rest.len());
+        if uid > 0 {
+            out.push('*');
+            rest = &rest[uid..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn filter_state(app: &mut Application) -> FilterState {
+    app.refresh_ui();
+    let rows = app
+        .ui
+        .widgets
+        .iter()
+        .filter(|widget| matches!(widget.control, Some(Control::PlacePalette(_))))
+        .map(|widget| (widget.text.clone(), widget.enabled, widget.active))
+        .collect();
+    FilterState {
+        filter: app.tools.palette_filter().to_owned(),
+        focused: app.tools.filter_focused(),
+        composing: app.tools.is_composing(),
+        snapshot: comparable(app.tools.draft_snapshot()),
+        rows,
+        scroll: app.sidebar_scroll,
+        pending: app
+            .session
+            .history()
+            .pending()
+            .map(|pending| operations(pending.sealed())),
+        mode: app.tools.mode(),
+        zones: app.tools.zones_visible(),
+        placement: app.tools.placement_choice().map(str::to_owned),
+        unsupported: app.unsupported_runs,
+        banner: banner(app),
+        status: without_uids(&app.status_label()),
+        sidebar: sidebar_hints(app)
+            .iter()
+            .map(|text| without_uids(text))
+            .collect(),
+    }
+}
+
+/// One step of the randomised filter run.
+#[derive(Clone, Debug)]
+enum FilterStep {
+    /// A key, text or composition event through the editor's routing.
+    Event(Event),
+    /// A Return press after its release, as a person presses Enter.
+    Enter,
+    /// A left press on the filter's row, `fraction` of its width in (none
+    /// outside Place mode).
+    ClickFilter(f32),
+    /// A left press on the `index`-th laid-out palette row.
+    ClickRow(usize),
+    /// A left press on the pinned "Placing" row, or on the map.
+    ClickPlacing,
+    ClickMap,
+    /// The sidebar scrolled to `offset` rows, as the mouse wheel sets it.
+    Scroll(usize),
+}
+
+struct Seeded(u64);
+impl Seeded {
+    fn below(&mut self, bound: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        usize::try_from(self.0 % bound as u64).unwrap()
+    }
+}
+
+fn filter_step(random: &mut Seeded) -> FilterStep {
+    const TYPED: [&str; 17] = [
+        "a", "St", "ONE", "r", "T", "x", "é", "青", "N", "O", "/", "lamp", "\n", "\u{2028}",
+        "a\tb", "\u{e000}", "e\u{301}",
+    ];
+    const COMPOSED: [(&str, i32, i32); 4] = [
+        ("に", 1, 0),
+        ("にほ", 2, 0),
+        ("x", 1, 0),
+        ("\u{2029}", 1, 0),
+    ];
+    const KEYS: [Keycode; 17] = [
+        Keycode::Home,
+        Keycode::End,
+        Keycode::Left,
+        Keycode::Right,
+        Keycode::Backspace,
+        Keycode::Delete,
+        Keycode::Escape,
+        Keycode::N,
+        Keycode::O,
+        Keycode::S,
+        Keycode::T,
+        Keycode::P,
+        Keycode::Q,
+        Keycode::Z,
+        Keycode::Slash,
+        Keycode::KpDivide,
+        Keycode::Escape,
+    ];
+    const SHIFTED: [Keycode; 4] = [Keycode::Left, Keycode::Right, Keycode::Home, Keycode::End];
+    const COMMANDS: [Keycode; 4] = [Keycode::A, Keycode::C, Keycode::X, Keycode::V];
+    #[allow(clippy::cast_precision_loss)]
+    match random.below(46) {
+        0..=9 => FilterStep::Event(text(TYPED[random.below(TYPED.len())])),
+        10 => FilterStep::Event(text("😀".repeat(15 + random.below(3)).as_str())),
+        11..=13 => {
+            let (value, start, length) = COMPOSED[random.below(COMPOSED.len())];
+            FilterStep::Event(preedit(value, start, length))
+        }
+        14..=23 => FilterStep::Event(input_key(7, KEYS[random.below(KEYS.len())], false)),
+        24 | 25 => FilterStep::Event(modified_input_key(
+            SHIFTED[random.below(SHIFTED.len())],
+            false,
+            Mod::LSHIFTMOD,
+        )),
+        26..=28 => FilterStep::Event(modified_input_key(
+            COMMANDS[random.below(COMMANDS.len())],
+            false,
+            Mod::LCTRLMOD,
+        )),
+        29 | 30 => FilterStep::Enter,
+        31..=33 => FilterStep::ClickFilter(random.below(100) as f32 / 100.0),
+        34 => FilterStep::ClickRow(random.below(4)),
+        35 => FilterStep::ClickPlacing,
+        36 => FilterStep::ClickMap,
+        37 | 38 => FilterStep::Scroll(random.below(7)),
+        // `/` again, often: P, T, N and Z leave the filter or Place mode.
+        39..=42 => FilterStep::Event(input_key(7, Keycode::Slash, false)),
+        _ => FilterStep::Event(input_key(7, Keycode::P, false)),
+    }
+}
+
+/// A left press at logical `at`, through the native loop's routing.
+fn press_at(app: &mut Application, at: [f32; 2]) -> Result<(), String> {
+    let logical = app.ui.logical_size();
+    let physical = app.ui.size;
+    crate::prototype::native_input_event(
+        app,
+        &super::zones::button(true, at),
+        logical,
+        physical,
+        false,
+        false,
+    )
+    .unwrap()
+}
+
+/// A logical point `fraction` of the way across the first widget `find`
+/// keeps, half way down it.
+#[allow(clippy::cast_precision_loss)]
+fn widget_at(
+    app: &mut Application,
+    find: impl Fn(&crate::workspace_ui::Widget) -> bool,
+    fraction: f32,
+) -> Option<[f32; 2]> {
+    app.refresh_ui();
+    let widget = app.ui.widgets.iter().find(|widget| find(widget))?;
+    let layout = widget.layout;
+    Some([
+        layout.x as f32 + 1.0 + (layout.width.saturating_sub(2)) as f32 * fraction,
+        layout.y as f32 + layout.height as f32 / 2.0,
+    ])
+}
+
+fn run_step(
+    app: &mut Application,
+    input: &mut crate::native_input::NativeInput,
+    clipboard: &mut String,
+    step: &FilterStep,
+) -> Result<(), String> {
+    match step {
+        FilterStep::Event(event) => route(app, input, event, clipboard),
+        FilterStep::Enter => {
+            route(app, input, &input_key(7, Keycode::Return, true), clipboard)?;
+            route(app, input, &input_key(7, Keycode::Return, false), clipboard)
+        }
+        FilterStep::ClickFilter(fraction) => {
+            let at = widget_at(
+                app,
+                |widget| {
+                    matches!(
+                        widget.control,
+                        Some(Control::PaletteFilter | Control::EditDraft)
+                    )
+                },
+                *fraction,
+            );
+            // Outside Place mode (T, N or Z left it) there is no filter.
+            at.map_or(Ok(()), |at| press_at(app, at))
+        }
+        FilterStep::ClickRow(index) => {
+            app.refresh_ui();
+            let row = app
+                .ui
+                .widgets
+                .iter()
+                .filter(|widget| matches!(widget.control, Some(Control::PlacePalette(_))))
+                .nth(*index)
+                .map(|widget| widget.control.clone());
+            let at =
+                row.and_then(|control| widget_at(app, |widget| widget.control == control, 0.5));
+            at.map_or(Ok(()), |at| press_at(app, at))
+        }
+        FilterStep::ClickPlacing => {
+            let at = widget_at(app, |widget| widget.text.starts_with("Placing"), 0.5);
+            at.map_or(Ok(()), |at| press_at(app, at))
+        }
+        FilterStep::ClickMap => {
+            let (width, height) = app.ui.logical_size();
+            #[allow(clippy::cast_precision_loss)]
+            press_at(app, [width as f32 / 4.0, height as f32 / 2.0])
+        }
+        FilterStep::Scroll(offset) => {
+            app.sidebar_scroll = *offset;
+            Ok(())
+        }
+    }
+}
+
+/// The randomised differential for the palette filter through real SDL
+/// events: from Place mode in four windows, both fields take the same
+/// seeded steps (text, compositions, keys with and without Shift and Ctrl,
+/// the clipboard, Enter, `/`, N, O, presses on the filter, a palette row, the
+/// "Placing" row and the map, and the sidebar scrolled). After every step,
+/// presented as the native loop presents it, both give the same result and
+/// the same filter, focus, composition, snapshot, palette rows, sidebar
+/// scroll, pending change, mode, overlay, choice, unsupported-text count and
+/// banner, status line, sidebar texts and clipboard.
+#[test]
+#[allow(clippy::too_many_lines)] // The coverage counts are listed inline.
+fn both_fields_turn_the_same_random_sdl_events_into_the_same_filter_rows_and_scroll() {
+    let (mut steps, mut refusals, mut focused, mut pulled_back) = (0, 0, 0, 0);
+    let (mut released_composing, mut cleared, mut placed_changes) = (0, 0, 0);
+    let mut kept = std::collections::BTreeSet::new();
+    let mut banners = 0;
+    for seed in [
+        0x5f11_7e25_u64,
+        0x0dd1_7e57,
+        0x2c0f_fee5,
+        0x7a1e_5eed,
+        0x51de_ba12,
+        0x0b5e_55ed,
+    ] {
+        for (logical, scale) in [
+            ((1280, 800), 1),
+            ((720, 480), 1),
+            ((720, 480), 2),
+            ((320, 240), 1),
+        ] {
+            let mut random = Seeded(seed ^ u64::from(logical.1 * scale));
+            let mut runs = FieldImplementation::ALL.map(|implementation| {
+                let (temporary, app) = placed(implementation, logical, scale);
+                let input = crate::native_input::NativeInput::new(7);
+                (temporary, app, input, String::new())
+            });
+            for _ in 0..200 {
+                let step = filter_step(&mut random);
+                let case = format!("{seed:x} {logical:?}x{scale} {step:?}");
+                let before = filter_state(&mut runs[0].1);
+                let results = runs
+                    .each_mut()
+                    .map(|(_, app, input, clipboard)| run_step(app, input, clipboard, &step));
+                assert_eq!(results[0], results[1], "{case}");
+                refusals += usize::from(results[0].is_err());
+                // Presented, as the native loop presents after each event.
+                for run in &mut runs {
+                    acknowledge_ui(&mut run.1);
+                }
+                let states = runs.each_mut().map(|run| filter_state(&mut run.1));
+                assert_eq!(states[0], states[1], "{case}");
+                assert_eq!(runs[0].3, runs[1].3, "{case}: the clipboard holds the same");
+                // The shared run really edits with the shared field.
+                assert_eq!(runs[1].1.tools.shared_draft().is_some(), states[1].focused);
+                assert!(runs[0].1.tools.shared_draft().is_none());
+                let state = &states[0];
+                focused += usize::from(state.focused);
+                kept.insert(state.rows.len());
+                pulled_back +=
+                    usize::from(state.scroll < before.scroll && state.filter != before.filter);
+                released_composing += usize::from(before.composing && !state.focused);
+                cleared += usize::from(!before.filter.is_empty() && state.filter.is_empty());
+                placed_changes += usize::from(before.pending.is_none() && state.pending.is_some());
+                banners += usize::from(state.banner.is_some() && state.focused);
+                steps += 1;
+            }
+        }
+    }
+    // Every number of laid-out rows, none to all six, was reached.
+    assert_eq!(kept, (0..=6).collect(), "{kept:?}");
+    assert!(
+        steps >= 4_800 && refusals > 200 && focused > 2_000,
+        "{steps} {refusals} {focused}"
+    );
+    assert!(
+        pulled_back > 0 && released_composing > 0 && cleared > 20,
+        "{pulled_back} {released_composing} {cleared}"
+    );
+    assert!(
+        placed_changes > 0 && banners > 0,
+        "{placed_changes} {banners}"
+    );
+}
+
+/// Place mode with the filter focused and `edit` applied to it.
+fn filtering(
+    implementation: FieldImplementation,
+    logical: (u32, u32),
+    scale: u32,
+    edit: Edit,
+) -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = placed(implementation, logical, scale);
+    app.control(Control::PaletteFilter).unwrap();
+    assert!(app.tools.filter_focused());
+    assert_eq!(
+        app.tools.shared_draft().is_some(),
+        implementation == FieldImplementation::Shared
+    );
+    edit(&mut app);
+    acknowledge_ui(&mut app);
+    (temporary, app)
+}
+
+/// The focused filter's row in both fields, at the three window sizes: the
+/// same row and reserved row, origin, clip, size, quad coverage, toolbar
+/// count and banner, and the same pixels but the caret and underline.
+#[test]
+#[allow(clippy::too_many_lines)] // The cases are listed inline.
+fn the_shared_palette_filter_covers_and_paints_what_the_editors_own_filter_does() {
+    let cases: [(&str, Edit); 9] = [
+        ("empty", |_| {}),
+        ("one row kept", |app| app.tools.input("lamp").unwrap()),
+        ("no row kept", |app| app.tools.input("zz").unwrap()),
+        ("long, scrolled to the end", |app| {
+            app.tools
+                .input("A long filter past the width of its row, so it scrolls 0123456")
+                .unwrap();
+        }),
+        ("mixed direction", |app| {
+            app.tools.input("עברית 12 lamp").unwrap();
+        }),
+        ("preedit", |app| {
+            app.tools.input("lap").unwrap();
+            let revision = app.tools.input_revision().unwrap();
+            app.tools
+                .set_selection(TextSelection::caret(TextCursor::new(2)), revision)
+                .unwrap();
+            app.tools.update_preedit("にほん", 2, 0).unwrap();
+        }),
+        ("selection", |app| {
+            app.tools.input("ate").unwrap();
+            app.tools.select_all().unwrap();
+        }),
+        ("joining marks", |app| {
+            app.tools.input("e\u{301} 👨\u{200d}👩\u{200d}👧").unwrap();
+        }),
+        // A character the font pack lacks: the toolbar's banner counts the
+        // filter's mark in both fields.
+        ("unsupported glyph", |app| {
+            app.tools.input("Odd \u{e000} filter").unwrap();
+        }),
+    ];
+    for (logical, scale) in [((1280, 800), 1), ((720, 480), 1), ((720, 480), 2)] {
+        for (name, edit) in cases {
+            let [(_own, mut own), (_shared, mut shared)] = FieldImplementation::ALL
+                .map(|implementation| filtering(implementation, logical, scale, edit));
+            let case = format!("{name} at {logical:?}x{scale}");
+            let banner = same_frames(
+                &mut own,
+                &mut shared,
+                &case,
+                name == "long, scrolled to the end",
+            );
+            // The same hint, palette rows and every other sidebar text.
+            assert_eq!(
+                sidebar_hints(&mut own),
+                sidebar_hints(&mut shared),
+                "{case}"
+            );
+            assert!(
+                sidebar_hints(&mut own)
+                    .iter()
+                    .any(|text| text == "Enter keeps the filter / Esc clears it"),
+                "{case}"
+            );
+            // The filter row sits at the top of the sidebar, above "Placing".
+            let placing = own
+                .ui
+                .widgets
+                .iter()
+                .find(|widget| widget.text.starts_with("Placing"))
+                .unwrap()
+                .layout;
+            assert!(shared.ui.shared_field.unwrap().y < placing.y, "{case}");
+            if logical.0 >= 1280 {
+                assert_eq!(
+                    banner.as_deref(),
+                    (name == "unsupported glyph")
+                        .then_some("Unsupported text: 1 marks / fields read-only"),
+                    "{case}"
+                );
+            }
+        }
+    }
+}
+
+/// The filter's field is compiled first and the editor's frame fitted to
+/// leave its quads and raster samples free, as for the drafts; below the
+/// field alone editing pauses with the filter kept.
+#[test]
+fn a_filter_frame_leaves_room_for_the_shared_field_and_pauses_without_it() {
+    let (_temporary, mut app) = filtering(FieldImplementation::Shared, (960, 640), 1, |app| {
+        app.tools.input("la").unwrap();
+    });
+    let app = &mut app;
+    let full = crate::prototype::workspace_presentation(app).unwrap();
+    let field = crate::prototype::prepare_shared_field(app)
+        .unwrap()
+        .unwrap();
+    let (quads, samples) = (field.quads(), field.raster_samples());
+    let all = full.scene.quads();
+    let editor: Vec<_> = all
+        .iter()
+        .copied()
+        .filter(|quad| quad.semantic_id.0 < SHARED_FIRST_SEMANTIC)
+        .collect();
+    // The field's counts are exactly what it adds to the frame.
+    assert_eq!(all.len() - editor.len(), quads);
+    let total = raster_samples(&full.scene, all);
+    assert_eq!(raster_samples(&full.scene, &editor) + samples, total);
+    // Exactly enough room: drawn whole.
+    app.frame_limits.maximum_quads = all.len();
+    app.frame_limits.maximum_raster_samples = total;
+    let fitted = crate::prototype::workspace_presentation(app).unwrap();
+    assert_eq!(fitted.scene.quads(), all);
+    // One more quad or sample than needed: drawn whole too.
+    for spare in [(1, 0), (0, 1)] {
+        app.frame_limits = tilewright_scene::SceneLimits {
+            maximum_quads: all.len() + spare.0,
+            maximum_raster_samples: total + spare.1,
+            ..tilewright_scene::SceneLimits::default()
+        };
+        let fitted = crate::prototype::workspace_presentation(app).unwrap();
+        assert_eq!(fitted.scene.quads(), all, "{spare:?}");
+    }
+    // One quad or one sample short: the field's share is set aside first,
+    // so the editor's own frame gives way within the rest, or is what does
+    // not fit; the field is never drawn over the budget.
+    for short in [(1, 0), (0, 1)] {
+        app.frame_limits = tilewright_scene::SceneLimits {
+            maximum_quads: all.len() - short.0,
+            maximum_raster_samples: total - short.1,
+            ..tilewright_scene::SceneLimits::default()
+        };
+        app.refresh_ui();
+        match crate::prototype::workspace_presentation(app) {
+            Ok(fitted) => {
+                assert!(field_drawn(&fitted.scene), "{short:?}");
+                assert!(fitted.scene.quads().len() <= all.len() - short.0);
+                assert!(raster_samples(&fitted.scene, fitted.scene.quads()) <= total - short.1);
+            }
+            Err(error) => assert!(
+                error.contains("LimitExceeded") && !error.starts_with("shared field"),
+                "{short:?}: {error}"
+            ),
+        }
+        assert!(app.tools.shared_draft().is_some(), "the filter keeps focus");
+        assert_eq!(app.tools.palette_filter(), "la");
+    }
+    // Less than the field alone: the editor's share is nothing, so its
+    // frame is refused and editing pauses with the filter kept.
+    app.frame_limits = tilewright_scene::SceneLimits {
+        maximum_raster_samples: samples - 1,
+        ..tilewright_scene::SceneLimits::default()
+    };
+    let error = crate::prototype::workspace_presentation(app).err().unwrap();
+    assert!(
+        error.contains("LimitExceeded") && !error.starts_with("shared field"),
+        "{error}"
+    );
+    assert_eq!(app.tools.palette_filter(), "la", "the filter is kept");
+    assert!(app.tools.shared_draft().is_some());
+    app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::Present,
+        &error,
+    ));
+    // The first Esc clears and releases the filter; the pause stays. A
+    // second Esc ends it, and the field is drawn again.
+    let mut input = crate::native_input::NativeInput::new(7);
+    let mut clipboard = String::new();
+    let escape = input_key(7, Keycode::Escape, false);
+    route(app, &mut input, &escape, &mut clipboard).unwrap();
+    assert_eq!(
+        (app.tools.palette_filter(), app.tools.filter_focused()),
+        ("", false)
+    );
+    assert!(app.blocked.is_some());
+    let _ = route(app, &mut input, &escape, &mut clipboard);
+    assert!(app.blocked.is_none());
+    app.frame_limits = tilewright_scene::SceneLimits::default();
+    app.control(Control::PaletteFilter).unwrap();
+    acknowledge_ui(app);
+    let again = crate::prototype::workspace_presentation(app).unwrap();
+    assert!(field_drawn(&again.scene));
+}
+
+/// The road fence and the pause treat the filter the same with the switch
+/// on: while a road is drawn the filter cannot be focused; while editing is
+/// paused it is focused, edited, released and cleared as without the
+/// shared field, and never makes a change.
+#[test]
+fn the_road_fence_and_the_pause_treat_the_filter_the_same_with_either_field() {
+    use crate::prototype::ROAD_IN_PROGRESS;
+    let mut outcomes = Vec::new();
+    for implementation in FieldImplementation::ALL {
+        let (_temporary, mut app) = super::road::road_application(1, |_| {});
+        if implementation == FieldImplementation::Shared {
+            app.share_string_field().unwrap();
+        }
+        super::road::click(&mut app, [0, 0]).unwrap();
+        assert!(app.tools.road().is_some());
+        assert_eq!(
+            app.control(Control::PaletteFilter).unwrap_err(),
+            ROAD_IN_PROGRESS
+        );
+        let mut input = crate::native_input::NativeInput::new(7);
+        let mut clipboard = String::new();
+        for key in [Keycode::Slash, Keycode::KpDivide] {
+            route(
+                &mut app,
+                &mut input,
+                &input_key(7, key, false),
+                &mut clipboard,
+            )
+            .unwrap();
+        }
+        assert!(!app.tools.filter_focused());
+        assert!(app.tools.draft_text().is_none());
+        assert_eq!(super::road::points(&app), [[0, 0]]);
+        // Paused: the filter is still local view state.
+        let (_temporary, mut app) = filtering(implementation, (960, 640), 1, |app| {
+            app.tools.input("la").unwrap();
+        });
+        app.blocked = Some(crate::prototype::Blocked::new(
+            crate::prototype::BlockCause::Present,
+            "test",
+        ));
+        let mut input = crate::native_input::NativeInput::new(7);
+        let mut clipboard = String::new();
+        let mut steps = Vec::new();
+        for event in [
+            text("m"),
+            input_key(7, Keycode::Return, true),
+            input_key(7, Keycode::Return, false),
+            input_key(7, Keycode::Slash, false),
+            text("p"),
+            preedit("x", 1, 0),
+            input_key(7, Keycode::Escape, false),
+            input_key(7, Keycode::Escape, false),
+        ] {
+            let result = route(&mut app, &mut input, &event, &mut clipboard);
+            steps.push((
+                result,
+                app.tools.palette_filter().to_owned(),
+                app.tools.filter_focused(),
+                app.tools.is_composing(),
+                app.tools.shared_draft().is_some(),
+                app.session.history().pending().is_none(),
+            ));
+            acknowledge_ui(&mut app);
+        }
+        outcomes.push(steps);
+    }
+    // The same results, text and focus; only which field edits differs.
+    let strip = |steps: &[(Result<(), String>, String, bool, bool, bool, bool)]| {
+        steps
+            .iter()
+            .map(|(result, text, focused, composing, _, nothing)| {
+                (result.clone(), text.clone(), *focused, *composing, *nothing)
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(strip(&outcomes[0]), strip(&outcomes[1]), "{outcomes:#?}");
+    for (step, (_, _, focused, _, shared, _)) in outcomes[1].iter().enumerate() {
+        assert_eq!(shared, focused, "step {step}");
+    }
+    // Typing, Enter, `/`, a composition and Esc work as when not paused.
+    let expected = [
+        ("lam", true, false),
+        ("lam", true, false),
+        ("lam", false, false),
+        ("lam", true, false),
+        ("lamp", true, false),
+        ("lamp", true, true),
+        ("lamp", true, false),
+        ("", false, false),
+    ];
+    for (step, ((result, text, focused, composing, _, nothing), expected)) in
+        outcomes[0].iter().zip(expected).enumerate()
+    {
+        assert_eq!(result, &Ok(()), "step {step}");
+        assert_eq!(
+            (text.as_str(), *focused, *composing),
+            expected,
+            "step {step}"
+        );
+        assert!(nothing, "step {step}: the filter never makes a change");
+    }
 }
