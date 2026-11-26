@@ -102,6 +102,8 @@ pub enum Control {
     FavouriteStar,
     /// Move the mode's chosen value one place up its favourites.
     FavouriteRaise,
+    /// Remove this favourite, which the catalog does not grant.
+    FavouriteRemove(tilewright_editor_ui::favourites::Favourite),
     /// The Place palette filter field, unfocused: focus it.
     PaletteFilter,
     EditDraft,

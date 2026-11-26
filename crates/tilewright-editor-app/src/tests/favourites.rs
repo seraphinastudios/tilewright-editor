@@ -12,7 +12,7 @@ use crate::prototype::favourites_view::{self, Personal};
 use crate::workspace_ui::{Control, WorkspaceUi};
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 use tilewright_editor_ui::Action;
-use tilewright_editor_ui::favourites::{FORMAT, Favourites};
+use tilewright_editor_ui::favourites::{FORMAT, Favourite, Favourites};
 use tilewright_editor_ui::tools::TerrainChoice;
 use tilewright_source::SourceRoot;
 
@@ -162,7 +162,7 @@ fn choosing_a_favourite_prepares_byte_for_byte_what_the_catalog_row_prepares() {
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn favourites_come_first_and_ungranted_ones_are_disabled_with_the_reason() {
+fn favourites_come_first_and_ungranted_ones_only_offer_their_removal() {
     let file = format!(
         r#"{{"format": "{FORMAT}", "terrain": [{{"grid": "floor", "value": "lava"}}, {{"grid": "floor", "value": "sand"}}], "scatter": ["dunes", "speckle"], "objects": ["tree", "stone"]}}"#
     );
@@ -189,9 +189,24 @@ fn favourites_come_first_and_ungranted_ones_are_disabled_with_the_reason() {
     assert_eq!(
         section,
         [
-            ("Not granted: floor / lava".into(), None, false, false),
+            (
+                "Remove floor / lava (not granted)".into(),
+                Some(Control::FavouriteRemove(Favourite::Terrain(
+                    TerrainChoice {
+                        grid: "floor".into(),
+                        prototype: "lava".into()
+                    }
+                ))),
+                true,
+                false
+            ),
             sand_row.clone(),
-            ("Not granted: scatter dunes".into(), None, false, false),
+            (
+                "Remove scatter dunes".into(),
+                Some(Control::FavouriteRemove(Favourite::Scatter("dunes".into()))),
+                true,
+                false
+            ),
             speckle_row.clone(),
             (
                 favourites_view::STAR.into(),
@@ -235,7 +250,12 @@ fn favourites_come_first_and_ungranted_ones_are_disabled_with_the_reason() {
     let header = laid.iter().position(|row| row.0 == "Favourites").unwrap();
     assert_eq!(
         laid[header + 1],
-        ("Not granted: tree".into(), None, false, false)
+        (
+            "Remove tree (not granted)".into(),
+            Some(Control::FavouriteRemove(Favourite::Object("tree".into()))),
+            true,
+            false
+        )
     );
     assert_eq!(
         laid[header + 2],
@@ -566,8 +586,7 @@ fn the_section_fits_at_1280x800_720x480_and_twice_the_pixels() {
             assert!(seen.contains("Favourites"), "{logical:?} {mode:?}");
             assert!(
                 seen.iter()
-                    .any(|text| text.starts_with(favourites_view::NOT_GRANTED)
-                        && text.ends_with("vvv")),
+                    .any(|text| text.starts_with(favourites_view::REMOVE) && text.ends_with("vvv")),
                 "{logical:?} {mode:?} {seen:?}"
             );
             let star = if mode == Control::Terrain {
@@ -578,4 +597,140 @@ fn the_section_fits_at_1280x800_720x480_and_twice_the_pixels() {
             assert!(seen.contains(star), "{logical:?} {mode:?} {seen:?}");
         }
     }
+}
+
+#[test]
+fn an_ungranted_favourite_is_removed_from_its_own_row_and_nothing_else_is() {
+    let file = format!(
+        r#"{{"format": "{FORMAT}", "terrain": [{{"grid": "floor", "value": "sand"}}], "objects": ["tree", "stone"]}}"#
+    );
+    let (temporary, mut app) = favourite_application(Some(file.as_bytes()));
+    let saved = temporary
+        .path()
+        .join("palettes")
+        .join(favourites_view::saved_name(1));
+    app.control(Control::Place).unwrap();
+    let tree = Control::FavouriteRemove(Favourite::Object("tree".into()));
+    // A real click on the row removes it, and only it.
+    click_first(&mut app, &tree);
+    let left = Favourites {
+        terrain: vec![sand()],
+        objects: vec!["stone".into()],
+        ..Favourites::default()
+    };
+    assert_eq!(fs::read(&saved).unwrap(), left.encode());
+    assert!(!rows(&mut app).iter().any(|row| row.1 == Some(tree.clone())));
+    // A granted favourite, or one not in the lists, is not removed this way.
+    for control in [
+        Control::FavouriteRemove(Favourite::Object("stone".into())),
+        Control::FavouriteRemove(Favourite::Object("tree".into())),
+        Control::FavouriteRemove(Favourite::Terrain(sand())),
+    ] {
+        let error = app.control(control).unwrap_err();
+        assert!(error.contains("does not grant"), "{error}");
+    }
+    assert_eq!(app.favourites.as_ref().unwrap().saves(), 1);
+    assert_eq!(app.favourites.as_ref().unwrap().lists().unwrap(), &left);
+    assert!(app.session.history().pending().is_none());
+}
+
+#[test]
+fn the_last_of_9999_saves_is_written_and_the_next_is_refused() {
+    let (temporary, mut app) = favourite_application(Some(&Favourites::default().encode()));
+    let directory = temporary.path().join("palettes");
+    app.favourites
+        .as_mut()
+        .unwrap()
+        .set_saves(favourites_view::MAXIMUM_SAVES - 1);
+    app.control(Control::Place).unwrap();
+    app.control(Control::FavouriteStar).unwrap();
+    // Four digits, as the helper copies back.
+    assert!(directory.join("favourites-9999.json").exists());
+    let error = app.control(Control::FavouriteStar).unwrap_err();
+    assert_eq!(
+        error,
+        "Favourites not saved: this session already wrote 9999 favourites files"
+    );
+    assert!(!directory.join("favourites-10000.json").exists());
+    assert_eq!(
+        app.favourites.as_ref().unwrap().lists().unwrap().objects,
+        ["bush"]
+    );
+}
+
+#[test]
+fn the_directory_is_checked_again_before_every_save() {
+    let (temporary, mut app) = favourite_application(Some(&Favourites::default().encode()));
+    let directory = temporary.path().join("palettes");
+    app.control(Control::Place).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o750)).unwrap();
+    let error = app.control(Control::FavouriteStar).unwrap_err();
+    assert!(error.contains("changed"), "{error}");
+    assert!(!directory.join(favourites_view::saved_name(1)).exists());
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+    app.control(Control::FavouriteStar).unwrap();
+    assert!(directory.join(favourites_view::saved_name(1)).exists());
+    // The checks themselves: mode, owner, file system, and a sync that
+    // could not be made durable.
+    let access = tilewright_source::Access {
+        mode: 0o700,
+        user: owner(&directory),
+        group: 0,
+        control: [0; 32],
+    };
+    assert!(favourites_view::private(access, None).is_ok());
+    let open = tilewright_source::Access {
+        mode: 0o755,
+        ..access
+    };
+    assert!(
+        favourites_view::private(open, None)
+            .unwrap_err()
+            .contains("mode exactly 0700")
+    );
+    let foreign = tilewright_source::Access {
+        user: access.user + 1,
+        ..access
+    };
+    assert!(
+        favourites_view::private(foreign, None)
+            .unwrap_err()
+            .contains("current user's")
+    );
+    assert!(
+        favourites_view::private(access, Some("nfs"))
+            .unwrap_err()
+            .contains("not on a checked local file system")
+    );
+    assert!(favourites_view::synced(true).is_ok());
+    assert_eq!(
+        favourites_view::synced(false).unwrap_err(),
+        "the palettes directory could not be synced"
+    );
+}
+
+/// The owner of `path`: this user, as `Access::new_file` names it.
+fn owner(path: &Path) -> u32 {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path).unwrap().uid()
+}
+
+#[test]
+fn starring_while_a_road_is_drawn_keeps_the_road() {
+    let (temporary, mut app) = super::road::road_application(5, |_| {});
+    let directory = palettes_directory(temporary.path(), &Favourites::default().encode());
+    app.favourites = Some(Personal::open(SourceRoot::new(&directory)).unwrap());
+    super::road::click(&mut app, [0, 1]).unwrap();
+    super::road::click(&mut app, [3, 1]).unwrap();
+    let points = app.tools.road().unwrap().points().to_vec();
+    app.control(Control::FavouriteStar).unwrap();
+    assert_eq!(app.tools.road().unwrap().points(), points.as_slice());
+    assert_eq!(
+        fs::read(directory.join(favourites_view::saved_name(1))).unwrap(),
+        Favourites {
+            terrain: vec![sand()],
+            ..Favourites::default()
+        }
+        .encode()
+    );
 }

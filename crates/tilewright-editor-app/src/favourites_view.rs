@@ -23,9 +23,12 @@ pub(super) const FILE: &str = "favourites.json";
 pub(super) const MAXIMUM_SAVES: u32 = 9999;
 pub(super) const HEADER: &str = "Favourites";
 pub(super) const EMPTY: &str = "None yet: choose, then Star";
-/// Before a favourite this catalog does not grant, and the line above why
-/// a malformed file was ignored.
-pub(super) const NOT_GRANTED: &str = "Not granted: ";
+/// After a favourite this catalog does not grant, where the row has room.
+pub(super) const NOT_GRANTED: &str = " (not granted)";
+/// A favourite this catalog does not grant cannot be chosen, so its row
+/// removes it instead.
+pub(super) const REMOVE: &str = "Remove ";
+/// The line above why a malformed file was ignored.
 pub(super) const IGNORED: &str = "Favourites file ignored:";
 /// About as many characters of the ignored file's reason as a sidebar row
 /// holds; a longer word is still elided when laid out.
@@ -70,6 +73,40 @@ fn detail(error: &AccessError) -> String {
     }
 }
 
+/// Why the palettes directory is not this user's alone on a checked local
+/// file system, if it is not: what [`Personal::open`] and every write check.
+pub(super) fn private(access: Access, unchecked: Option<&str>) -> Result<()> {
+    if access.mode != 0o700 || access.user != access.new_file().user {
+        return Err(
+            "the palettes directory must be the current user's with mode exactly 0700, without access control lists".into(),
+        );
+    }
+    if unchecked.is_some() {
+        return Err("the palettes directory is not on a checked local file system".into());
+    }
+    Ok(())
+}
+
+/// A directory sync's outcome: `false` means the new name may not last.
+pub(super) fn synced(outcome: bool) -> Result<()> {
+    if outcome {
+        Ok(())
+    } else {
+        Err("the palettes directory could not be synced".into())
+    }
+}
+
+/// What a favourites control does to the lists.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum Change {
+    /// Star or unstar the mode's chosen value.
+    Star,
+    /// Move the mode's chosen value one place up.
+    Raise,
+    /// Remove a favourite this catalog does not grant.
+    Remove(Favourite),
+}
+
 /// The session's favourites: the directory, held locked, and the lists, or
 /// why the file was ignored.
 pub(super) struct Personal {
@@ -96,20 +133,14 @@ impl Personal {
         let access = directory
             .own_access()
             .map_err(|error| refuse(detail(&error)))?;
-        if access.mode != 0o700 || access.user != access.new_file().user {
-            return Err(refuse(
-                "the palettes directory must be the current user's with mode exactly 0700, without access control lists".into(),
-            ));
-        }
-        if directory
-            .unchecked_file_system(&Mounts::read())
-            .map_err(|error| refuse(detail(&error)))?
-            .is_some()
-        {
-            return Err(refuse(
-                "the palettes directory is not on a checked local file system".into(),
-            ));
-        }
+        private(
+            access,
+            directory
+                .unchecked_file_system(&Mounts::read())
+                .map_err(|error| refuse(detail(&error)))?
+                .as_deref(),
+        )
+        .map_err(refuse)?;
         let lock = root.lock().map_err(|error| refuse(detail(&error)))?;
         match directory
             .access(FILE)
@@ -151,6 +182,12 @@ impl Personal {
         self.saves
     }
 
+    /// As if this session had already written `saves` files.
+    #[cfg(test)]
+    pub(super) fn set_saves(&mut self, saves: u32) {
+        self.saves = saves;
+    }
+
     /// The start-up line: what was read, by count only, or why it was
     /// ignored.
     pub(super) fn summary(&self) -> String {
@@ -167,7 +204,8 @@ impl Personal {
 
     /// Writes `next` as the session's next new file (create-only: a file
     /// already at that name is never replaced) and syncs the directory;
-    /// only then are they the session's lists.
+    /// only then are they the session's lists. The directory is checked
+    /// again first, as the proposal store checks its own on every write.
     fn retain(&mut self, next: Favourites) -> Result<()> {
         if self.lists.is_err() {
             return Err("the favourites file was ignored, so nothing is saved".into());
@@ -184,6 +222,17 @@ impl Personal {
             .directory("", false)
             .map_err(|error| detail(&error))?
             .ok_or("the palettes directory is missing")?;
+        let now = directory.own_access().map_err(|error| detail(&error))?;
+        if now != self.access {
+            return Err("the palettes directory's owner, mode or labels changed".into());
+        }
+        private(
+            now,
+            directory
+                .unchecked_file_system(&Mounts::read())
+                .map_err(|error| detail(&error))?
+                .as_deref(),
+        )?;
         directory
             .create(&name, Some(&self.access.new_file()), &next.encode())
             .map_err(|error| {
@@ -193,9 +242,7 @@ impl Personal {
                     detail(&error)
                 }
             })?;
-        if !directory.sync().map_err(|error| detail(&error))? {
-            return Err("the palettes directory could not be synced".into());
-        }
+        synced(directory.sync().map_err(|error| detail(&error))?)?;
         self.saves = index;
         self.lists = Ok(next);
         Ok(())
@@ -225,27 +272,38 @@ impl Application {
         }
     }
 
-    /// Stars or unstars the chosen value, or moves it up, and writes the
-    /// lists back. A refusal leaves the lists as they were.
-    pub(super) fn favourite_control(&mut self, raise: bool) -> Result<()> {
+    /// Stars or unstars the chosen value, moves it up, or removes an
+    /// ungranted favourite, and writes the lists back. A refusal leaves the
+    /// lists as they were.
+    pub(super) fn favourite_control(&mut self, change: &Change) -> Result<()> {
         let refuse = |reason: String| format!("Favourites not saved: {reason}");
         let Some(personal) = self.favourites.as_ref() else {
             return Err(refuse("this session has no favourites file".into()));
-        };
-        let Some(chosen) = self.chosen_favourite() else {
-            return Err(refuse("choose a value first".into()));
         };
         let mut next = personal
             .lists()
             .map_err(|_| refuse("the favourites file was ignored, so nothing is saved".into()))?
             .clone();
-        if raise {
-            if !next.raise(&chosen) {
-                return Err(refuse("it is already first, or not a favourite".into()));
+        if let Change::Remove(favourite) = change {
+            if favourite.granted(self.session.catalog()) || next.position(favourite).is_none() {
+                return Err(refuse(
+                    "only a favourite this catalog does not grant is removed here".into(),
+                ));
             }
-        } else {
-            next.toggle(&chosen)
+            next.toggle(favourite)
                 .map_err(|error| refuse(error.to_string()))?;
+        } else {
+            let Some(chosen) = self.chosen_favourite() else {
+                return Err(refuse("choose a value first".into()));
+            };
+            if *change == Change::Raise {
+                if !next.raise(&chosen) {
+                    return Err(refuse("it is already first, or not a favourite".into()));
+                }
+            } else {
+                next.toggle(&chosen)
+                    .map_err(|error| refuse(error.to_string()))?;
+            }
         }
         self.favourites
             .as_mut()
@@ -296,10 +354,19 @@ impl Application {
                     rows.len(),
                     IdText::Id {
                         id: name.clone(),
-                        variants: vec![(NOT_GRANTED.into(), String::new())],
+                        variants: vec![
+                            (REMOVE.into(), NOT_GRANTED.into()),
+                            (REMOVE.into(), String::new()),
+                        ],
                     },
                 ));
-                rows.push((format!("{NOT_GRANTED}{name}"), None, false, false));
+                // It cannot be chosen; its one control removes it.
+                rows.push((
+                    format!("{REMOVE}{name}{NOT_GRANTED}"),
+                    Some(Control::FavouriteRemove(favourite.clone())),
+                    true,
+                    false,
+                ));
                 continue;
             }
             match favourite {

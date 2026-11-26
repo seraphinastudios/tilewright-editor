@@ -100,15 +100,19 @@ their Favourites section, and nothing is written back. The reason names
 only the rule broken, never what the file says.
 
 `tools/provision-prototype.py --palettes FILE` checks the file before
-anything is created (a regular file, not a link, at most 64 KiB), copies
-its bytes as `favourites.json` into a private `palettes/` child of the
-session (0700, the file 0600, synced), records only its size and SHA-256
-in the receipt (`"palettes": {"bytes": …, "sha256": …}`: never its path,
-name or contents) and passes that directory to the editor with
-`--palettes-fd`. The editor checks the directory as a proposal directory
-is checked (this user's, mode exactly 0700, no access control list, a
-checked local file system), takes its lock, and refuses a missing or linked
-`favourites.json` or one that is not 0600. The scripted demonstration makes
+anything is created (a regular file, not a link, at most 64 KiB, in a
+directory that is not itself a link) and keeps that directory open for the
+copy back. It copies the bytes as `favourites.json` into a private
+`palettes/` child of the session (0700, the file 0600, synced), records in
+the receipt only that a file was given and its size
+(`"palettes": {"given": true, "bytes": …}`), and passes that directory to
+the editor with `--palettes-fd`. The receipt carries no digest: a small
+file of a catalog's values is easy to rebuild from its SHA-256 by trying
+the lists the catalog allows, so a digest would not keep the lists private.
+The editor checks the directory as a proposal directory is checked (this
+user's, mode exactly 0700, no access control list, a checked local file
+system) when it opens it and again before every write, takes its lock, and
+refuses a missing or linked `favourites.json` or one that is not 0600. The scripted demonstration makes
 evidence frames, which favourites never reach, so the helper and the editor
 refuse `--palettes` with `--demo-script` (and so with `--reference`).
 
@@ -121,8 +125,10 @@ control: choosing it is choosing that value in the catalog's list, so what
 the brush, Fill, Replace, a scatter stroke or a placement prepares is byte
 for byte the same, and nothing about favourites is recorded in the change,
 the recovery records or a proposal step. A favourite this catalog does not
-grant (the catalog changed, or another world) is shown disabled as
-"Not granted: <value>"; the file still loads, and the entry is kept.
+grant (the catalog changed, or another world) cannot be chosen: its row
+reads "Remove <value> (not granted)" (just "Remove <value>" where the row
+is narrow), and its one action removes it from the list, written back as
+any other change. The file still loads, and the entry stays until removed.
 
 Below them, "Star the chosen value" adds the mode's chosen value (the
 chosen terrain or scatter palette, or the prototype Place puts down) at the
@@ -136,19 +142,38 @@ synced; only then is it the session's list, and the section says
 already taken, more than 9,999 changes, a disk error) is refused with its
 reason and changes nothing. `favourites.json` itself is never written.
 
-When the editor ends (however it ends), the helper copies the newest
-`favourites-NNNN.json` back to `FILE`. It does so only when that is safe:
-the saved file must be a private (0600) regular file of this user, at most
-64 KiB, of the favourites format; and `FILE` must still be the very file
-the session copied in (the same file, with the same bytes), so nothing the
-person or another session changed meanwhile is lost. The bytes go to a new
-file beside `FILE` (exclusive create, with `FILE`'s mode), synced, then
-renamed over `FILE` in one step and the directory synced. Otherwise
-`FILE` is left alone and the helper's last line says where the session's
-copy is, to copy by hand: `{"palettes": {"returned": false, "kept":
-"<session>/palettes/favourites-000N.json", "reason": …}}`. With no change
-it says `"the editor saved no change"`. Without `--editor` (provision only)
-nothing is copied back.
+When the editor ends, the helper copies the newest `favourites-NNNN.json`
+back to `FILE`: after a normal quit, after the editor fails, and when the
+helper gets SIGINT (a terminal's Ctrl-C), SIGTERM or SIGHUP while the
+editor runs. It passes those signals on to the editor rather than ending
+itself, waits for the editor to quit, then copies back. (SIGKILL of the
+helper skips the copy back; the session's copy stays.) Every step goes
+through the directory kept open at provisioning, never through the path
+again. It replaces `FILE` only when:
+
+- the saved file is a private (0600) regular file of this user, at most
+  64 KiB, of the favourites format;
+- `FILE` is still the file the session copied in: the same file (device and
+  inode) with the same bytes, checked just before a stage is made;
+- `FILE` is owned by this user and has the owner's write bit (a person can
+  freeze their favourites with `chmod a-w`).
+
+The bytes go to a new file beside `FILE` (exclusive create, with `FILE`'s
+mode), synced; `FILE`'s identity is checked once more, then the new file is
+renamed over it and the directory synced. This guards against `FILE` being
+replaced, removed or edited at any time before those checks. It does not
+guard against an edit in the instant between the last check and the
+rename: that edit is overwritten.
+
+Otherwise `FILE` is left alone and the helper's last line says where the
+session's copy is, to copy by hand, with a fixed reason word and nothing
+from `FILE`'s path or contents: `{"palettes": {"returned": false, "kept":
+"<session>/palettes/favourites-000N.json", "reason": "target_changed"}}`.
+The words are `no_change` and `same_bytes` (nothing to copy back, so no
+`kept`), `saved_invalid`, `target_changed`, `not_writable`, `stage_exists`,
+`permission` and `io_error`. A copy back that succeeded says
+`{"palettes": {"returned": true, "from": "favourites-000N.json"}}`.
+Without `--editor` (provision only) nothing is copied back.
 
 The helper never adopts existing state, changes permissions
 on owner directories or deletes failed sessions. Inspect and preserve them;

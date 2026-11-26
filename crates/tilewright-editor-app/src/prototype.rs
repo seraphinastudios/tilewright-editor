@@ -4472,8 +4472,11 @@ impl Application {
             }
             Control::GradeRoad(grade) => self.grade_road(grade),
             Control::ScatterPalette(name) => self.choose_scatter_palette(&name),
-            Control::FavouriteStar => self.favourite_control(false),
-            Control::FavouriteRaise => self.favourite_control(true),
+            Control::FavouriteStar => self.favourite_control(&favourites_view::Change::Star),
+            Control::FavouriteRaise => self.favourite_control(&favourites_view::Change::Raise),
+            Control::FavouriteRemove(favourite) => {
+                self.favourite_control(&favourites_view::Change::Remove(favourite))
+            }
             Control::Palette { grid, prototype } => {
                 self.tools
                     .choose_terrain(self.session.catalog(), &grid, &prototype)
@@ -6801,6 +6804,7 @@ fn road_allows(control: &Control) -> bool {
             | Control::ScatterPalette(_)
             | Control::FavouriteStar
             | Control::FavouriteRaise
+            | Control::FavouriteRemove(_)
             | Control::Clear
             | Control::Accept
             | Control::Cancel
