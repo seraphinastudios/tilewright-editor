@@ -2267,6 +2267,9 @@ mod road;
 #[path = "road_grade.rs"]
 mod road_grade;
 
+#[path = "favourites.rs"]
+mod favourites;
+
 fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(fs::read(path).unwrap()))
         .read_info()

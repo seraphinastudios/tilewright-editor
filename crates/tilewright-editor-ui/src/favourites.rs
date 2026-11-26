@@ -28,8 +28,6 @@ pub const MAXIMUM_ENTRIES: usize = 32;
 pub const MAXIMUM_VALUE_BYTES: usize = 128;
 /// Most bytes of a scatter palette name, as the catalog bounds it.
 pub const MAXIMUM_SCATTER_BYTES: usize = tilewright_editor_preview::MAXIMUM_PALETTE_NAME_BYTES;
-/// Why a favourite the catalog does not grant is disabled.
-pub const NOT_GRANTED: &str = "not granted by this catalog";
 
 /// One favourite: a value of one of the catalog's lists.
 #[derive(Clone, Debug, Eq, PartialEq)]

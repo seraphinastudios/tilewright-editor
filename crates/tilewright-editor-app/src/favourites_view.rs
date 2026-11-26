@@ -13,7 +13,7 @@
 //! never reach frame evidence: the scripted demonstration refuses them.
 use super::{Application, IdText, Result, UiRows};
 use crate::workspace_ui::Control;
-use tilewright_editor_ui::favourites::{Favourite, Favourites, MAXIMUM_BYTES, NOT_GRANTED};
+use tilewright_editor_ui::favourites::{Favourite, Favourites, MAXIMUM_BYTES};
 use tilewright_editor_ui::tools::ToolMode;
 use tilewright_source::{Access, AccessError, Mounts, SourceLock, SourceRoot};
 
@@ -22,7 +22,29 @@ pub(super) const FILE: &str = "favourites.json";
 /// Most files one session writes back: `favourites-0001.json` on.
 pub(super) const MAXIMUM_SAVES: u32 = 9999;
 pub(super) const HEADER: &str = "Favourites";
-pub(super) const EMPTY: &str = "None yet: choose a value, then Star";
+pub(super) const EMPTY: &str = "None yet: choose, then Star";
+/// Before a favourite this catalog does not grant, and the line above why
+/// a malformed file was ignored.
+pub(super) const NOT_GRANTED: &str = "Not granted: ";
+pub(super) const IGNORED: &str = "Favourites file ignored:";
+/// About as many characters of the ignored file's reason as a sidebar row
+/// holds; a longer word is still elided when laid out.
+const REASON_ROW: usize = 30;
+
+/// `reason` in rows of at most [`REASON_ROW`] characters, broken at spaces.
+fn reason_rows(reason: &str) -> Vec<String> {
+    let mut rows: Vec<String> = Vec::new();
+    for word in reason.split(' ') {
+        match rows.last_mut() {
+            Some(row) if row.chars().count() + 1 + word.chars().count() <= REASON_ROW => {
+                row.push(' ');
+                row.push_str(word);
+            }
+            _ => rows.push(word.to_owned()),
+        }
+    }
+    rows
+}
 pub(super) const STAR: &str = "Star the chosen value";
 pub(super) const UNSTAR: &str = "Unstar the chosen value";
 pub(super) const RAISE: &str = "Move it up the favourites";
@@ -249,7 +271,10 @@ impl Application {
         let lists = match personal.lists() {
             Ok(lists) => lists,
             Err(reason) => {
-                rows.push((format!("File ignored: {reason}"), None, false, false));
+                rows.push((IGNORED.into(), None, false, false));
+                for row in reason_rows(reason) {
+                    rows.push((row, None, false, false));
+                }
                 return;
             }
         };
@@ -263,10 +288,18 @@ impl Application {
             if !favourite.granted(catalog) {
                 let name = match favourite {
                     Favourite::Terrain(choice) => format!("{} / {}", choice.grid, choice.prototype),
-                    Favourite::Scatter(name) => format!("Scatter {name}"),
+                    Favourite::Scatter(name) => format!("scatter {name}"),
                     Favourite::Object(name) => name.clone(),
                 };
-                rows.push((format!("{name}: {NOT_GRANTED}"), None, false, false));
+                // Fitted later so the reason and the value's tail both stay.
+                fits.push((
+                    rows.len(),
+                    IdText::Id {
+                        id: name.clone(),
+                        variants: vec![(NOT_GRANTED.into(), String::new())],
+                    },
+                ));
+                rows.push((format!("{NOT_GRANTED}{name}"), None, false, false));
                 continue;
             }
             match favourite {
