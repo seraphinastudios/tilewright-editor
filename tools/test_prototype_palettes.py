@@ -256,6 +256,70 @@ class ReturnTests(unittest.TestCase):
         self.assert_kept(outcome, 'target_changed', newer)
         self.assertEqual(self.entries(), ['secret-favourites.json'])
 
+    def during_the_stage(self, change):
+        """return_palettes with `change` made while the stage is synced."""
+        real = os.fsync
+        calls = []
+
+        def hooked(fd):
+            calls.append(fd)
+            if len(calls) == 1:
+                change()
+            return real(fd)
+        with mock.patch.object(provision.os, 'fsync', side_effect=hooked):
+            return self.run_return()
+
+    def test_an_edit_in_place_while_the_stage_is_written_is_kept(self):
+        self.save('favourites-0001.json')
+        edited = PERSONAL + b' '
+        self.assert_kept(self.during_the_stage(lambda: self.target.write_bytes(edited)), 'target_changed', edited)
+
+    def test_a_file_removed_while_the_stage_is_written_is_kept_as_changed(self):
+        self.save('favourites-0001.json')
+        self.assert_kept(self.during_the_stage(self.target.unlink), 'target_changed', None)
+        self.assertEqual(self.entries(), [])
+
+    @unittest.skipIf(os.geteuid() == 0, 'root writes through directory modes')
+    def test_a_stage_that_cannot_be_removed_is_reported_with_fixed_words(self):
+        self.save('favourites-0001.json')
+
+        def change():
+            self.target.write_bytes(PERSONAL + b' ')
+            os.chmod(self.folder, 0o500)
+        outcome = self.during_the_stage(change)
+        self.assertEqual(outcome, {'returned': False, 'kept': str(self.palettes / 'favourites-0001.json'),
+                                   'reason': 'target_changed', 'stage_left': True})
+        self.assertEqual(len([name for name in self.entries() if '.tilewright-' in name]), 1)
+
+    def test_errors_after_the_stage_is_made_give_fixed_words_and_remove_it(self):
+        self.save('favourites-0001.json')
+        name = str(self.target)
+        cases = [(PermissionError(13, 'Permission denied', name), 'permission'),
+                 (OSError(5, 'Input/output error', name), 'io_error'),
+                 (RuntimeError(name), 'io_error')]
+        for error, word in cases:
+            with self.subTest(error=error), mock.patch.object(provision.os, 'rename', side_effect=error):
+                outcome = self.run_return()
+                self.assertEqual(outcome['reason'], word)
+                self.assertFalse(outcome['returned'])
+                self.assertEqual(self.target.read_bytes(), PERSONAL)
+                self.assertEqual(self.entries(), ['secret-favourites.json'])
+
+    def test_a_directory_that_cannot_be_synced_after_the_rename_says_so(self):
+        self.save('favourites-0001.json')
+        real = os.fsync
+        parent = self.original['directory']
+
+        def failing(fd):
+            if fd == parent:
+                raise OSError(5, 'Input/output error', str(self.target))
+            return real(fd)
+        with mock.patch.object(provision.os, 'fsync', side_effect=failing):
+            outcome = self.run_return()
+        self.assertEqual(outcome, {'returned': True, 'from': 'favourites-0001.json', 'synced': False,
+                                   'reason': 'io_error'})
+        self.assertEqual(self.target.read_bytes(), SAVED)
+
     def test_a_link_at_the_name_is_kept_and_never_followed(self):
         self.save('favourites-0001.json')
         copy = self.root / 'copy.json'
@@ -316,6 +380,27 @@ class ReturnTests(unittest.TestCase):
         os.rename(moved, self.folder)
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Linux signals')
+class SignalTests(unittest.TestCase):
+    def test_a_signal_before_the_editor_starts_is_passed_on_once_it_has(self):
+        real = subprocess.Popen
+        backs = []
+
+        def late(*args, **kwargs):
+            # Before Popen returns, so before the helper knows the child.
+            os.kill(os.getpid(), signal.SIGTERM)
+            return real(*args, **kwargs)
+        started = time.monotonic()
+        with mock.patch.object(provision.subprocess, 'Popen', side_effect=late):
+            code = provision.run_editor([sys.executable, '-c', 'import time; time.sleep(30)'], (),
+                                        lambda: backs.append(True))
+        self.assertEqual(code, -signal.SIGTERM)
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual(backs, [True])
+        # The helper's own handlers are back.
+        self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
+
 FAKE_EDITOR = r"""#!/usr/bin/env python3
 # Saves one change like the editor, then quits on a signal or with an exit
 # status, as asked.
@@ -333,6 +418,9 @@ for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
 code = os.environ.get('FAKE_EXIT')
 if code:
     sys.exit(int(code))
+if os.environ.get('FAKE_DIE'):
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGTERM)
 open(os.environ['FAKE_READY'], 'w').close()
 for _ in range(600):
     time.sleep(0.1)
@@ -397,6 +485,11 @@ class LaunchTests(unittest.TestCase):
                 self.wait_ready(helper, ready)
                 os.kill(helper.pid, number)
                 self.assertEqual(self.finish(helper, target), 0)
+
+    def test_an_editor_ended_by_a_signal_gives_the_shells_status(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
+            helper, _ready, target = self.launch(temporary, {'FAKE_DIE': '1'})
+            self.assertEqual(self.finish(helper, target), 128 + signal.SIGTERM)
 
     def test_an_editor_that_fails_still_has_its_change_copied_back(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:

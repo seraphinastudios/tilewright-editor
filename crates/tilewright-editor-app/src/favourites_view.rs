@@ -87,6 +87,21 @@ pub(super) fn private(access: Access, unchecked: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// The palettes directory's access, once [`private`] accepts it with the
+/// mount verdict for it: the one check [`Personal::open`] and every write
+/// make.
+pub(super) fn checked(directory: &tilewright_source::SourceDirectory) -> Result<Access> {
+    let access = directory.own_access().map_err(|error| detail(&error))?;
+    private(
+        access,
+        directory
+            .unchecked_file_system(&Mounts::read())
+            .map_err(|error| detail(&error))?
+            .as_deref(),
+    )?;
+    Ok(access)
+}
+
 /// A directory sync's outcome: `false` means the new name may not last.
 pub(super) fn synced(outcome: bool) -> Result<()> {
     if outcome {
@@ -130,17 +145,7 @@ impl Personal {
             .directory("", false)
             .map_err(|error| refuse(detail(&error)))?
             .ok_or_else(|| refuse("the palettes directory is missing".into()))?;
-        let access = directory
-            .own_access()
-            .map_err(|error| refuse(detail(&error)))?;
-        private(
-            access,
-            directory
-                .unchecked_file_system(&Mounts::read())
-                .map_err(|error| refuse(detail(&error)))?
-                .as_deref(),
-        )
-        .map_err(refuse)?;
+        let access = checked(&directory).map_err(refuse)?;
         let lock = root.lock().map_err(|error| refuse(detail(&error)))?;
         match directory
             .access(FILE)
@@ -222,17 +227,9 @@ impl Personal {
             .directory("", false)
             .map_err(|error| detail(&error))?
             .ok_or("the palettes directory is missing")?;
-        let now = directory.own_access().map_err(|error| detail(&error))?;
-        if now != self.access {
+        if checked(&directory)? != self.access {
             return Err("the palettes directory's owner, mode or labels changed".into());
         }
-        private(
-            now,
-            directory
-                .unchecked_file_system(&Mounts::read())
-                .map_err(|error| detail(&error))?
-                .as_deref(),
-        )?;
         directory
             .create(&name, Some(&self.access.new_file()), &next.encode())
             .map_err(|error| {
@@ -313,7 +310,7 @@ impl Application {
 
     /// The mode's favourites section, before its catalog lists, only with a
     /// favourites file: each favourite as the catalog row of the same value
-    /// (or disabled, with the reason, when this catalog does not grant it),
+    /// (or, when this catalog does not grant it, a row that only removes it),
     /// then the star row and, for a starred value below the first, the row
     /// that moves it up.
     pub(super) fn favourite_rows(

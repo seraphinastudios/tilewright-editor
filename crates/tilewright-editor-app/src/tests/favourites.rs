@@ -3,9 +3,9 @@
 
 //! A person's favourites in the desktop, through real SDL pointer events on
 //! the CPU scene path: shown first, chosen as the catalog value they repeat
-//! (so the prepared change is byte for byte the catalog row's), disabled
-//! when this catalog does not grant them, ignored as a whole when
-//! malformed, and written back only as new files in the session.
+//! (so the prepared change is byte for byte the catalog row's), only
+//! removable when this catalog does not grant them, ignored as a whole
+//! when malformed, and written back only as new files in the session.
 use super::{BRUSH_WINDOW, acknowledge_ui, cell_pixel, delete_application};
 use crate::prototype::Application;
 use crate::prototype::favourites_view::{self, Personal};
@@ -665,7 +665,7 @@ fn the_directory_is_checked_again_before_every_save() {
     app.control(Control::Place).unwrap();
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o750)).unwrap();
     let error = app.control(Control::FavouriteStar).unwrap_err();
-    assert!(error.contains("changed"), "{error}");
+    assert!(error.contains("mode exactly 0700"), "{error}");
     assert!(!directory.join(favourites_view::saved_name(1)).exists());
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
     app.control(Control::FavouriteStar).unwrap();
@@ -716,21 +716,56 @@ fn owner(path: &Path) -> u32 {
 }
 
 #[test]
-fn starring_while_a_road_is_drawn_keeps_the_road() {
+fn starring_and_removing_while_a_road_is_drawn_keep_the_road() {
     let (temporary, mut app) = super::road::road_application(5, |_| {});
-    let directory = palettes_directory(temporary.path(), &Favourites::default().encode());
+    let file = format!(r#"{{"format": "{FORMAT}", "scatter": ["dunes"]}}"#);
+    let directory = palettes_directory(temporary.path(), file.as_bytes());
     app.favourites = Some(Personal::open(SourceRoot::new(&directory)).unwrap());
     super::road::click(&mut app, [0, 1]).unwrap();
     super::road::click(&mut app, [3, 1]).unwrap();
     let points = app.tools.road().unwrap().points().to_vec();
     app.control(Control::FavouriteStar).unwrap();
+    app.control(Control::FavouriteRemove(Favourite::Scatter("dunes".into())))
+        .unwrap();
     assert_eq!(app.tools.road().unwrap().points(), points.as_slice());
     assert_eq!(
-        fs::read(directory.join(favourites_view::saved_name(1))).unwrap(),
+        fs::read(directory.join(favourites_view::saved_name(2))).unwrap(),
         Favourites {
             terrain: vec![sand()],
             ..Favourites::default()
         }
         .encode()
+    );
+}
+
+#[test]
+fn a_directory_on_an_unchecked_file_system_is_refused() {
+    // Wherever this machine has one (a container's overlay root); a CI
+    // runner whose writable directories are all checked has none.
+    let candidates = ["/var/tmp", "/tmp", "/dev/shm"];
+    let Some(base) = candidates.iter().find(|base| {
+        let Ok(probe) = tempfile::tempdir_in(base) else {
+            return false;
+        };
+        SourceRoot::new(probe.path())
+            .directory("", false)
+            .ok()
+            .flatten()
+            .and_then(|directory| {
+                directory
+                    .unchecked_file_system(&tilewright_source::Mounts::read())
+                    .ok()
+            })
+            .flatten()
+            .is_some()
+    }) else {
+        return;
+    };
+    let temporary = tempfile::tempdir_in(base).unwrap();
+    let directory = palettes_directory(temporary.path(), &Favourites::default().encode());
+    let error = Personal::open(SourceRoot::new(&directory)).err().unwrap();
+    assert!(
+        error.contains("not on a checked local file system"),
+        "{error}"
     );
 }

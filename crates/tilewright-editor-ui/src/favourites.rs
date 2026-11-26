@@ -11,7 +11,8 @@
 //! new is recorded, and proposals, MCP and replay are unchanged. The file's
 //! shape is strict, closed and bounded; a file that breaks it is refused as
 //! a whole, with a reason that never quotes its contents. An entry the
-//! current catalog does not grant still loads, and is shown disabled.
+//! current catalog does not grant still loads; it cannot be chosen, only
+//! removed.
 use std::fmt;
 use tilewright_editor_preview::PreviewCatalog;
 use tilewright_jsonc as jsonc;

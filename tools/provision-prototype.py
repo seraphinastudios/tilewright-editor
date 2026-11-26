@@ -175,6 +175,16 @@ def errno_code(error):
 
 
 def return_palettes(directory_fd, original, session):
+    """copy_back, with anything it did not foresee reported as the fixed
+    word io_error: no error's words (which can name the person's file) ever
+    reach the helper's output."""
+    try:
+        return copy_back(directory_fd, original, session)
+    except Exception:  # noqa: BLE001 - mapped to a fixed word on purpose.
+        return {'returned': False, 'reason': 'io_error'}
+
+
+def copy_back(directory_fd, original, session):
     """After the editor ends: copy the newest favourites file the editor
     wrote into the session's palettes/ directory back to the person's file,
     or say where it is when that is not safe.
@@ -186,9 +196,12 @@ def return_palettes(directory_fd, original, session):
     the favourites format) and the person's file is still the file the
     session copied in: the same file with the same bytes, owned by this user
     and writable by them. The bytes go to a new file beside it (exclusive
-    create, with its mode), synced; its identity is checked once more, then
-    the new file is renamed over it and the directory synced. An edit in the
-    instant between that last check and the rename is not detected.
+    create, with its mode), synced; then it is read once more, through the
+    same descriptor, and must still be that file with those bytes; then the
+    new file is renamed over it and the directory synced. Only a change in
+    the instant between that last read and the rename is not detected. A
+    stage that cannot be removed after a refusal is reported as
+    `stage_left`.
 
     Returns what it did, for the helper's last line: whether it was
     returned, the session-side path when it was kept, and a fixed reason
@@ -238,8 +251,12 @@ def return_palettes(directory_fd, original, session):
                 os.fsync(fd)
             finally:
                 os.close(fd)
-            now = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            if not stat.S_ISREG(now.st_mode) or (now.st_dev, now.st_ino) != original['identity']:
+            try:
+                current, now = read_regular(name, 'palettes file', MAX_PALETTES, '64 KiB', dir_fd=parent)
+            except (OSError, ValueError) as error:
+                raise Kept('target_changed') from error
+            if (hashlib.sha256(current).hexdigest() != original['sha256']
+                    or (now.st_dev, now.st_ino) != original['identity']):
                 raise Kept('target_changed')
             os.rename(staged, name, src_dir_fd=parent, dst_dir_fd=parent)
         except BaseException as error:
@@ -248,6 +265,8 @@ def return_palettes(directory_fd, original, session):
                 os.unlink(staged, dir_fd=parent)
             except FileNotFoundError:
                 pass
+            except OSError:
+                kept['stage_left'] = True
             if isinstance(error, OSError):
                 raise Kept(errno_code(error)) from error
             raise
@@ -271,9 +290,13 @@ def run_editor(command, fds, back):
     reaches both), so the editor quits as it quits on them and the copy back
     still runs. Returns the editor's exit status."""
     child = None
+    # Signals that came before the editor started, passed on once it has.
+    early = []
 
     def forward(number, _frame):
-        if child is not None and child.returncode is None:
+        if child is None:
+            early.append(number)
+        elif child.returncode is None:
             try:
                 child.send_signal(number)
             except ProcessLookupError:
@@ -283,6 +306,8 @@ def run_editor(command, fds, back):
     try:
         try:
             child = subprocess.Popen(command, pass_fds=fds)
+            while early:
+                forward(early.pop(0), None)
             return child.wait()
         finally:
             back()

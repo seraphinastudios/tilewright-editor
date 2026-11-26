@@ -128,7 +128,9 @@ the recovery records or a proposal step. A favourite this catalog does not
 grant (the catalog changed, or another world) cannot be chosen: its row
 reads "Remove <value> (not granted)" (just "Remove <value>" where the row
 is narrow), and its one action removes it from the list, written back as
-any other change. The file still loads, and the entry stays until removed.
+any other change. One click removes it, with no undo in the session, and
+the copy back removes it from `FILE`, so from every world that uses that
+file; star it again in a world that grants it. The file still loads, and the entry stays until removed.
 
 Below them, "Star the chosen value" adds the mode's chosen value (the
 chosen terrain or scatter palette, or the prototype Place puts down) at the
@@ -159,11 +161,12 @@ again. It replaces `FILE` only when:
   freeze their favourites with `chmod a-w`).
 
 The bytes go to a new file beside `FILE` (exclusive create, with `FILE`'s
-mode), synced; `FILE`'s identity is checked once more, then the new file is
+mode), synced; then `FILE` is read once more through the kept directory
+and must still be the same file with the same bytes; then the new file is
 renamed over it and the directory synced. This guards against `FILE` being
-replaced, removed or edited at any time before those checks. It does not
-guard against an edit in the instant between the last check and the
-rename: that edit is overwritten.
+replaced, removed or edited at any time up to that last read. It does not
+guard against a change in the instant between the last read and the
+rename (two system calls): that change is overwritten.
 
 Otherwise `FILE` is left alone and the helper's last line says where the
 session's copy is, to copy by hand, with a fixed reason word and nothing
@@ -171,8 +174,14 @@ from `FILE`'s path or contents: `{"palettes": {"returned": false, "kept":
 "<session>/palettes/favourites-000N.json", "reason": "target_changed"}}`.
 The words are `no_change` and `same_bytes` (nothing to copy back, so no
 `kept`), `saved_invalid`, `target_changed`, `not_writable`, `stage_exists`,
-`permission` and `io_error`. A copy back that succeeded says
-`{"palettes": {"returned": true, "from": "favourites-000N.json"}}`.
+`permission` and `io_error`; anything unforeseen is `io_error`. When the
+stage beside `FILE` could not be removed after such a refusal, the line
+also has `"stage_left": true`: a file `.<name>.tilewright-<pid>` is left
+beside `FILE`, safe to delete. A copy back that succeeded says
+`{"palettes": {"returned": true, "from": "favourites-000N.json"}}`; if the
+directory could not be synced after the rename, the line adds
+`"synced": false` and a reason word: `FILE` holds the new lists, but a
+crash soon after could bring back the old ones.
 Without `--editor` (provision only) nothing is copied back.
 
 The helper never adopts existing state, changes permissions
