@@ -101,7 +101,7 @@ match the crates.io index and the `SHA256SUMS` of the
 (the source release that carries crate version 0.1.2), source revision
 `f1f4f2d0fbeab0d513c8ce7f133d61028da86e8f`. They are
 dependencies, not reused source: no file of them is copied into this
-repository; the one adaptation is recorded below. Their text editing was itself adapted from this repository's
+repository; the two adaptations are recorded below. Their text editing was itself adapted from this repository's
 `text_input.rs` (their own `PROVENANCE.md` records it). They pin renderer
 0.7.2, the editor's own, so the lock holds one renderer.
 
@@ -120,15 +120,22 @@ repository; the one adaptation is recorded below. Their text editing was itself 
   notice beyond this record is needed.
 - **Adapted from tilewright-ui-render 0.1.3, before its release.** The fix
   for a step beside a marker's guard in mixed-direction text, from
-  seraphinastudios/tilewright-ui pull request #18 at source revision
-  `66e3a3a8e6512538e0cf39ab23c4eccf6154815d` (crate version 0.1.3, not yet
-  released when this was recorded):
-  `src/lib.rs` `lands_behind`, and the guard-crossing comparison in
-  `step_visual` with the position the step left, into
+  seraphinastudios/tilewright-ui pull request #18 (crate version 0.1.3, not
+  yet released when this was recorded). The recorded revision is that pull
+  request's head, `a74ba9649cf70c20f6b4f8f230eadf48fb481369`; after a squash
+  merge it is not on that repository's `main` but stays reachable as
+  `refs/pull/18/head`. If the pull request changes before it merges, this
+  code and this revision follow it. Adapted: `src/lib.rs` `toward`,
+  `lands_behind`, and the guard-crossing comparison in `step_visual` with
+  the position the step left, into
   `crates/tilewright-editor-app/src/workspace_render.rs` `lands_behind` and
   `step_caret`. Transformation: the same conditions on the editor's
   `TextInputSnapshot` markers and `UnicodeLayout` caret rectangles, comparing
-  committed bytes; doc comments paraphrased. Same owner and licence.
+  committed bytes; the press's direction is computed inside `step_caret`
+  from its motion; doc comments paraphrased. The later pull request that
+  pins `=0.1.3` adds the released source tag, the crate version and the
+  archive SHA-256s, and states that this port matches the released source.
+  Same owner and licence: no notice beyond this record is needed.
 
 ## Shared renderer UI font
 

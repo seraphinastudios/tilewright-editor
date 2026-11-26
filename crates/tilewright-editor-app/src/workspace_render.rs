@@ -930,9 +930,10 @@ const MAXIMUM_CARET_STEPS: usize = 4;
 /// (within [`SAME_CARET_POSITION`]), or that crosses a marker's guard without
 /// moving the committed position, is not a stop and is repeated, so a press
 /// that can move the caret moves it. Nor is a step to the inner side of a
-/// guard that would draw the caret back where the press began or behind it
-/// ([`lands_behind`]); in mixed-direction text stopping there moved the caret
-/// against the press and could make presses cycle. Any other step is the
+/// guard whose committed position is drawn elsewhere and not beyond where the
+/// press began in the pressed direction ([`lands_behind`]); in mixed-direction
+/// text stopping there moved the caret against the press, or not at all, and
+/// could make presses cycle. Any other step is the
 /// press's result, as with a single layout step; a step that does not move
 /// ends it.
 pub fn step_caret(
@@ -947,6 +948,10 @@ pub fn step_caret(
     };
     let mut display = renderer_cursor(snapshot.display_selection.focus);
     let from = layout.caret(display);
+    let toward = match motion {
+        tilewright_render_ui::VisualMotion::Left | tilewright_render_ui::VisualMotion::Home => -1.0,
+        tilewright_render_ui::VisualMotion::Right | tilewright_render_ui::VisualMotion::End => 1.0,
+    };
     let mut committed = snapshot.selection.focus.byte;
     for _ in 0..MAXIMUM_CARET_STEPS {
         let next = layout.move_visual(display, motion);
@@ -964,7 +969,7 @@ pub fn step_caret(
             .committed_cursor(model_cursor(display))
             .map_err(|error| error.to_string())?
             .byte;
-        if lands_behind(snapshot, layout, from, display) {
+        if lands_behind(snapshot, layout, from, display, toward) {
             continue;
         }
         // The display byte moved but the committed byte did not: the step
@@ -978,24 +983,24 @@ pub fn step_caret(
     Ok(display)
 }
 
-/// Whether a press that began with the caret drawn at `from` and whose
-/// layout steps reached `cursor` would, by stopping there, draw the caret
-/// back at `from` or behind it; the rule of the shared field's `lands_behind`
-/// (`tilewright-ui-render` 0.1.3).
+/// Whether a press toward `toward` (-1 left, 1 right) that began with the
+/// caret drawn at `from` and whose layout steps reached `cursor` would, by
+/// stopping there, draw the caret back at `from` or behind it; the rule of
+/// the shared field's `lands_behind` (`tilewright-ui-render` 0.1.3).
 ///
 /// Only a display position strictly inside a marker unit (beside its guard)
 /// can: `committed_cursor` maps it to the stored character's edge on the same
 /// side of the glyph, which is drawn at the unit's edge on that side, not at
-/// `cursor`. When the edge is drawn at `cursor`'s place, or either has no
-/// caret, this is false. Otherwise it is true unless the edge lies beyond
-/// `from` (more than [`SAME_CARET_POSITION`] in x) in the direction the
-/// layout stepped, from `from` to `cursor`; a step that left the caret drawn
-/// at `from` has no direction, and the edge cannot be beyond it.
+/// `cursor`. When the edge is drawn at `cursor`'s place, or a position has no
+/// caret, this is false. Otherwise it is true unless the edge lies more than
+/// [`SAME_CARET_POSITION`] beyond `from` in x, the pressed way; where
+/// `cursor` itself is drawn does not matter.
 fn lands_behind(
     snapshot: &TextInputSnapshot,
     layout: &UnicodeLayout,
     from: Option<UiRect>,
     cursor: TextCursor,
+    toward: f32,
 ) -> bool {
     let Some(marker) = snapshot
         .markers
@@ -1019,14 +1024,7 @@ fn lands_behind(
     let same = |a: UiRect, b: UiRect| {
         (a.x - b.x).abs() <= SAME_CARET_POSITION && (a.y - b.y).abs() <= SAME_CARET_POSITION
     };
-    if same(stop, edge) {
-        return false;
-    }
-    if same(from, stop) {
-        return true;
-    }
-    let direction = (stop.x - from.x).signum();
-    (edge.x - from.x) * direction <= SAME_CARET_POSITION
+    !same(stop, edge) && (edge.x - from.x) * toward <= SAME_CARET_POSITION
 }
 
 #[allow(clippy::cast_precision_loss)]
