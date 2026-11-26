@@ -134,7 +134,11 @@ fn an_arrow_that_used_to_do_nothing_now_moves_the_caret() {
 }
 
 /// Two different positions drawn at one place stay two stops, as in the
-/// shared field: only an affinity change or a guard is stepped over.
+/// shared field: only an affinity change, a guard crossing, or a stop beside
+/// a guard whose edge is drawn where the press began or behind it is stepped
+/// over. That last rule can pass over a committed position drawn at the same
+/// place as a neighbour, leaving it reachable only with the pointer; every
+/// drawn place stays reachable by the arrows.
 #[test]
 fn two_positions_drawn_at_one_place_stay_two_stops() {
     let stored = "Trail \u{5e2}\u{5d1}\u{5e8}\u{5d9}\u{5ea} 123 marker";
@@ -353,7 +357,21 @@ struct Tally {
     /// same place. The shared field's `step_caret` stops there too: at a
     /// direction boundary two different positions can share one place.
     same_place_stops: usize,
+    /// Presses where the single step moved the drawn caret against the
+    /// pressed direction (beside a marker's guard in mixed-direction text)
+    /// and the press now moves it the pressed way or stays at that end.
+    wrong_way_fixed: usize,
     failures: Vec<String>,
+}
+
+/// Whether a press of `motion` from `at` to `to` moved the drawn caret the
+/// pressed way.
+fn pressed_way(motion: VisualMotion, at: [f32; 2], to: [f32; 2]) -> bool {
+    if motion == VisualMotion::Left {
+        to[0] < at[0] - 1.0 / 64.0
+    } else {
+        to[0] > at[0] + 1.0 / 64.0
+    }
 }
 
 /// Checks every Left, Right, Home and End press from every committed caret
@@ -409,21 +427,39 @@ fn sweep_value(system: &mut TextSystem, value: &str, tally: &mut Tally) {
                 .unwrap();
             let old = single_step(&snapshot, &layout, motion);
             let context = format!("{value:?} {motion:?} from {cursor:?}");
-            let moved = !same_place(*at, drawn_at(&input, &layout, pressed));
-            if !same_place(*at, drawn_at(&input, &layout, old)) {
-                // The single step moved the caret on screen: nothing changes.
+            let to = drawn_at(&input, &layout, pressed);
+            let moved = !same_place(*at, to);
+            let pressed_way = |to: [f32; 2]| pressed_way(motion, *at, to);
+            let end = if motion == VisualMotion::Left {
+                leftmost
+            } else {
+                rightmost
+            };
+            let old_at = drawn_at(&input, &layout, old);
+            if moved && !pressed_way(to) {
+                tally.failures.push(format!(
+                    "{context}: to {pressed:?}, against the press (x {} to {})",
+                    at[0], to[0]
+                ));
+            } else if !same_place(*at, old_at) && pressed_way(old_at) {
+                // The single step moved the caret the pressed way: nothing
+                // changes.
                 if pressed != old {
                     tally
                         .failures
                         .push(format!("{context}: moved to {old:?}, now {pressed:?}"));
                 }
+            } else if !same_place(*at, old_at) {
+                // The single step went against the press.
+                if moved || (at[0] - end).abs() <= 1.0 / 64.0 {
+                    tally.wrong_way_fixed += 1;
+                } else {
+                    tally.failures.push(format!(
+                        "{context}: the single step went against the press, now {pressed:?}"
+                    ));
+                }
             } else if pressed == *cursor {
                 // Nothing moves: the caret is at the end in that direction.
-                let end = if motion == VisualMotion::Left {
-                    leftmost
-                } else {
-                    rightmost
-                };
                 if (at[0] - end).abs() > 1.0 / 64.0 {
                     tally.failures.push(format!(
                         "{context}: stays at x {} (ends {leftmost}, {rightmost})",
@@ -478,12 +514,18 @@ fn every_arrow_press_that_changes_the_position_moves_the_drawn_caret() {
         "\r\n\r\n\u{2029} \u{2029}\r\n",
         "Trail\nmar\u{2028}ker\u{2029}",
         "Trail \u{5e2}\u{5d1}\u{5e8}\u{5d9}\u{5ea} 123 marker",
+        // Guards beside right-to-left text, where the single step went
+        // against the press.
+        "\u{200f}\u{e01}\u{e33}b\u{600}\u{2028}\u{300}\u{ac00}",
+        "\u{600}\u{1f469}\u{200d}\u{600}\n",
+        "a\u{5d0}\u{600}\n",
+        "\u{600}\n\u{600}\u{301}a",
     ] {
         sweep_value(&mut system, value, &mut tally);
     }
     eprintln!(
-        "own field sweep: {} presses now move on, {} stop at another position drawn at the same place",
-        tally.moved_on, tally.same_place_stops
+        "own field sweep: {} presses now move on, {} stop at another position drawn at the same place, {} no longer go against the press",
+        tally.moved_on, tally.same_place_stops, tally.wrong_way_fixed
     );
     for failure in &tally.failures {
         eprintln!("FAIL {failure}");
@@ -502,4 +544,181 @@ fn every_arrow_press_that_changes_the_position_moves_the_drawn_caret() {
         tally.same_place_stops > 0,
         "the sweep no longer reaches two positions drawn at one place"
     );
+    assert!(
+        tally.wrong_way_fixed > 0,
+        "the sweep no longer reaches a step against the press"
+    );
+}
+
+/// A marker's guard beside right-to-left text. In
+/// `RLM กำ b U+0600 U+2028 U+0300 가` (a right-to-left paragraph) End then
+/// Left cycled 12, 10, 9, 12 for ever: from 9 the layout steps to the
+/// guard's inner side, drawn to the left, which maps to committed 12, drawn
+/// at the right end. Every press now moves the drawn caret the pressed way
+/// until it stays at that end, and no position repeats.
+#[test]
+fn a_guard_beside_right_to_left_text_does_not_cycle() {
+    let value = "\u{200f}\u{e01}\u{e33}b\u{600}\u{2028}\u{300}\u{ac00}";
+    let mut system = crate::font_pack::test_system();
+    let base = TextInput::new(value.to_owned()).unwrap();
+    let layout = system
+        .layout(&base.snapshot().display_text, text_size(30), None)
+        .unwrap();
+    for (start, motion, expected) in [
+        (
+            VisualMotion::End,
+            VisualMotion::Left,
+            &[12, 10, 9, 20, 17][..],
+        ),
+        (
+            VisualMotion::Home,
+            VisualMotion::Right,
+            &[17, 15, 3, 9, 10, 0][..],
+        ),
+    ] {
+        let mut input = base.clone();
+        let press = |input: &mut TextInput, motion| {
+            let snapshot = input.snapshot();
+            let focus = snapshot
+                .committed_cursor(model_cursor(
+                    step_caret(&snapshot, &layout, motion).unwrap(),
+                ))
+                .unwrap();
+            input
+                .set_selection(TextSelection::caret(focus), input.revision())
+                .unwrap();
+            focus
+        };
+        let mut visited = vec![press(&mut input, start)];
+        loop {
+            let before = drawn_at(&input, &layout, *visited.last().unwrap());
+            let focus = press(&mut input, motion);
+            if focus == *visited.last().unwrap() {
+                break;
+            }
+            let after = drawn_at(&input, &layout, focus);
+            let pressed_way = if motion == VisualMotion::Left {
+                after[0] < before[0]
+            } else {
+                after[0] > before[0]
+            };
+            assert!(pressed_way, "{motion:?} went the other way: {visited:?}");
+            assert!(!visited.contains(&focus), "{motion:?} cycled: {visited:?}");
+            visited.push(focus);
+        }
+        let walked: Vec<_> = visited.iter().map(|cursor| cursor.byte).collect();
+        assert_eq!(walked, expected, "{motion:?}");
+    }
+}
+
+/// One press of `motion` in the own field holding `value` at `size` px, from
+/// committed `byte` with `affinity`: the new committed focus, and the drawn x
+/// before and after.
+fn press_at(
+    system: &mut TextSystem,
+    value: &str,
+    size: f32,
+    (byte, affinity): (usize, TextAffinity),
+    motion: VisualMotion,
+) -> (TextCursor, f32, f32) {
+    let mut input = TextInput::new(value.to_owned()).unwrap();
+    let layout = system
+        .layout(&input.snapshot().display_text, size, None)
+        .unwrap();
+    let cursor = TextCursor { byte, affinity };
+    input
+        .set_selection(TextSelection::caret(cursor), input.revision())
+        .unwrap();
+    let snapshot = input.snapshot();
+    let focus = snapshot
+        .committed_cursor(model_cursor(
+            step_caret(&snapshot, &layout, motion).unwrap(),
+        ))
+        .unwrap();
+    (
+        focus,
+        drawn_at(&input, &layout, cursor)[0],
+        drawn_at(&input, &layout, focus)[0],
+    )
+}
+
+/// The guard rule's cases, as in the shared field's step tests
+/// (`tilewright-ui-render` 0.1.3).
+#[test]
+fn the_guard_rule_keeps_what_moved_and_skips_what_went_back() {
+    use TextAffinity::{After, Before};
+    let mut system = crate::font_pack::test_system();
+    // A stop beside a guard drawn at the press's start whose committed
+    // position lies the pressed way is kept: these moved there before.
+    for (value, size, from, expected) in [
+        (
+            "\u{10ffff}\u{ac00}\u{644}\u{627}\u{6dd}\u{85}\u{200c}\u{e01}\u{e33}\u{202a}",
+            18.0,
+            (7, After),
+            13,
+        ),
+        (
+            "\u{300}\u{661}\u{662}  \u{c}\r\u{8e2}\u{85}",
+            20.0,
+            (6, Before),
+            13,
+        ),
+    ] {
+        let (focus, before, after) = press_at(&mut system, value, size, from, VisualMotion::Left);
+        assert_eq!(focus.byte, expected, "{value:?} {size}");
+        assert!(after < before, "{value:?} {size}: x {before} to {after}");
+    }
+    // One drawn at the start whose committed position lies behind it is
+    // skipped: stopping there went right on a Left press.
+    let (focus, before, after) = press_at(
+        &mut system,
+        "\u{2067}\u{5e9}\u{5dc}\u{603}\r\u{2028}\u{202b},",
+        18.0,
+        (7, After),
+        VisualMotion::Left,
+    );
+    assert!(
+        after < before,
+        "Left went right: x {before} to {after}, {focus:?}"
+    );
+    // After a passed-over stop the guard-crossing check compares with the
+    // position the step left; compared with the start, Left from 7 would pass
+    // over 7 (Before) to 3.
+    let value = "\u{600}\n\u{600}\u{301}a";
+    let (focus, before, after) = press_at(&mut system, value, 18.0, (7, After), VisualMotion::Left);
+    assert_eq!(
+        focus,
+        TextCursor {
+            byte: 7,
+            affinity: Before
+        }
+    );
+    assert!(after < before);
+    let (focus, _, _) = press_at(&mut system, value, 18.0, (7, Before), VisualMotion::Left);
+    assert_eq!(focus.byte, 3);
+    // A stop beside a guard drawn at its own committed position's place is
+    // kept, so committed 5 stays reachable by the arrows.
+    let value = "\u{604}\u{2028}\u{200c}\u{661}\u{662}\r\n\u{70f}\u{1}\u{1f1fa}\u{1f1e6}";
+    for size in [12.0, 24.0] {
+        let mut reached = Vec::new();
+        for byte in (0..=value.len()).filter(|byte| value.is_char_boundary(*byte)) {
+            for affinity in [Before, After] {
+                let mut input = TextInput::new(value.to_owned()).unwrap();
+                if input
+                    .set_selection(
+                        TextSelection::caret(TextCursor { byte, affinity }),
+                        input.revision(),
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+                for motion in [VisualMotion::Left, VisualMotion::Right] {
+                    let from = (byte, affinity);
+                    reached.push(press_at(&mut system, value, size, from, motion).0.byte);
+                }
+            }
+        }
+        assert!(reached.contains(&5), "{size}: committed 5 unreachable");
+    }
 }
