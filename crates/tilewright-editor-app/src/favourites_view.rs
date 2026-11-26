@@ -168,7 +168,7 @@ impl Personal {
     /// Writes `next` as the session's next new file (create-only: a file
     /// already at that name is never replaced) and syncs the directory;
     /// only then are they the session's lists.
-    fn save(&mut self, next: Favourites) -> Result<()> {
+    fn retain(&mut self, next: Favourites) -> Result<()> {
         if self.lists.is_err() {
             return Err("the favourites file was ignored, so nothing is saved".into());
         }
@@ -249,7 +249,7 @@ impl Application {
         }
         self.favourites
             .as_mut()
-            .map_or(Ok(()), |personal| personal.save(next))
+            .map_or(Ok(()), |personal| personal.retain(next))
             .map_err(refuse)
     }
 
