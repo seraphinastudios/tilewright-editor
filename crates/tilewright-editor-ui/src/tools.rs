@@ -1705,9 +1705,9 @@ impl ToolState {
         if text.len() > MAX_INPUT_BYTES {
             return Err(ToolError("Input exceeds byte budget"));
         }
-        // Every field type follows the switch: a boolean, an integer, a
-        // number and a reference are typed text drafts like a string, and
-        // each keeps its own parsing and wording in `parse_scalar`.
+        // Every field type is edited by the shared field: a boolean, an
+        // integer, a number and a reference are typed text drafts like a
+        // string, and each keeps its own parsing and wording in `parse_scalar`.
         let input = self.new_draft_input(text, MAX_INPUT_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
