@@ -103,6 +103,22 @@ tiles. A per-uid field edit applies to its object wherever it is. A per-uid
 move still needs a placed (not carried) object in the active plane and
 spatial layer, and a destination inside the view.
 
+## Field values
+
+`SetField { uid, field, value, expected }` prepares one World `set` of the
+object's `fields` member. When the object stores the field, the `set`
+expects the stored value exactly as the source spells it. World compares an
+expectation by kind and canonical text, which keeps each number's spelling
+and each object's member order, so a value the model holds as the number 2
+may be written `2`, `2.0` or `2e0`, and only its own spelling matches. When
+the object does not store the field, the `set` adds the member without an
+expectation; an object with no `fields` member at all gets one, after a
+`test` that it is still absent.
+
+The new value is written as given, in compact JSON. A number draft in the
+desktop inspector gives a 64-bit float, so `2` is written `2.0`, `2.5` as
+`2.5` and `1e3` as `1000.0`; an integer draft gives an integer.
+
 ## Fill and replace
 
 `FillTerrain { plane, layer, grid, x, y, proto, contiguous, expected }`

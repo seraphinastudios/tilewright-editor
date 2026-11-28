@@ -8,7 +8,7 @@ use tilewright_editor_commands::{History, RecoveryStore};
 use tilewright_editor_preview::{
     PreviewCatalog, PreviewLimits, ReadyResources, SelectionKey, loader,
 };
-use tilewright_source::{FieldValue, World};
+use tilewright_source::World;
 
 use crate::Actor;
 use crate::review::{PendingSummary, REVIEW_LIMIT_MESSAGE, Review};
@@ -332,46 +332,37 @@ impl fmt::Display for SessionStatus {
     }
 }
 
-/// Toolkit-canonical source spellings for the fixed coordinate guard layout.
-/// In particular, World's transaction comparisons distinguish `-0` from `0`.
-struct CoordinateGuards {
-    old_at: String,
-    changed_axes: Vec<String>,
+/// Toolkit-canonical source spellings that replace guard values of a
+/// prepared transaction, each at `(operation index, member)`.
+///
+/// World's `test` and `expect` compare a value's kind and its canonical
+/// text, and canonical text keeps each number's spelling: `2` (an integer)
+/// differs from `2.0`, `2.50` from `2.5`, `1e3` from `1000.0` and `-0` from
+/// `0`. A guard built from the semantic model cannot always spell the
+/// source's token, so the exact source text is spliced in instead.
+struct SourceSpellings {
+    /// How many operations the transaction has.
+    operations: usize,
+    guards: Vec<(usize, &'static str, String)>,
 }
-impl CoordinateGuards {
+impl SourceSpellings {
     fn apply(
         &self,
         text: String,
         limits: &tilewright_jsonc::Limits,
     ) -> Result<String, SessionError> {
         let mut syntax = tilewright_jsonc::Document::parse(text, limits).map_err(internal)?;
-        let guards = std::iter::once((2, "value", &self.old_at)).chain(
-            self.changed_axes
-                .iter()
-                .enumerate()
-                .map(|(index, value)| (index + 3, "expect", value)),
-        );
-        for (index, key, value) in guards {
+        for (index, key, value) in &self.guards {
             let operations = syntax
                 .root()
                 .get("operations")
                 .and_then(tilewright_jsonc::Value::as_array)
-                .filter(|operations| operations.len() == 3 + self.changed_axes.len())
-                .ok_or_else(|| {
-                    refuse(
-                        RefusalCode::Internal,
-                        "invalid coordinate transaction guard layout",
-                    )
-                })?;
+                .filter(|operations| operations.len() == self.operations)
+                .ok_or_else(|| refuse(RefusalCode::Internal, "invalid transaction guard layout"))?;
             let span = operations
-                .get(index)
+                .get(*index)
                 .and_then(|operation| operation.get(key))
-                .ok_or_else(|| {
-                    refuse(
-                        RefusalCode::Internal,
-                        "missing coordinate transaction guard",
-                    )
-                })?
+                .ok_or_else(|| refuse(RefusalCode::Internal, "missing transaction guard"))?
                 .span();
             syntax = syntax.replace(span, value, limits).map_err(internal)?;
         }
@@ -768,7 +759,7 @@ impl Session {
         uid: &str,
         old_at: [u16; 2],
         at: [u16; 2],
-    ) -> Result<CoordinateGuards, SessionError> {
+    ) -> Result<SourceSpellings, SessionError> {
         self.inspect_object_source(uid, |syntax, object| {
             let value = object
                 .get("at")
@@ -777,7 +768,9 @@ impl Session {
                 .as_array()
                 .filter(|axes| axes.len() == 2)
                 .ok_or_else(|| refuse(RefusalCode::SourceInvalid, "invalid source coordinates"))?;
-            let mut changed_axes = Vec::new();
+            // The fixed layout: three tests, the third testing `at`, then one
+            // `set` per changed axis, each expecting that axis.
+            let mut guards = vec![(2, "value", syntax.canonical(value))];
             for axis in 0..2 {
                 if axes[axis].as_i64() != Some(i64::from(old_at[axis])) {
                     return Err(refuse(
@@ -786,13 +779,35 @@ impl Session {
                     ));
                 }
                 if old_at[axis] != at[axis] {
-                    changed_axes.push(syntax.canonical(&axes[axis]));
+                    guards.push((guards.len() + 2, "expect", syntax.canonical(&axes[axis])));
                 }
             }
-            Ok(CoordinateGuards {
-                old_at: syntax.canonical(value),
-                changed_axes,
+            Ok(SourceSpellings {
+                operations: guards.len() + 2,
+                guards,
             })
+        })
+    }
+    /// The canonical source text of the stored `field` of object `uid`: the
+    /// spelling World compares a `set`'s `expect` with.
+    fn field_spelling(&self, uid: &str, field: &str) -> Result<String, SessionError> {
+        self.inspect_object_source(uid, |syntax, object| {
+            let value = object
+                .get("fields")
+                .and_then(|fields| fields.get(field))
+                .ok_or_else(|| refuse(RefusalCode::SourceChanged, "source field changed"))?;
+            let text = syntax.canonical(value);
+            let container = matches!(
+                value,
+                tilewright_jsonc::Value::Array { .. } | tilewright_jsonc::Value::Object { .. }
+            );
+            if container && text.len() > 65536 {
+                return Err(refuse(
+                    RefusalCode::InputBudget,
+                    "existing field exceeds semantic editing budget",
+                ));
+            }
+            Ok(text)
         })
     }
     /// Capability-checked `terrain.set` cells, each expecting its committed
@@ -1166,12 +1181,12 @@ impl Session {
         &mut self,
         expected: [u8; 32],
         operations: &[Value],
-        coordinates: Option<&CoordinateGuards>,
+        spellings: Option<&SourceSpellings>,
     ) -> Result<(), SessionError> {
         self.verify_revision(expected)?;
         let text = json!({"format":"tilewright.transaction/1","title":"Editor semantic action","actor":self.actor.as_str(),"operations":operations}).to_string();
-        let text = if let Some(coordinates) = coordinates {
-            coordinates.apply(text, &self.history.document().load_options().limits)?
+        let text = if let Some(spellings) = spellings {
+            spellings.apply(text, &self.history.document().load_options().limits)?
         } else {
             text
         };
@@ -1576,10 +1591,19 @@ impl Session {
                     }
                 }
                 let mut op = json!({"op":"set","object":{"uid":uid},"pointer":["fields",field],"value":value});
-                if let Some((_, before)) = object.fields.iter().find(|(name, _)| name == &field) {
-                    op["expect"] = field_json(before)?;
+                if !object.fields.iter().any(|(name, _)| name == &field) {
+                    return self.prepare(expected, &op);
                 }
-                self.prepare(expected, &op)
+                // Expect the stored value as the source spells it: the
+                // model's value cannot say whether `2` was written `2`,
+                // `2.0` or `2e0`, and World compares the spelling.
+                op["expect"] = Value::Null;
+                self.verify_revision(expected)?;
+                let spelling = SourceSpellings {
+                    operations: 1,
+                    guards: vec![(0, "expect", self.field_spelling(&uid, &field)?)],
+                };
+                self.prepare_guarded_operations(expected, &[op], Some(&spelling))
             }
             Action::Paint {
                 plane,
@@ -2159,21 +2183,6 @@ fn cell_operations(changes: Vec<TerrainChange<'_>>, proto: &str) -> Vec<Value> {
         .into_iter()
         .map(|(at, before)| json!({"at":at,"value":proto,"expect":before}))
         .collect()
-}
-
-fn field_json(value: &FieldValue) -> Result<Value, SessionError> {
-    match value {
-        FieldValue::Null => Ok(Value::Null),
-        FieldValue::Bool(v) => Ok(json!(v)),
-        FieldValue::Integer(v) => Ok(json!(v)),
-        FieldValue::Number(v) => Ok(json!(v)),
-        FieldValue::String(v) => Ok(json!(v)),
-        FieldValue::Json(v) if v.len() <= 65536 => serde_json::from_str(v).map_err(internal),
-        FieldValue::Json(_) => Err(refuse(
-            RefusalCode::InputBudget,
-            "existing field exceeds semantic editing budget",
-        )),
-    }
 }
 
 struct Retaining<'a, R> {
