@@ -448,6 +448,11 @@ the original review judged, and shows the insertion notes only. An accepted stam
 selection as it was (a selection holds one object); its uids are its
 step's `StepOrigin::placed_objects`.
 
+The desktop's catalog stamps (`editing.stamps`) are one source of the
+list: Place mode turns and mirrors a stamp's offsets with R and M
+(`tilewright_editor_ui::stamps`, [the prototype guide](OFFLINE-PROTOTYPE.md#stamps))
+and records the final offsets, so the engine still has no transform.
+
 ## Refusal codes
 
 Every `SessionError` carries a stable `RefusalCode` (`code()`, and

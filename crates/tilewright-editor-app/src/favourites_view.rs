@@ -51,6 +51,9 @@ fn reason_rows(reason: &str) -> Vec<String> {
 pub(super) const STAR: &str = "Star the chosen value";
 pub(super) const UNSTAR: &str = "Unstar the chosen value";
 pub(super) const RAISE: &str = "Move it up the favourites";
+/// The star row in Place mode while a catalog stamp is chosen: a click
+/// stamps, the chosen prototype is hidden, and stamps are not favourites.
+pub(super) const STAMP_CHOSEN: &str = "Star: a stamp is chosen";
 
 /// The name of the session's `index`th written-back file.
 pub(super) fn saved_name(index: u32) -> String {
@@ -248,7 +251,9 @@ impl Personal {
 
 impl Application {
     /// The value the mode's star row stars: Terrain mode's chosen terrain
-    /// or scatter palette, Place mode's chosen prototype.
+    /// or scatter palette, Place mode's chosen prototype. None while Place
+    /// mode has a stamp chosen: the prototype is then hidden, and stamps are
+    /// not favourites.
     fn chosen_favourite(&self) -> Option<Favourite> {
         match self.tools.mode() {
             ToolMode::Terrain => self
@@ -261,12 +266,18 @@ impl Application {
                         .scatter_choice()
                         .map(|name| Favourite::Scatter(name.to_owned()))
                 }),
+            ToolMode::Place if self.tools.stamp_choice().is_some() => None,
             ToolMode::Place => self
                 .tools
                 .placement_choice()
                 .map(|name| Favourite::Object(name.to_owned())),
             _ => None,
         }
+    }
+
+    /// Whether Place mode's chosen prototype is hidden by a chosen stamp.
+    fn stamp_hides_choice(&self) -> bool {
+        self.tools.mode() == ToolMode::Place && self.tools.stamp_choice().is_some()
     }
 
     /// Stars or unstars the chosen value, moves it up, or removes an
@@ -291,7 +302,12 @@ impl Application {
                 .map_err(|error| refuse(error.to_string()))?;
         } else {
             let Some(chosen) = self.chosen_favourite() else {
-                return Err(refuse("choose a value first".into()));
+                return Err(refuse(if self.stamp_hides_choice() {
+                    "a stamp is chosen, and stamps cannot be favourites; choose a prototype first"
+                        .into()
+                } else {
+                    "choose a value first".into()
+                }));
             };
             if *change == Change::Raise {
                 if !next.raise(&chosen) {
@@ -375,7 +391,14 @@ impl Application {
         let chosen = self.chosen_favourite();
         let starred = chosen.as_ref().and_then(|chosen| lists.position(chosen));
         rows.push((
-            if starred.is_some() { UNSTAR } else { STAR }.into(),
+            if self.stamp_hides_choice() {
+                STAMP_CHOSEN
+            } else if starred.is_some() {
+                UNSTAR
+            } else {
+                STAR
+            }
+            .into(),
             Some(Control::FavouriteStar),
             chosen.is_some(),
             starred.is_some(),

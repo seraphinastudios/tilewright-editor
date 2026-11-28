@@ -161,6 +161,7 @@ pub mod road;
 pub mod scatter;
 pub mod sculpt;
 pub mod stamp;
+pub mod stamps;
 pub mod text_input;
 pub mod tools;
 pub mod uid;

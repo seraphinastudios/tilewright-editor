@@ -46,7 +46,8 @@ pub use bend::{BendLimit, LARGEST_ZOOM, bend_limit};
 pub use catalog::{
     AnchorGrant, EditingCapabilities, FORMAT_1, FORMAT_2, HeightGrant, MAXIMUM_HEIGHT,
     MAXIMUM_PALETTE_ENTRIES, MAXIMUM_PALETTE_NAME_BYTES, MAXIMUM_PALETTE_WEIGHT, MAXIMUM_PALETTES,
-    ObjectGrant, Palette, PreviewCatalog, ZoneGrant,
+    MAXIMUM_STAMP_MEMBER_OFFSET, MAXIMUM_STAMP_MEMBERS, MAXIMUM_STAMP_NAME_BYTES, MAXIMUM_STAMPS,
+    ObjectGrant, Palette, PreviewCatalog, Stamp, StampMember, ZoneGrant,
 };
 pub use loader::ReadyResources;
 pub use prepare::prepare;

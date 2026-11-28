@@ -769,3 +769,169 @@ fn a_directory_on_an_unchecked_file_system_is_refused() {
         "{error}"
     );
 }
+
+/// [`favourite_application`] on the sample with the stamps of
+/// `super::stamps`, in Place mode with stamp `camp` chosen.
+fn favourite_stamp_application(bytes: &[u8]) -> (tempfile::TempDir, Application) {
+    let (temporary, mut app) = delete_application(super::stamps::with_stamps);
+    let directory = palettes_directory(temporary.path(), bytes);
+    app.favourites = Some(Personal::open(SourceRoot::new(&directory)).unwrap());
+    app.control(Control::Place).unwrap();
+    app.control(Control::StampPalette("camp".into())).unwrap();
+    (temporary, app)
+}
+
+#[test]
+fn while_a_stamp_is_chosen_no_favourite_row_acts_on_the_hidden_prototype() {
+    let file = format!(r#"{{"format": "{FORMAT}", "objects": ["stone", "bush"]}}"#);
+    let (temporary, mut app) = favourite_stamp_application(file.as_bytes());
+    let saved = temporary
+        .path()
+        .join("palettes")
+        .join(favourites_view::saved_name(1));
+    // The hidden choice is bush, a favourite below the first: without the
+    // stamp the star row would unstar it and a row would move it up.
+    assert_eq!(app.tools.placement_choice(), Some("bush"));
+    let laid = rows(&mut app);
+    let star = laid
+        .iter()
+        .find(|row| row.1 == Some(Control::FavouriteStar))
+        .unwrap();
+    assert_eq!(star.0, favourites_view::STAMP_CHOSEN);
+    assert!(!star.2, "the star row is disabled");
+    assert!(
+        laid.iter()
+            .all(|row| row.1 != Some(Control::FavouriteRaise))
+    );
+    // No prototype row is marked, the favourite copies included.
+    assert!(
+        laid.iter()
+            .filter(|row| matches!(row.1, Some(Control::PlacePalette(_))))
+            .all(|row| !row.3)
+    );
+    for control in [Control::FavouriteStar, Control::FavouriteRaise] {
+        let error = app.control(control).unwrap_err();
+        assert_eq!(
+            error,
+            "Favourites not saved: a stamp is chosen, and stamps cannot be favourites; choose a prototype first"
+        );
+    }
+    assert!(!saved.exists());
+    assert_eq!(app.tools.stamp_choice(), Some("camp"));
+
+    // A favourite's row is the catalog row: it chooses its prototype and
+    // ends the stamp, as the catalog row does.
+    let favourite_row = click_first(&mut app, &Control::PlacePalette("bush".into()));
+    let catalog_row = rows(&mut app)
+        .iter()
+        .rposition(|row| row.1 == Some(Control::PlacePalette("bush".into())))
+        .unwrap();
+    assert!(
+        favourite_row < catalog_row,
+        "the first row is the favourite"
+    );
+    assert!(app.tools.stamp_choice().is_none());
+    assert_eq!(app.tools.placement_choice(), Some("bush"));
+    let laid = rows(&mut app);
+    assert!(laid.contains(&(
+        favourites_view::UNSTAR.into(),
+        Some(Control::FavouriteStar),
+        true,
+        true
+    )));
+    assert!(
+        laid.iter()
+            .any(|row| row.1 == Some(Control::FavouriteRaise))
+    );
+    // The same with the catalog's row: choosing a stamp again, then the
+    // catalog's bush row, ends it too.
+    app.control(Control::StampPalette("camp".into())).unwrap();
+    app.control(Control::PlacePalette("bush".into())).unwrap();
+    assert!(app.tools.stamp_choice().is_none());
+    // And now the star row acts on bush.
+    app.control(Control::FavouriteRaise).unwrap();
+    assert!(saved.exists());
+}
+
+#[test]
+fn favourites_and_stamps_lay_out_together_at_1280x800_720x480_and_twice_the_pixels() {
+    let file = format!(r#"{{"format": "{FORMAT}", "objects": ["stone", "bush", "lamp"]}}"#);
+    for (logical, physical) in [
+        ((1280, 800), (1280, 800)),
+        ((720, 480), (720, 480)),
+        ((1280, 800), (2560, 1600)),
+        ((720, 480), (1440, 960)),
+    ] {
+        let (_temporary, mut app) = favourite_stamp_application(file.as_bytes());
+        app.ui = WorkspaceUi::new(logical, physical);
+        let case = format!("{logical:?} at {physical:?}");
+        let mut seen = std::collections::BTreeSet::new();
+        for scroll in 0..60 {
+            app.sidebar_scroll = scroll;
+            app.refresh_ui();
+            let sidebar = app.ui.sidebar;
+            for widget in &app.ui.widgets {
+                // Sidebar rows only, not the toolbar above it.
+                if widget.layout.x < app.ui.sidebar_x()
+                    || widget.layout.y < app.ui.logical_sidebar.y
+                {
+                    continue;
+                }
+                let measured = app
+                    .text
+                    .layout(
+                        &widget.text,
+                        crate::workspace_render::text_size(widget.layout.height),
+                        None,
+                    )
+                    .unwrap();
+                #[allow(clippy::cast_precision_loss)]
+                let available = widget.layout.width.saturating_sub(8) as f32;
+                assert!(
+                    measured.size()[0] <= available + 0.001,
+                    "{case}: {} exceeds {available}",
+                    widget.text
+                );
+                let bounds = widget.bounds;
+                assert!(
+                    bounds.x >= sidebar.x
+                        && bounds.y >= sidebar.y
+                        && bounds.x + bounds.width <= sidebar.x + sidebar.width
+                        && bounds.y + bounds.height <= sidebar.y + sidebar.height,
+                    "{case}: {} outside the sidebar",
+                    widget.text
+                );
+                seen.insert(widget.text.clone());
+            }
+        }
+        for expected in [
+            favourites_view::HEADER,
+            favourites_view::STAMP_CHOSEN,
+            "Stamps: R turns, M mirrors",
+            "4 objects: camp",
+            "3 objects: line",
+            "1 object: post",
+            "Stamping 4 objects: camp",
+            "Turn: 0\u{b0}  R",
+            "Mirror: off  M",
+            "stone / item",
+        ] {
+            assert!(
+                seen.contains(expected),
+                "{case}: {expected} not in {seen:?}"
+            );
+        }
+        // The favourites come before the catalog rows, the stamps last.
+        app.sidebar_scroll = 0;
+        let order: Vec<String> = texts(&mut app);
+        let header = order
+            .iter()
+            .position(|text| text == favourites_view::HEADER);
+        let palette = order
+            .iter()
+            .position(|text| text.starts_with("Place palette"));
+        if let (Some(header), Some(palette)) = (header, palette) {
+            assert!(header < palette, "{case}");
+        }
+    }
+}
