@@ -2273,6 +2273,9 @@ mod anchors;
 #[path = "portals.rs"]
 mod portals;
 
+#[path = "paused_edits.rs"]
+mod paused_edits;
+
 #[path = "proposal.rs"]
 mod proposal;
 

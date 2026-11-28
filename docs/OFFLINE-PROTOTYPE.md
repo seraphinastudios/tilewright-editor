@@ -1995,7 +1995,9 @@ cancelled. Editing stays paused." When the frame could not be composed or
 shown ("Editing paused: the frame could not be shown."), the next zoom, pan
 or Cancel tries again. Every other action, Accept, Undo, Redo, Reopen, map
 clicks and the proposal's control included, is refused with the pause's
-reason. The first rebuild that succeeds ends the pause and says "The view can be drawn again. Editing is possible again."; an open
+reason ("rendering blocked editing: ..."); so are opening a text draft and
+Review or Enter in an open one, which keeps its text (not "Accept or cancel the
+pending edit first": none need be pending). The first rebuild that succeeds ends the pause and says "The view can be drawn again. Editing is possible again."; an open
 proposal's panel and highlight come back with it. The window title reads
 "editing paused" meanwhile. This is separate from a blocked session (an
 uncertain publication), which only Reopen ends.
