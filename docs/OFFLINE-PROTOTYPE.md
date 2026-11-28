@@ -280,13 +280,13 @@ invalidate earlier masks.
 ### Shared string field
 
 `--shared-string-field` (given to `tools/provision-prototype.py`, which
-records `"string_field": "tilewright-ui 0.1.2"` in the receipt and passes the
+records `"string_field": "tilewright-ui 0.1.3"` in the receipt and passes the
 flag to the editor) switches the inspector's **string** fields, the two **zone
 name** drafts and the Place **palette filter** to the shared text field of
-`tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the editor's own
+`tilewright-ui` 0.1.3, drawn by `tilewright-ui-render` with the editor's own
 text system and font pack. It is off by default; without it nothing changes,
 and the frame records and images of a session are byte-identical. With it,
-each frame record carries the same `"string_field": "tilewright-ui 0.1.2"`
+each frame record carries the same `"string_field": "tilewright-ui 0.1.3"`
 member and the editor prints it at start.
 
 Only string field drafts, zone name drafts and the palette filter change
@@ -353,7 +353,7 @@ it next time).
 
 What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints
-`string field: tilewright-ui 0.1.2 (opt-in)`. Select a marker and click its
+`string field: tilewright-ui 0.1.3 (opt-in)`. Select a marker and click its
 `label` row; then repeat 1, 2, 6, 9 and 12 in a zone draft (N, choose
 meadow, "Edit display name"; and "New zone under meadow"), and 1, 2, 3, 6
 and 11 in the palette filter (P, then `/`), with step 14.

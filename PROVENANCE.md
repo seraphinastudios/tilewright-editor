@@ -92,14 +92,14 @@ ports nothing further.
 ## Shared UI field
 
 The opt-in shared string field uses `tilewright-ui` and
-`tilewright-ui-render` **0.1.2** from crates.io (MIT, Seraphina Studios),
+`tilewright-ui-render` **0.1.3** from crates.io (MIT, Seraphina Studios),
 archive SHA-256
-`cd88fecce4bfc40d0e1e25a84eaf10e40c52e1bdab7613013d90f90afd9f6e9e` and
-`11e9909a8245db81e79cd8096c8da5f2f85a24257489e6fcd5ab307e9314ec72`, which
+`cc5e6ed975a8d051256781e38ec46753ce52a4ecff3278554a2adbf2b0d8f03e` and
+`ee883713e67356870315b87bbc855008924b57e98095b932355b745df4edd02b`, which
 match the crates.io index and the `SHA256SUMS` of the
-[v0.3.0 release](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.3.0)
-(the source release that carries crate version 0.1.2), source revision
-`f1f4f2d0fbeab0d513c8ce7f133d61028da86e8f`. They are
+[v0.4.0 release](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.4.0)
+(the source release that carries crate version 0.1.3), source revision
+`2cb928ec3581777c2a64e633aa2b21764b53c999`. They are
 dependencies, not reused source: no file of them is copied into this
 repository; the two adaptations are recorded below. Their text editing was itself adapted from this repository's
 `text_input.rs` (their own `PROVENANCE.md` records it). They pin renderer
@@ -108,7 +108,8 @@ repository; the two adaptations are recorded below. Their text editing was itsel
 - **Adapted from tilewright-ui-render 0.1.1.** The editor's own text field
   steps its caret with the rule of `tilewright-ui-render` 0.1.1 (source
   release v0.2.0, source revision `9a7e2174ec8a25369bf8ffcb615a8a58a3f605ea`;
-  0.1.2, the version above, keeps the same rule): `src/lib.rs` `step_visual`, `same_position` and the
+  0.1.2 kept the same rule, and 0.1.3, the version above, adds the guard
+  fix of the next record): `src/lib.rs` `step_visual`, `same_position` and the
   constants `SAME_CARET_POSITION` (1/64 px) and `MAXIMUM_STEPS` (4), into
   `crates/tilewright-editor-app/src/workspace_render.rs` `step_caret`,
   `SAME_CARET_POSITION` and `MAXIMUM_CARET_STEPS`. Transformation: the same
@@ -118,24 +119,28 @@ repository; the two adaptations are recorded below. Their text editing was itsel
   visible step; no composition check, because `visual_move` is never reached
   while composing; doc comments paraphrased. Same owner and licence: no
   notice beyond this record is needed.
-- **Adapted from tilewright-ui-render 0.1.3, before its release.** The fix
-  for a step beside a marker's guard in mixed-direction text, from
-  seraphinastudios/tilewright-ui pull request #18 (crate version 0.1.3, not
-  yet released when this was recorded). The recorded revision is that pull
-  request's head, `f53e9679acf5caa4258d6b231df455246ebbe752`; after a squash
-  merge it is not on that repository's `main` but stays reachable as
-  `refs/pull/18/head`. If the pull request changes before it merges, this
-  code and this revision follow it. Adapted: `src/lib.rs` `toward`,
+- **Adapted from tilewright-ui-render 0.1.3.** The fix for a step beside a
+  marker's guard in mixed-direction text, from `tilewright-ui-render`
+  **0.1.3**, archive SHA-256
+  `ee883713e67356870315b87bbc855008924b57e98095b932355b745df4edd02b`
+  (`tilewright-ui` 0.1.3:
+  `cc5e6ed975a8d051256781e38ec46753ce52a4ecff3278554a2adbf2b0d8f03e`), source
+  release tag
+  [v0.4.0](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.4.0),
+  source revision `2cb928ec3581777c2a64e633aa2b21764b53c999`
+  (seraphinastudios/tilewright-ui pull request #18, merged). This port was
+  made from that pull request's head
+  `f53e9679acf5caa4258d6b231df455246ebbe752` (reachable as
+  `refs/pull/18/head`) before the release; its tree equals `2cb928e`, and
+  the released crate's `src/lib.rs` is byte-identical to it, so the port
+  matches the released source. Adapted: `src/lib.rs` `toward`,
   `lands_behind`, and the guard-crossing comparison in `step_visual` with
   the position the step left, into
   `crates/tilewright-editor-app/src/workspace_render.rs` `lands_behind` and
   `step_caret`. Transformation: the same conditions on the editor's
   `TextInputSnapshot` markers and `UnicodeLayout` caret rectangles, comparing
   committed bytes; the press's direction is computed inside `step_caret`
-  from its motion; doc comments paraphrased. The later pull request that
-  pins `=0.1.3` adds the released source tag, the crate version and the
-  archive SHA-256s, and states that this port matches the released source.
-  Same owner and licence: no notice beyond this record is needed.
+  from its motion; doc comments paraphrased. Same owner and licence: no notice beyond this record is needed.
 
 ## Shared renderer UI font
 

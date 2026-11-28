@@ -37,7 +37,7 @@ impl FieldImplementation {
     pub const ALL: [Self; 2] = [Self::Editor, Self::Shared];
 
     /// The name evidence records carry for the shared field.
-    pub const SHARED_NAME: &'static str = "tilewright-ui 0.1.2";
+    pub const SHARED_NAME: &'static str = "tilewright-ui 0.1.3";
 }
 
 /// The rejection wording of the editor's own field, for each shared refusal.
