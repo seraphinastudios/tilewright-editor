@@ -146,8 +146,10 @@ impl Application {
         self.tools
             .begin_capture(tile)
             .map_err(|error| error.to_string())?;
-        // The rectangle is drawn on the next frame.
+        // The rectangle is drawn on the next frame, and its status line
+        // replaces an earlier refusal's notice.
         self.presented_generation = None;
+        self.notice = None;
         Ok(())
     }
 

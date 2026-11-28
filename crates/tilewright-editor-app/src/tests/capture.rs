@@ -529,9 +529,22 @@ fn too_many_objects_or_an_ungranted_prototype_are_said_before_the_release() {
     let refused = route(&mut app, &button(false, end)).unwrap_err();
     assert_eq!(refused, CaptureRefusal::TooMany(65).to_string());
     assert!(app.tools.copy_choice().is_none());
-    // Copy area stays armed and the earlier choice is as it was.
-    assert_eq!(app.status_label(), CAPTURE_ARMED);
+    // Copy area stays armed and the earlier choice is as it was. The
+    // window shows the refusal as a notice; the next rectangle's press
+    // clears it.
+    assert_eq!(app.tools.capture_gesture(), Some(CaptureGesture::Armed));
     assert_eq!(app.tools.placement_choice(), Some("bush"));
+    app.notice = Some(refused);
+    assert_eq!(app.status_label(), "Input not applied. Details below.");
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, start)).unwrap();
+    assert!(app.notice.is_none());
+    assert_eq!(
+        app.status_label(),
+        "Copy (0, 0) to (0, 0), 1 x 1 tiles: 4 objects; release to copy."
+    );
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    press(&mut app, Keycode::C).unwrap();
     // Without gate_east's column: 56 crates copy.
     let (down, up) = drag(&mut app, [0, 0], &[[6, 1]]);
     down.unwrap();

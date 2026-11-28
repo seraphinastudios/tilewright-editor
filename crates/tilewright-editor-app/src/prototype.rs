@@ -1519,7 +1519,7 @@ impl Application {
             && self.tools.capture_gesture().is_none()
     }
 
-    /// What the status line and the review call the chosen stamp: its
+    /// What the status line calls the chosen stamp: its
     /// catalog name, or "the copy" for a copy captured from the map.
     fn stamp_name(&self) -> Option<&str> {
         if self.tools.copy_choice().is_some() {
