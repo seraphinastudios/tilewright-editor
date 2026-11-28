@@ -301,6 +301,22 @@ mod tests {
     }
 
     #[test]
+    fn the_view_is_the_worlds_projection() {
+        use tilewright_source::Projection;
+        assert_eq!(
+            StampView::of(&Projection::TopDown { tile_size: 32 }),
+            StampView::TopDown
+        );
+        assert_eq!(
+            StampView::of(&Projection::Isometric {
+                tile_width: 64,
+                tile_height: 32
+            }),
+            StampView::Isometric
+        );
+    }
+
+    #[test]
     fn top_down_m_is_the_column_mirror_and_reads_as_before() {
         for turn in reachable() {
             assert_eq!(turn.flipped_on_screen(StampView::TopDown), turn.flipped());

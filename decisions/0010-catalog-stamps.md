@@ -60,7 +60,8 @@ them.
   `[dx, dy] → [-dy, dx]` (a quarter turn clockwise: `+x` goes to `+y`, which
   both projections draw a quarter turn clockwise from `+x`). Each key acts
   on the layout as shown; the state is a mirror flag applied first and then
-  0 to 3 quarter turns, so M after `t` turns sets `4 - t`. Turning and
+  0 to 3 quarter turns, so a top-down M after `t` turns sets `4 - t` (an
+  isometric M sets `3 - t`, under the same section). Turning and
   mirroring keep each axis's magnitude, so a stamp inside the engine's
   offset bound stays inside it. It is the desktop's convention only:
   nothing in the engine or the proposal format depends on it.

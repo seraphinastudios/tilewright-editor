@@ -607,6 +607,65 @@ fn isometric_m_flips_the_shown_stamp_left_to_right_and_a_click_records_it() {
     // R), so eight distinct layouts.
     assert_eq!(seen.len(), 8);
 
+    // A copy made with C follows the same rule: the sample's `marker_1`,
+    // `gate_west` and `marker_2` copied from (0, 2) to (3, 4), then M or
+    // R M, previewed and clicked on tiles outside that rectangle, so the
+    // second copy copies the same objects.
+    let captured = [("marker", [3, 0]), ("gate", [0, 1]), ("marker", [1, 2])];
+    let mut steps = 0;
+    for (keys, at, offsets) in [
+        // M swaps: [0, 3], [1, 0], [2, 1].
+        (&[Keycode::M][..], [4, 1], [[0, 3], [1, 0], [2, 1]]),
+        // R turns to [0, 3], [-1, 0], [-2, 1]; M then swaps.
+        (
+            &[Keycode::R, Keycode::M][..],
+            [4, 3],
+            [[3, 0], [0, -1], [1, -2]],
+        ),
+    ] {
+        super::capture::copy(&mut app, [0, 2], [3, 4]);
+        let as_copied: Vec<StampObject> = captured
+            .iter()
+            .map(|(proto, offset)| StampObject {
+                proto: (*proto).into(),
+                offset: *offset,
+            })
+            .collect();
+        assert_eq!(
+            app.tools.copy_choice().unwrap().objects(),
+            as_copied.as_slice()
+        );
+        for &keycode in keys {
+            press(&mut app, keycode).unwrap();
+        }
+        let expected: Vec<StampObject> = captured
+            .iter()
+            .zip(offsets)
+            .map(|((proto, _), offset)| StampObject {
+                proto: (*proto).into(),
+                offset,
+            })
+            .collect();
+        acknowledge_ui(&mut app);
+        hover(&mut app, at);
+        let preview = app.stamp_preview().unwrap();
+        assert_eq!(preview.outside, 0, "{keys:?}");
+        assert_eq!(marked(&mut app), tiles(at, &expected), "{keys:?}");
+        assert_eq!(preview.action, place_objects(&app, at, expected.clone()));
+        click(&mut app, at).unwrap();
+        acknowledge_ui(&mut app);
+        route(&mut app, &key(Keycode::Return)).unwrap();
+        assert!(app.session.history().pending().is_none());
+        steps += 1;
+        let recorded = proposal(&app);
+        assert_eq!(recorded.steps().len(), steps);
+        let Action::PlaceObjects { x, y, objects, .. } = recorded.steps()[steps - 1].action()
+        else {
+            panic!("the step is a stamp");
+        };
+        assert_eq!(([*x, *y], objects), (at, &expected), "{keys:?}");
+    }
+
     // R then M, clicked: the recorded step is the previewed offsets.
     app.control(Control::StampPalette("post".into())).unwrap();
     app.control(Control::StampPalette("camp".into())).unwrap();
@@ -635,7 +694,7 @@ fn isometric_m_flips_the_shown_stamp_left_to_right_and_a_click_records_it() {
     route(&mut app, &key(Keycode::Return)).unwrap();
     assert!(app.session.history().pending().is_none());
     let recorded = proposal(&app);
-    let Action::PlaceObjects { x, y, objects, .. } = recorded.steps()[0].action() else {
+    let Action::PlaceObjects { x, y, objects, .. } = recorded.steps()[steps].action() else {
         panic!("the step is a stamp");
     };
     assert_eq!(([*x, *y], objects), (anchor, &previewed));
