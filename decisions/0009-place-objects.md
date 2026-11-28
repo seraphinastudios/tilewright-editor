@@ -115,11 +115,19 @@ them.
   outside the view must move the anchor closer. It keeps
   every tile computation small and every recorded number short.
 - **64 objects, and the review's own limits.** A stamp's inserts are small
-  and usually fall in one or a few chunks; 64 of them stay far inside the
-  64 KiB review excerpt. Spread over more than 32 chunks (only a long,
-  thin view allows that) the review is incomplete and Accept is refused
-  with `review.incomplete`, as for any change: no stamp-specific limit was
-  added. An MCP request of 64 objects with the longest World identifiers
+  and usually fall in one or a few chunks. The 64-object cap does not by
+  itself keep a stamp inside the 64 KiB review excerpt: (corrected
+  2026-11-28) each changed file's excerpt runs from its first change to its
+  last, before and after, and each insert goes on top of its tile's stack,
+  so a stamp whose objects spread through large chunk files can exceed it
+  (seen with copies of 53 and 61 objects over four chunks of 6 to 17 KB).
+  What bounds a stamp's review is therefore the chunk files it touches, as
+  for any change: past the excerpt budget, or over more than 32 changed
+  files, the review is incomplete, the change stays pending with "Change
+  exceeds the visible review limit. Cancel this edit." and Accept is
+  refused with `review.incomplete`, writing nothing. No stamp-specific
+  limit was added; a narrower excerpt per insert would be the engine-side
+  remedy. An MCP request of 64 objects with the longest World identifiers
   (128 bytes) at the widest offsets is under 16 KiB of the 64 KiB a
   message may be (a test pins it).
 - **An accepted stamp leaves the selection as it is.** A single placement

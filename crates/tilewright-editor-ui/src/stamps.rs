@@ -110,6 +110,18 @@ pub fn stamp_objects(stamp: &Stamp, turn: StampTurn) -> Vec<StampObject> {
         .collect()
 }
 
+/// `objects` (a copy captured from the map) as a click records them: in
+/// their order, each offset after `turn`, exactly as for a catalog stamp.
+pub fn turned_objects(objects: &[StampObject], turn: StampTurn) -> Vec<StampObject> {
+    objects
+        .iter()
+        .map(|object| StampObject {
+            proto: object.proto.clone(),
+            offset: turn.apply(object.offset),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::StampTurn;

@@ -410,6 +410,13 @@ pub struct ToolState {
     /// How the chosen stamp is turned and mirrored (R and M); back to the
     /// catalog layout when another stamp is chosen.
     stamp_turn: crate::stamps::StampTurn,
+    /// A copy captured from the map, put down instead of the chosen
+    /// prototype like a catalog stamp: the session clipboard. Choosing a
+    /// prototype or a catalog stamp ends it, and a new copy replaces it.
+    copy: Option<crate::capture::CapturedCopy>,
+    /// Copy area in Place mode, armed or being dragged; a mode change or an
+    /// open portal step ends it.
+    capture: Option<crate::capture::CaptureGesture>,
     /// The palette filter's committed text while it is not focused. While it
     /// is focused, the focused draft holds the text.
     filter: String,
@@ -505,6 +512,9 @@ impl ToolState {
     /// tint back as it was before, whatever H did in between.
     pub fn set_mode(&mut self, mode: ToolMode) {
         self.cancel();
+        // Copy area is Place mode's own; the copy stays chosen, like a
+        // catalog stamp.
+        self.capture = None;
         // Terrain mode's own key keeps the road: nothing it depends on
         // changes.
         if mode != self.mode {
@@ -1082,6 +1092,8 @@ impl ToolState {
             return Ok(false);
         }
         self.retire_draft();
+        // The next press picks for the portal, so Copy area ends.
+        self.capture = None;
         self.portal = Some(OpenPortalStep {
             uid: uid.to_owned(),
             expected,
@@ -1361,6 +1373,7 @@ impl ToolState {
         }
         self.placement = Some(prototype.into());
         self.stamp = None;
+        self.copy = None;
         Ok(())
     }
     /// The catalog stamp a tile click puts down, when one is chosen.
@@ -1382,7 +1395,112 @@ impl ToolState {
             self.stamp_turn = crate::stamps::StampTurn::NONE;
         }
         self.stamp = Some(name.into());
+        self.copy = None;
         Ok(())
+    }
+    /// Whether a tile click in Place mode puts a stamp down: a catalog
+    /// stamp or a copy captured from the map is chosen.
+    pub fn stamp_chosen(&self) -> bool {
+        self.stamp.is_some() || self.copy.is_some()
+    }
+    /// The copy captured from the map a tile click puts down, when it is
+    /// chosen.
+    pub fn copy_choice(&self) -> Option<&crate::capture::CapturedCopy> {
+        self.copy.as_ref()
+    }
+    /// Drop the captured copy; Place mode goes back to the chosen
+    /// prototype. Whether there was one.
+    pub fn drop_copy(&mut self) -> bool {
+        self.copy.take().is_some()
+    }
+    /// Copy area, while it is armed or dragged.
+    pub fn capture_gesture(&self) -> Option<crate::capture::CaptureGesture> {
+        self.capture
+    }
+    /// C: arm Copy area in Place mode, so the next press on a tile starts
+    /// a rectangle, or disarm it. An open portal step ends, so the press is
+    /// not also a pick. Whether it is armed now.
+    pub fn toggle_capture(&mut self) -> Result<bool, ToolError> {
+        if self.mode != ToolMode::Place {
+            return Err(ToolError("Copy area is only in Place mode"));
+        }
+        if self.capture.take().is_some() {
+            return Ok(false);
+        }
+        self.portal = None;
+        self.capture = Some(crate::capture::CaptureGesture::Armed);
+        Ok(true)
+    }
+    /// End a rectangle being dragged, copying nothing; Copy area stays
+    /// armed. Whether one was dragged.
+    pub fn abandon_capture_drag(&mut self) -> bool {
+        if !matches!(
+            self.capture,
+            Some(crate::capture::CaptureGesture::Dragging { .. })
+        ) {
+            return false;
+        }
+        self.capture = Some(crate::capture::CaptureGesture::Armed);
+        true
+    }
+    /// End Copy area, armed or dragged, copying nothing. Whether it was on.
+    pub fn stop_capture(&mut self) -> bool {
+        self.capture.take().is_some()
+    }
+    /// A press on view tile `at` while Copy area is armed: the rectangle
+    /// starts there.
+    pub fn begin_capture(&mut self, at: [i64; 2]) -> Result<(), ToolError> {
+        if self.mode != ToolMode::Place || self.capture.is_none() {
+            return Err(ToolError("Copy area is not armed"));
+        }
+        self.capture = Some(crate::capture::CaptureGesture::Dragging { start: at, end: at });
+        Ok(())
+    }
+    /// The pointer over view tile `at` while the rectangle is dragged.
+    pub fn extend_capture(&mut self, at: [i64; 2]) {
+        if let Some(crate::capture::CaptureGesture::Dragging { end, .. }) = &mut self.capture {
+            *end = at;
+        }
+    }
+    /// The rectangle being dragged, clipped to the view.
+    pub fn capture_area(&self, catalog: &PreviewCatalog) -> Option<crate::capture::Area> {
+        match self.capture? {
+            crate::capture::CaptureGesture::Dragging { start, end } => {
+                crate::capture::Area::between(catalog, start, end)
+            }
+            crate::capture::CaptureGesture::Armed => None,
+        }
+    }
+    /// Release: copy the dragged rectangle of the committed `world`. The
+    /// copy becomes the chosen stamp, in its captured layout, and Copy area
+    /// ends; a refusal copies nothing, keeps the earlier choice and leaves
+    /// Copy area armed for another try. `None` when no rectangle is
+    /// dragged.
+    pub fn finish_capture(
+        &mut self,
+        world: &World,
+        catalog: &PreviewCatalog,
+    ) -> Option<Result<usize, crate::capture::CaptureRefusal>> {
+        let area = self.capture_area(catalog);
+        if !matches!(
+            self.capture?,
+            crate::capture::CaptureGesture::Dragging { .. }
+        ) {
+            return None;
+        }
+        self.capture = Some(crate::capture::CaptureGesture::Armed);
+        let copy =
+            match area.map(|area| crate::capture::CapturedCopy::capture(world, catalog, area)) {
+                Some(Ok(copy)) => copy,
+                Some(Err(refusal)) => return Some(Err(refusal)),
+                None => return Some(Err(crate::capture::CaptureRefusal::Empty)),
+            };
+        let count = copy.objects().len();
+        self.copy = Some(copy);
+        self.stamp = None;
+        self.stamp_turn = crate::stamps::StampTurn::NONE;
+        self.capture = None;
+        Some(Ok(count))
     }
     /// R: turn the chosen stamp a quarter turn clockwise. Local view state:
     /// it touches no World, so a pending change does not block it.
@@ -1401,18 +1519,24 @@ impl ToolState {
         if self.mode != ToolMode::Place {
             return Err(ToolError("Stamps are only in Place mode"));
         }
-        if self.stamp.is_none() {
+        if !self.stamp_chosen() {
             return Err(ToolError("Choose a stamp in the sidebar first"));
         }
         Ok(())
     }
     /// The chosen stamp's objects as a click would record them: turned and
-    /// mirrored, in catalog order. `None` without a chosen stamp the
-    /// catalog has.
+    /// mirrored, in catalog order (a copy's in capture order). `None`
+    /// without a copy or a chosen stamp the catalog has.
     pub fn stamp_objects(
         &self,
         catalog: &PreviewCatalog,
     ) -> Option<Vec<crate::stamp::StampObject>> {
+        if let Some(copy) = &self.copy {
+            return Some(crate::stamps::turned_objects(
+                copy.objects(),
+                self.stamp_turn,
+            ));
+        }
         let stamp = catalog.editing().stamps.get(self.stamp.as_deref()?)?;
         Some(crate::stamps::stamp_objects(stamp, self.stamp_turn))
     }
@@ -1527,7 +1651,7 @@ impl ToolState {
         if self.mode != ToolMode::Place {
             return Err(ToolError("Place tool is not active"));
         }
-        if self.stamp.is_some() {
+        if self.stamp_chosen() {
             let objects = self
                 .stamp_objects(catalog)
                 .ok_or(ToolError("Choose a stamp in the sidebar"))?;

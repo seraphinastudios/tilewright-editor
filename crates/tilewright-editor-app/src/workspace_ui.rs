@@ -113,6 +113,11 @@ pub enum Control {
     StampTurn,
     /// Mirror the chosen stamp across the anchor's column (M).
     StampMirror,
+    /// Copy area (C): arm it, so a drag over the map copies the objects in
+    /// a rectangle, or disarm it.
+    CopyArea,
+    /// Drop the copy captured from the map (Esc when nothing is pending).
+    DropCopy,
     EditDraft,
     ApplyDraft,
     CancelDraft,
