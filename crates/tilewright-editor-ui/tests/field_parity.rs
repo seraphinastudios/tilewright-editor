@@ -5,8 +5,9 @@
 //! by the same sequences from the same stored values, must agree on every
 //! result and refusal wording, the committed and displayed text, the
 //! selection in stored terms, and the action a review hands the engine. The
-//! inspector's string field, both zone name drafts and the palette filter
-//! (with the rows it keeps) are compared.
+//! inspector's string field, both zone name drafts, the palette filter
+//! (with the rows it keeps), the coordinates, a new anchor's id and a typed
+//! portal location are compared.
 use std::{fs, path::Path};
 use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewCatalog, PreviewLimits, loader};
@@ -238,8 +239,12 @@ fn both_fields_agree_on_every_step_and_on_the_reviewed_action() {
     );
 }
 
+/// Every text draft follows the switch: the string field, the coordinates,
+/// both zone name drafts, a new anchor's id, a portal's typed location and
+/// the palette filter. (The inspector's number, boolean and reference
+/// fields keep the editor's own; the sample grants none of them.)
 #[test]
-fn only_string_fields_zone_names_and_the_palette_filter_use_the_shared_field() {
+fn every_text_draft_follows_the_switch_to_the_shared_field() {
     let dir = tempfile::tempdir().unwrap();
     world_with(dir.path(), "Trail marker");
     let document = WorldDocument::open(dir.path()).unwrap();
@@ -280,10 +285,9 @@ fn only_string_fields_zone_names_and_the_palette_filter_use_the_shared_field() {
     tools
         .set_selection(TextSelection::caret(TextCursor::new(0)), later)
         .unwrap();
-    // Coordinates and every other draft but the zone names and the palette
-    // filter keep the editor's own field.
+    // The coordinates follow the switch too.
     tools.begin_move(&view, false).unwrap();
-    assert!(tools.shared_draft().is_none());
+    assert!(tools.shared_draft().is_some(), "the coordinates");
     // Both zone name drafts follow the switch.
     let (world, catalog) = (document.world(), &catalog);
     for implementation in FieldImplementation::ALL {
@@ -296,8 +300,7 @@ fn only_string_fields_zone_names_and_the_palette_filter_use_the_shared_field() {
         }
         tools.set_mode(ToolMode::Anchor);
         assert!(tools.draft_text().is_none());
-        // A new anchor's id and a portal's typed location keep the editor's
-        // own field with the switch on.
+        // So do a new anchor's id and a portal's typed location.
         let tile = SelectionKey::Cell {
             plane: "main".into(),
             layer: 0,
@@ -309,7 +312,7 @@ fn only_string_fields_zone_names_and_the_palette_filter_use_the_shared_field() {
             .begin_anchor_create(catalog, Some(&tile), document.revision(), false)
             .unwrap();
         assert!(tools.anchor_draft().is_some());
-        assert!(tools.shared_draft().is_none(), "an anchor id");
+        assert_eq!(tools.shared_draft().is_some(), shared, "an anchor id");
         let gate = SelectionKey::Object {
             uid: "gate_east".into(),
         };
@@ -317,7 +320,9 @@ fn only_string_fields_zone_names_and_the_palette_filter_use_the_shared_field() {
             .begin_portal_location(world, catalog, Some(&gate), document.revision(), false)
             .unwrap();
         assert!(tools.portal_draft().is_some());
-        assert!(tools.shared_draft().is_none(), "a portal location");
+        assert_eq!(tools.shared_draft().is_some(), shared, "a portal location");
+        tools.begin_move(&view, false).unwrap();
+        assert_eq!(tools.shared_draft().is_some(), shared, "the coordinates");
         // The palette filter follows the switch too.
         tools.set_mode(ToolMode::Place);
         tools.focus_filter().unwrap();
@@ -857,6 +862,382 @@ fn focusing_the_filter_ends_an_open_portal_step_with_either_field() {
             assert!(tools.filter_focused(), "{implementation:?} {step:?}");
             assert_eq!(tools.portal_step(), None, "{implementation:?} {step:?}");
             assert!(!tools.portal_picking());
+        }
+    }
+}
+
+/// The drafts typed as text but reviewed as something other than a field
+/// value: the coordinates (`x,y`), a new anchor's id and a portal's typed
+/// location.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum Typed {
+    Move,
+    Anchor,
+    Location,
+}
+
+impl Typed {
+    const ALL: [Self; 3] = [Self::Move, Self::Anchor, Self::Location];
+
+    /// The draft's own byte limit.
+    fn limit(self) -> usize {
+        match self {
+            Self::Move => 4096,
+            Self::Anchor => 128,
+            Self::Location => 128 + 3 * 21,
+        }
+    }
+
+    /// The text the draft opens with: marker_1's position, or nothing.
+    fn opened(self) -> &'static str {
+        match self {
+            Self::Move => "3,2",
+            Self::Anchor | Self::Location => "",
+        }
+    }
+
+    /// Text typed into the draft first: accepted, refused by each review
+    /// check, and in between.
+    fn start(self, random: &mut Seeded) -> String {
+        let starts: &[&str] = match self {
+            Self::Move => &[
+                "4,4",
+                " 5 , 6 ",
+                "-3,-2",
+                "+4,4",
+                "4,x",
+                "x,4",
+                "44",
+                "1,2,3",
+                "9223372036854775808,1",
+                "٣,٤",
+                "",
+            ],
+            Self::Anchor => &[
+                "camp",
+                "camp.b_c-1",
+                "Camp",
+                "-x",
+                "é",
+                "arrival",
+                "lookout",
+                "a b",
+                "",
+            ],
+            Self::Location => &[
+                "0 5 5",
+                "main 0, 5, 5",
+                "0,,5,,5",
+                "0 9007199254740991 -9007199254740991",
+                "1 1",
+                "main 0 5 5 5",
+                "elsewhere 0 1 1",
+                "main x 1 1",
+                "0 1 99999999999999999",
+                "0 -2 2",
+                "٠ ١ ٢",
+                "",
+            ],
+        };
+        match random.below(starts.len() + 2) {
+            index if index < starts.len() => starts[index].to_owned(),
+            // An id or location of the most bytes World takes, or one more.
+            index => match self {
+                Self::Move => format!("1,{}", "0".repeat(4094 + index - starts.len())),
+                Self::Anchor => "a".repeat(128 + index - starts.len()),
+                Self::Location => format!("0 5 {}", "0".repeat(186 + index - starts.len())),
+            },
+        }
+    }
+}
+
+/// The sample's document and catalog, with the inspector view of marker_1.
+struct Sample {
+    _dir: tempfile::TempDir,
+    document: WorldDocument,
+    catalog: PreviewCatalog,
+}
+
+impl Sample {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        world_with(dir.path(), "Trail marker");
+        let document = WorldDocument::open(dir.path()).unwrap();
+        let (catalog, _) = loader::load(
+            document.source(),
+            document.world(),
+            PreviewLimits::default(),
+        )
+        .unwrap();
+        Self {
+            _dir: dir,
+            document,
+            catalog,
+        }
+    }
+
+    fn marker() -> SelectionKey {
+        SelectionKey::Object {
+            uid: "marker_1".into(),
+        }
+    }
+
+    fn gate() -> SelectionKey {
+        SelectionKey::Object {
+            uid: "gate_west".into(),
+        }
+    }
+
+    fn tile() -> SelectionKey {
+        SelectionKey::Cell {
+            plane: "main".into(),
+            layer: 0,
+            grid: "floor".into(),
+            x: 3,
+            y: 3,
+        }
+    }
+
+    /// Open `typed` in `tools`, as the window opens it.
+    fn begin(&self, tools: &mut ToolState, typed: Typed) -> Result<(), ToolError> {
+        let (world, catalog, revision) = (
+            self.document.world(),
+            &self.catalog,
+            self.document.revision(),
+        );
+        match typed {
+            Typed::Move => {
+                let key = Self::marker();
+                let view = inspect(world, catalog, Some(&key), 4, revision);
+                tools.begin_move(&view, false)
+            }
+            Typed::Anchor => {
+                tools.begin_anchor_create(catalog, Some(&Self::tile()), revision, false)
+            }
+            Typed::Location => {
+                tools.begin_portal_location(world, catalog, Some(&Self::gate()), revision, false)
+            }
+        }
+    }
+
+    /// What Enter or Review hands the engine for the open `typed` draft.
+    fn review(&self, tools: &ToolState, typed: Typed) -> Result<Action, ToolError> {
+        let (world, catalog) = (self.document.world(), &self.catalog);
+        match typed {
+            Typed::Move => {
+                let key = Self::marker();
+                let view = inspect(world, catalog, Some(&key), 4, self.document.revision());
+                tools.build_action(&view, false)
+            }
+            Typed::Anchor => tools.anchor_action(world, catalog, false),
+            Typed::Location => {
+                tools.portal_location_action(world, catalog, Some(&Self::gate()), false)
+            }
+        }
+    }
+}
+
+/// The randomised parity run of [`both_fields_agree_on_every_step_and_on_the_reviewed_action`]
+/// for the coordinates, a new anchor's id and a typed portal location:
+/// every step and refusal, then the action review hands the engine, built
+/// from each field's committed text.
+#[test]
+#[allow(clippy::too_many_lines)] // The outcomes are listed inline.
+fn both_fields_agree_on_every_coordinate_anchor_and_location_step_and_on_the_reviewed_action() {
+    let mut random = Seeded(0x7e57_ed17);
+    let sample = Sample::new();
+    let (mut steps, mut refusals) = (0, 0);
+    let mut reviewed = std::collections::BTreeMap::<(Typed, String), usize>::new();
+    for round in 0..900 {
+        let typed = Typed::ALL[round % 3];
+        let [mut own, mut shared] = FieldImplementation::ALL.map(|implementation| {
+            let mut tools = ToolState::default();
+            tools.set_string_field(implementation);
+            sample.begin(&mut tools, typed).unwrap();
+            tools
+        });
+        // Each side really is the implementation it is named for.
+        assert!(own.shared_draft().is_none(), "{typed:?}");
+        assert!(shared.shared_draft().is_some(), "{typed:?}");
+        assert_eq!(own.draft_text(), Some(typed.opened()));
+        assert_eq!(shared.draft_text(), Some(typed.opened()));
+        let stale = [
+            own.input_revision().unwrap(),
+            shared.input_revision().unwrap(),
+        ];
+        let mut ops = vec![Op::Input(typed.start(&mut random))];
+        if typed == Typed::Move && random.below(4) != 0 {
+            ops.insert(0, Op::SelectAll);
+        }
+        ops.extend((0..random.below(6)).map(|_| op(&mut random)));
+        for op in &ops {
+            let before = [own.input_revision(), shared.input_revision()];
+            let results = [
+                apply(&mut own, op, stale[0]),
+                apply(&mut shared, op, stale[1]),
+            ];
+            assert_eq!(results[0], results[1], "{typed:?} {op:?}");
+            refusals += usize::from(results[0].is_err());
+            assert_eq!(own.draft_text(), shared.draft_text(), "{typed:?} {op:?}");
+            assert_eq!(
+                comparable(own.draft_snapshot().unwrap()),
+                comparable(shared.draft_snapshot().unwrap()),
+                "{typed:?} {op:?}"
+            );
+            assert_eq!(own.is_composing(), shared.is_composing());
+            assert_eq!(
+                before[0] == own.input_revision(),
+                before[1] == shared.input_revision(),
+                "{typed:?} {op:?}"
+            );
+            steps += 1;
+        }
+        let actions = [sample.review(&own, typed), sample.review(&shared, typed)];
+        assert_eq!(actions[0], actions[1], "{typed:?} {ops:?}");
+        let kind = match &actions[0] {
+            Ok(Action::Move { .. }) => "move".to_owned(),
+            Ok(Action::CreateAnchor { .. }) => "create anchor".to_owned(),
+            Ok(Action::SetPortal { .. }) => "set portal".to_owned(),
+            Ok(other) => panic!("{other:?}"),
+            Err(error) => error.0.to_owned(),
+        };
+        *reviewed.entry((typed, kind)).or_default() += 1;
+    }
+    // Every outcome of each review was reached, refusals included.
+    let composing = "Finish or cancel composition before review";
+    for (typed, kind) in [
+        (Typed::Move, "move"),
+        (Typed::Move, "Enter coordinates as x,y"),
+        (Typed::Move, "Invalid x coordinate"),
+        (Typed::Move, "Invalid y coordinate"),
+        (Typed::Move, composing),
+        (Typed::Anchor, "create anchor"),
+        (Typed::Anchor, "Type the new anchor's id first"),
+        (
+            Typed::Anchor,
+            "An anchor id is 1 to 128 lowercase letters, digits, '_', '.' or '-', starting with a letter or digit",
+        ),
+        (
+            Typed::Anchor,
+            "This plane already has an anchor with this id",
+        ),
+        (Typed::Anchor, composing),
+        (Typed::Location, "set portal"),
+        (Typed::Location, "Type layer x y, or plane layer x y"),
+        (
+            Typed::Location,
+            "Type three or four values: layer x y, or plane layer x y",
+        ),
+        (Typed::Location, "The world has no plane with this id"),
+        (Typed::Location, "The layer must be a whole number (32-bit)"),
+        (
+            Typed::Location,
+            "x and y must be whole numbers within plus or minus 9007199254740991",
+        ),
+        (Typed::Location, "The portal already leads there"),
+        (Typed::Location, composing),
+    ] {
+        assert!(
+            reviewed
+                .get(&(typed, kind.to_owned()))
+                .is_some_and(|count| *count > 0),
+            "{typed:?} {kind}: {reviewed:?}"
+        );
+    }
+    assert!(steps > 2_000 && refusals > 200, "{steps} {refusals}");
+}
+
+/// Each of these drafts' byte limits, refused in the editor's own wording
+/// in both fields, a character straddling the limit refused whole, and
+/// what review makes of text that fills the limit exactly.
+#[test]
+fn both_fields_refuse_coordinate_anchor_and_location_drafts_at_their_byte_limits() {
+    const REFUSED: ToolError =
+        ToolError("Input exceeds byte budget or contains control characters or line breaks");
+    let sample = Sample::new();
+    for typed in Typed::ALL {
+        let limit = typed.limit();
+        let full = match typed {
+            Typed::Move => format!("1,{}", "0".repeat(limit - 2)),
+            Typed::Anchor => "a".repeat(limit),
+            Typed::Location => format!("0 5 {}5", "0".repeat(limit - 5)),
+        };
+        assert_eq!(full.len(), limit);
+        let mut reviews = Vec::new();
+        for implementation in FieldImplementation::ALL {
+            let case = format!("{typed:?} {implementation:?}");
+            let mut tools = ToolState::default();
+            tools.set_string_field(implementation);
+            sample.begin(&mut tools, typed).unwrap();
+            assert_eq!(
+                tools.shared_draft().is_some(),
+                implementation == FieldImplementation::Shared,
+                "{case}"
+            );
+            tools.select_all().unwrap();
+            // One byte over, at once: refused and nothing changes.
+            assert_eq!(tools.input(&format!("{full}a")), Err(REFUSED), "{case}");
+            assert_eq!(tools.draft_text(), Some(typed.opened()), "{case}");
+            // One byte short, then a two-byte character: refused whole.
+            tools.select_all().unwrap();
+            tools.input(&full[..limit - 1]).unwrap();
+            assert_eq!(tools.input("é"), Err(REFUSED), "{case}");
+            assert_eq!(tools.update_preedit("é", 1, 0), Err(REFUSED), "{case}");
+            // Exactly the limit: taken, then nothing more.
+            tools.input(&full[limit - 1..]).unwrap();
+            assert_eq!(tools.draft_text(), Some(full.as_str()), "{case}");
+            assert_eq!(tools.input("a"), Err(REFUSED), "{case}");
+            assert_eq!(tools.update_preedit("a", 1, 0), Err(REFUSED), "{case}");
+            reviews.push(sample.review(&tools, typed));
+            // Deleting one makes room for one.
+            tools.backspace();
+            tools.input("0").unwrap();
+            assert_eq!(tools.draft_text().map(str::len), Some(limit), "{case}");
+        }
+        assert_eq!(reviews[0], reviews[1], "{typed:?}");
+        let reviewed = reviews[0].as_ref().unwrap();
+        match (typed, reviewed) {
+            (Typed::Move, Action::Move { x: 1, y: 0, .. })
+            | (Typed::Anchor, Action::CreateAnchor { .. })
+            | (Typed::Location, Action::SetPortal { .. }) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// Opening any of these drafts ends an open portal step with either field,
+/// as every other draft does: a tile click then no longer picks.
+#[test]
+fn opening_a_coordinate_anchor_or_location_draft_ends_an_open_portal_step() {
+    let sample = Sample::new();
+    for implementation in FieldImplementation::ALL {
+        for typed in Typed::ALL {
+            for step in [PortalStep::PickTile, PortalStep::Anchors] {
+                let case = format!("{implementation:?} {typed:?} {step:?}");
+                let mut tools = ToolState::default();
+                tools.set_string_field(implementation);
+                assert!(
+                    tools
+                        .toggle_portal_step(
+                            sample.document.world(),
+                            &sample.catalog,
+                            Some(&Sample::gate()),
+                            step,
+                            sample.document.revision(),
+                            false,
+                        )
+                        .unwrap(),
+                    "{case}"
+                );
+                sample.begin(&mut tools, typed).unwrap();
+                assert_eq!(
+                    tools.shared_draft().is_some(),
+                    implementation == FieldImplementation::Shared,
+                    "{case}"
+                );
+                assert_eq!(tools.portal_step(), None, "{case}");
+                assert!(!tools.portal_picking(), "{case}");
+            }
         }
     }
 }

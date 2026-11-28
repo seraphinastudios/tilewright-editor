@@ -5,7 +5,8 @@
 //! record, the reserved identities, refusals that pause rather than panic,
 //! and differential runs of real SDL events against the editor's own field,
 //! for the inspector's string field, both zone name drafts and the palette
-//! filter.
+//! filter (the coordinates, anchor ids and typed portal locations are in
+//! `shared_drafts.rs`).
 use super::{acknowledge_ui, application_with_source_using, input_key, modified_input_key};
 use crate::prototype::Application;
 use crate::shared_field::{
@@ -62,9 +63,9 @@ fn the_switch_is_off_by_default_and_on_names_the_field_in_every_frame() {
         app.capture("before").unwrap();
         app.control(Control::Field("label".into())).unwrap();
         assert_eq!(app.tools.shared_draft().is_some(), shared);
-        // Other drafts keep the editor's own field either way.
+        // The coordinates follow the switch too.
         app.control(Control::Coordinates).unwrap();
-        assert!(app.tools.shared_draft().is_none());
+        assert_eq!(app.tools.shared_draft().is_some(), shared);
         app.control(Control::Field("label".into())).unwrap();
         app.capture("draft").unwrap();
         for name in ["before", "draft"] {
@@ -171,7 +172,7 @@ fn a_frame_using_a_reserved_identity_or_another_text_system_is_refused_not_drawn
 }
 
 /// One SDL event through the editor's own routing: clipboard, text, keys.
-fn route(
+pub(super) fn route(
     app: &mut Application,
     input: &mut crate::native_input::NativeInput,
     event: &Event,
@@ -201,14 +202,14 @@ fn route(
     })
 }
 
-fn comparable(snapshot: Option<TextInputSnapshot>) -> Option<TextInputSnapshot> {
+pub(super) fn comparable(snapshot: Option<TextInputSnapshot>) -> Option<TextInputSnapshot> {
     snapshot.map(|mut snapshot| {
         snapshot.revision = TextRevision::default();
         snapshot
     })
 }
 
-fn text(value: &str) -> Event {
+pub(super) fn text(value: &str) -> Event {
     Event::TextInput {
         timestamp: 0,
         window_id: 7,
@@ -216,7 +217,7 @@ fn text(value: &str) -> Event {
     }
 }
 
-fn preedit(value: &str, start: i32, length: i32) -> Event {
+pub(super) fn preedit(value: &str, start: i32, length: i32) -> Event {
     Event::TextEditing {
         timestamp: 0,
         window_id: 7,
@@ -524,7 +525,10 @@ fn the_field_follows_its_row_when_the_frame_is_laid_out_again() {
 
 /// The raster samples drawing `quads` takes, found with the scene
 /// library's own check.
-fn raster_samples(scene: &tilewright_scene::SceneBundle, quads: &[tilewright_scene::Quad]) -> u64 {
+pub(super) fn raster_samples(
+    scene: &tilewright_scene::SceneBundle,
+    quads: &[tilewright_scene::Quad],
+) -> u64 {
     let fits = |samples| {
         tilewright_scene::SceneBundle::from_quads(
             scene.revision(),
@@ -656,7 +660,7 @@ fn highlight(scene: &tilewright_scene::SceneBundle) -> usize {
         .count()
 }
 
-fn field_drawn(scene: &tilewright_scene::SceneBundle) -> bool {
+pub(super) fn field_drawn(scene: &tilewright_scene::SceneBundle) -> bool {
     scene
         .quads()
         .iter()
@@ -943,7 +947,7 @@ fn the_editors_own_field_row_keeps_its_look() {
 }
 
 /// A change to the draft after it opens.
-type Edit = fn(&mut Application);
+pub(super) type Edit = fn(&mut Application);
 
 #[test]
 // The two fields must agree exactly, not within a tolerance.
@@ -1075,7 +1079,7 @@ fn zoned(
 
 /// The sidebar's texts but the draft row's own (the shared field draws its
 /// text itself): the hint, Review and Discard and every row below.
-fn sidebar_hints(app: &mut Application) -> Vec<String> {
+pub(super) fn sidebar_hints(app: &mut Application) -> Vec<String> {
     app.refresh_ui();
     let x = app.ui.sidebar_x();
     app.ui
@@ -1386,7 +1390,7 @@ fn the_shared_zone_name_fields_cover_and_paint_what_the_editors_own_fields_do() 
 }
 
 /// The toolbar's unsupported-text banner, if it shows.
-fn banner(app: &Application) -> Option<String> {
+pub(super) fn banner(app: &Application) -> Option<String> {
     app.ui
         .widgets
         .iter()
@@ -1401,7 +1405,7 @@ fn banner(app: &Application) -> Option<String> {
 /// or the underline is. `scrolled`: the text must be scrolled.
 // The two fields must agree exactly, not within a tolerance.
 #[allow(clippy::float_cmp)]
-fn same_frames(
+pub(super) fn same_frames(
     own: &mut Application,
     shared: &mut Application,
     case: &str,
@@ -1694,7 +1698,7 @@ struct FilterState {
 /// A sealed change's operations, each placed object's uid left out: a
 /// placement mints a fresh random uid (and so a different result digest)
 /// in every run.
-fn operations(sealed: &str) -> String {
+pub(super) fn operations(sealed: &str) -> String {
     let operations = &sealed[sealed.find("\"operations\":").unwrap()..];
     let mut out = String::new();
     let mut rest = operations;
@@ -1781,9 +1785,9 @@ enum FilterStep {
     Scroll(usize),
 }
 
-struct Seeded(u64);
+pub(super) struct Seeded(pub(super) u64);
 impl Seeded {
-    fn below(&mut self, bound: usize) -> usize {
+    pub(super) fn below(&mut self, bound: usize) -> usize {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
@@ -1855,7 +1859,7 @@ fn filter_step(random: &mut Seeded) -> FilterStep {
 }
 
 /// A left press at logical `at`, through the native loop's routing.
-fn press_at(app: &mut Application, at: [f32; 2]) -> Result<(), String> {
+pub(super) fn press_at(app: &mut Application, at: [f32; 2]) -> Result<(), String> {
     let logical = app.ui.logical_size();
     let physical = app.ui.size;
     crate::prototype::native_input_event(
@@ -1872,7 +1876,7 @@ fn press_at(app: &mut Application, at: [f32; 2]) -> Result<(), String> {
 /// A logical point `fraction` of the way across the first widget `find`
 /// keeps, half way down it.
 #[allow(clippy::cast_precision_loss)]
-fn widget_at(
+pub(super) fn widget_at(
     app: &mut Application,
     find: impl Fn(&crate::workspace_ui::Widget) -> bool,
     fraction: f32,

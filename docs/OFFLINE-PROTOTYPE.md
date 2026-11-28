@@ -156,32 +156,45 @@ invalidate earlier masks.
 
 `--shared-string-field` (given to `tools/provision-prototype.py`, which
 records `"string_field": "tilewright-ui 0.1.2"` in the receipt and passes the
-flag to the editor) switches the inspector's **string** fields, the two **zone
-name** drafts and the Place **palette filter** to the shared text field of
-`tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the editor's own
+flag to the editor) switches the inspector's **string** fields and every other
+text draft (the two **zone name** drafts, the Place **palette filter**, the
+**coordinates**, a new **anchor id** and a portal's **typed location**) to the
+shared text field of `tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the editor's own
 text system and font pack. It is off by default; without it nothing changes,
 and the frame records and images of a session are byte-identical. With it,
 each frame record carries the same `"string_field": "tilewright-ui 0.1.2"`
 member and the editor prints it at start.
 
-Only string field drafts, zone name drafts and the palette filter change
-hands: a zone's display name ("Edit display name") and a new zone's id and
-name ("New zone under X", "New top-level zone"), see [Managing
-zones](#managing-zones), and the filter at the top of the sidebar in Place
-mode, see [Placing objects](#placing-objects). Numbers, booleans and
-references, coordinates, anchors and portal locations keep the editor's own
-field. A shared draft keeps the same refusals and messages, stored line breaks
+Only the inspector's numbers, booleans and references keep the editor's own
+field. The drafts that change hands are string field drafts; a zone's display
+name ("Edit display name") and a new zone's id and name ("New zone under X",
+"New top-level zone"), see [Managing zones](#managing-zones); the filter at the
+top of the sidebar in Place mode, see [Placing objects](#placing-objects); the
+coordinates draft ("Edit position (x,y)"); "New anchor at (x, y)", see [Anchors](#anchors); and "Type a location", see [Portals](#portals).
+A shared draft keeps the same refusals and messages, stored line breaks
 as the same markers (now drawn by the shared field), the same keys, clipboard
 and input method events, and Enter or Review hands the engine the same action
 with the shared field's committed text: `SetField` for a string field,
-`RenameZone` or `CreateZone` for a zone draft. A zone draft keeps its own byte
+`RenameZone` or `CreateZone` for a zone draft, `Move` for coordinates,
+`CreateAnchor` for an anchor id and `SetPortal` for a typed location. A zone
+draft keeps its own byte
 limit (1,024 bytes for a display name, 1,153 for a new zone's id, space and
 name), refused in the editor's own words, its own hint ("Name of meadow; empty
 = none", "New zone under meadow: id, name"), the review-time checks (an empty
 name is no name; the id's syntax, a used id and the 256-character name, each
 with its message; text the font pack cannot draw) and the same road fence and
 pause: no zone draft opens while a road is drawn or editing is paused. The
-shared filter keeps the filter's own rules: the 64-byte limit with the same
+coordinates, a new anchor's id and a typed location keep theirs too: their
+byte limits (4,096 bytes for coordinates, 128 for an anchor id, 191 for a
+location) refused in the same words; their hints ("Ctrl+A selects / Enter
+reviews", "New anchor id at (2, 3); Enter reviews", "Portal of gate_west:
+[plane] layer x y"); their review-time checks, each with its message (`x,y`
+and whole numbers; the id's syntax and an id the plane uses; three or four
+values, the plane, a 32-bit layer, x and y within World's range, and a target
+where the portal already leads; text the font pack cannot draw); opening one
+ends an open portal step; and the same road fence and pause: none opens while
+a road is drawn or editing is paused, and an open one is not reviewed while
+paused. The shared filter keeps the filter's own rules: the 64-byte limit with the same
 refusal, every key is text while it is focused (N and O type, they do not
 act), `/` or a click focuses it, Enter or a click elsewhere releases it and
 keeps the text, Esc clears and releases it, a composition is dropped on
@@ -230,8 +243,9 @@ What only a person can check, in a real window with the switch on. Start the
 session with `--shared-string-field`; the terminal prints
 `string field: tilewright-ui 0.1.2 (opt-in)`. Select a marker and click its
 `label` row; then repeat 1, 2, 6, 9 and 12 in a zone draft (N, choose
-meadow, "Edit display name"; and "New zone under meadow"), and 1, 2, 3, 6
-and 11 in the palette filter (P, then `/`), with step 14.
+meadow, "Edit display name"; and "New zone under meadow"), 1, 2, 3, 6
+and 11 in the palette filter (P, then `/`), with step 14, and 2, 6, 9 and 11
+in the coordinates, a new anchor's id and a typed location, with step 15.
 
 1. **Looks.** Open the same field with and without the switch: the row has
    the same height and blue fill, the hint and the Review and Discard
@@ -270,9 +284,8 @@ and 11 in the palette filter (P, then `/`), with step 14.
     the same reason.
 11. **Scaling.** At 125 % or 150 % display scaling the caret, clicks and the
     candidate window line up with the text.
-12. **Esc and the other fields.** Esc discards the draft. Numbers,
-    coordinates, anchors and portal locations look and behave exactly as
-    before.
+12. **Esc and the other fields.** Esc discards the draft. Numbers look and
+    behave exactly as before.
 13. **Zone drafts.** "Edit display name" shows the name with "Name of
     meadow; empty = none" below; clearing it and pressing Enter reviews
     "Removes the display name 'Quiet meadow' of zone meadow; it shows no
@@ -291,6 +304,17 @@ and 11 in the palette filter (P, then `/`), with step 14.
     the filter has no Review or Discard: check that only its hint, "Enter
     keeps the filter / Esc clears it", sits below the row, and that Enter
     while composing does not release the field.
+15. **Coordinates, anchor ids and locations.** Select the marker and press
+    "Edit position (x,y)": the draft shows its position (`3,2`) with
+    "Ctrl+A selects / Enter reviews" below; `4,x` and Enter keep the draft
+    open with "Invalid y coordinate", `4,4` reviews the move. Press K, click
+    a tile and "New anchor at (x, y)": `Camp` and Enter keep the draft open
+    with the id message, `camp` reviews "Creates anchor camp on layer 0 at
+    …". Select gate_west, press "Type a location": the hint is "Portal of
+    gate_west: [plane] layer x y"; `1 1` keeps the draft open with "Type
+    three or four values: layer x y, or plane layer x y", `main 0, 5, 5`
+    reviews "gate_west now leads to main, layer 0, (5, 5)". With "Target a
+    tile in view" open, "Type a location" ends the pick step and its prompt.
 
 ### Terrain palette
 
@@ -1333,7 +1357,9 @@ again whatever the window offered, and World's validation stands behind it.
   selected tile and the view's spatial layer: an absent `test` of
   `["anchors", {"id": new}]` and an `insert` at the end of the `anchors`
   array, or `document.create` of `anchors.jsonc` when the plane has none
-  (Undo deletes that document again). Two anchors may share a tile.
+  (Undo deletes that document again). Two anchors may share a tile. With
+  `--shared-string-field` the shared text field edits the id, by the same
+  rules (see [Shared string field](#shared-string-field)).
 - **Move.** Choose an anchor that is on a tile of the view, select its new
   tile and press "Move here: (x, y)": one `set` of its `at`, expecting the old
   position (its `layer` stays). Every portal that names it now leads to the
@@ -1394,7 +1420,9 @@ byte-exact Undo and Redo:
   own plane, or `plane layer x y`; spaces or commas separate the values. The
   plane must exist, the layer is a 32-bit integer and x and y are integers
   within plus or minus 2^53 - 1, as World accepts. An error (and a target
-  where the portal already leads) keeps the draft open with its text.
+  where the portal already leads) keeps the draft open with its text. With
+  `--shared-string-field` the shared text field edits the draft, by the same
+  rules (see [Shared string field](#shared-string-field)).
 - **Clear portal** prepares its removal; disabled when there is none.
 
 The written portal leaves `plane` out when the target is in the object's own
