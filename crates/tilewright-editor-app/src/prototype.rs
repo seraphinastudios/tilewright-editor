@@ -881,7 +881,7 @@ impl Application {
         if let Err(blocked) = self.rebuild_inner() {
             self.view.camera = previous;
             if self.view.bounds != bounds && self.session.move_view(bounds).is_ok() {
-                self.view.bounds = bounds;
+                self.set_view_bounds(bounds);
             }
             self.rebuild()?;
             self.view_note = Some(ViewNote::Refused {
@@ -903,8 +903,19 @@ impl Application {
         let bounds =
             tilewright_editor_preview::follow_camera(self.view.bounds, self.view.camera.center);
         if bounds != self.view.bounds && self.session.move_view(bounds).is_ok() {
-            self.view.bounds = bounds;
+            self.set_view_bounds(bounds);
         }
+    }
+
+    /// Takes the session's moved view as the frame's, and works out an
+    /// open proposal's highlight again: which of its tiles are in the view
+    /// has changed.
+    fn set_view_bounds(&mut self, bounds: [i64; 4]) {
+        self.view.bounds = bounds;
+        if let Some(open) = self.proposal.as_mut() {
+            open.highlight = None;
+        }
+        self.refresh_highlight();
     }
 
     fn rebuild_inner(&mut self) -> std::result::Result<(), Blocked> {
