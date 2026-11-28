@@ -540,7 +540,7 @@ struct Application {
     favourites: Option<favourites_view::Personal>,
     /// The proposal panel's state, derived once for the layout being built.
     proposal_layout: Option<proposal_view::State>,
-    /// The shared string field's compiler, only with `--shared-string-field`.
+    /// The shared text field's compiler, only with `--shared-string-field`.
     shared_field: Option<crate::shared_field::SharedField>,
     /// The last accepted road, which Grade road flattens or smooths, and
     /// the road a pending change comes from ([`RoadMemory`]); settled by
@@ -799,11 +799,11 @@ pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
 }
 
 impl Application {
-    /// Switch the inspector's string fields and every other text draft but
-    /// the inspector's typed fields (the zone name drafts, the palette
+    /// Switch every text draft (the inspector's string, boolean, integer,
+    /// number and reference fields, the zone name drafts, the palette
     /// filter, the Move coordinates, a new anchor's id and a portal's typed
     /// location) to the shared field (`--shared-string-field`), from the
-    /// next such draft or filter focus on.
+    /// next draft or filter focus on.
     fn share_string_field(&mut self) -> Result<()> {
         self.shared_field = Some(crate::shared_field::SharedField::new()?);
         self.tools
@@ -3815,7 +3815,7 @@ impl Application {
     }
 
     /// The open draft's text field at `bounds`: the editor's own, or the
-    /// same row reserved for the shared string field to draw. Returns the
+    /// same row reserved for the shared text field to draw. Returns the
     /// next free row.
     fn draft_field(
         &self,
@@ -5184,7 +5184,7 @@ impl Application {
         {
             record.insert("proposal".into(), proposal);
         }
-        // Only with the shared string field, so other frames are unchanged.
+        // Only with the shared text field, so other frames are unchanged.
         if let (true, Some(record)) = (self.shared_field.is_some(), frame_record.as_object_mut()) {
             record.insert(
                 "string_field".into(),
@@ -7808,7 +7808,7 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     overlay.extend(highlight);
     overlay.extend(stroke.iter().copied());
     person.extend(stroke);
-    // The shared string field is compiled first, so the editor's frame is
+    // The shared text field is compiled first, so the editor's frame is
     // fitted with room for its quads and its raster samples: near the
     // budget the highlight and the preview give way, as without it, instead
     // of the frame failing. The field is then composed under the editor's
@@ -7880,7 +7880,7 @@ fn shared_field_reservation(field: Option<&crate::shared_field::PreparedField>) 
     field.map_or((0, 0), |field| (field.quads(), field.raster_samples()))
 }
 
-/// The shared string field compiled for the current layout, while it edits
+/// The shared text field compiled for the current layout, while it edits
 /// the open draft and its row is laid out.
 fn prepare_shared_field(
     app: &mut Application,

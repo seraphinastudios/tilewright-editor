@@ -161,13 +161,11 @@ fn scalar_drafts_obey_world_types_without_json_fallback(
         ),
     ] {
         tools.begin_field(&view, field, false).unwrap();
-        // Only string fields (`choice` and `label`) follow the switch; the
-        // boolean, integer, number and reference fields keep the editor's
-        // own field with it on.
+        // Every type follows the switch: the boolean, integer, number and
+        // reference fields as well as the string fields.
         assert_eq!(
             tools.shared_draft().is_some(),
-            implementation == tilewright_editor_ui::field_input::FieldImplementation::Shared
-                && matches!(field, "choice" | "label"),
+            implementation == tilewright_editor_ui::field_input::FieldImplementation::Shared,
             "{field}"
         );
         replace(&mut tools, valid);
@@ -185,6 +183,36 @@ fn scalar_drafts_obey_world_types_without_json_fallback(
             replace(&mut tools, invalid);
             assert!(tools.build_action(&view, false).is_err(), "{field}");
         }
+    }
+    // A boolean takes exactly `true` or `false`: no trimming, no other
+    // case, no other spelling.
+    tools.begin_field(&view, "flag", false).unwrap();
+    for invalid in [
+        " true",
+        "true ",
+        "\u{a0}false",
+        "TRUE",
+        "False",
+        "1",
+        "0",
+        "yes",
+        "",
+    ] {
+        replace(&mut tools, invalid);
+        assert_eq!(
+            tools.build_action(&view, false),
+            Err(tilewright_editor_ui::tools::ToolError(
+                "Enter true or false"
+            )),
+            "{invalid:?}"
+        );
+    }
+    for (valid, expected) in [("true", true), ("false", false)] {
+        replace(&mut tools, valid);
+        let Action::SetField { value, .. } = tools.build_action(&view, false).unwrap() else {
+            panic!("expected field")
+        };
+        assert_eq!(value, serde_json::json!(expected));
     }
     tools.begin_field(&view, "weight", false).unwrap();
     for invalid in ["inf", "-inf", "2.01", "-1.01", "{}"] {

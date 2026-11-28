@@ -1,12 +1,11 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! Drawing the opt-in shared string field (`--shared-string-field`).
+//! Drawing the opt-in shared text field (`--shared-string-field`).
 //!
-//! The inspector's string fields and every other text draft but the
-//! inspector's typed fields (the zone name drafts, the palette filter, the
-//! Move coordinates, a new anchor's id and a portal's typed location) are
-//! edited by `tilewright-ui`'s field (see
+//! Every text draft (the inspector's string, boolean, integer, number and
+//! reference fields, the zone name drafts, the palette filter, the Move
+//! coordinates, a new anchor's id and a portal's typed location) is edited by `tilewright-ui`'s field (see
 //! `tilewright_editor_ui::field_input`); here its state is laid out in the
 //! sidebar row (or, for the filter, the row at the top of the sidebar),
 //! compiled by `tilewright-ui-render`'s `UiCompiler` with the editor's own

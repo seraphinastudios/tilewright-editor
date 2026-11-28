@@ -5,9 +5,10 @@
 //! by the same sequences from the same stored values, must agree on every
 //! result and refusal wording, the committed and displayed text, the
 //! selection in stored terms, and the action a review hands the engine. The
-//! inspector's string field, both zone name drafts, the palette filter
-//! (with the rows it keeps), the coordinates, a new anchor's id and a typed
-//! portal location are compared.
+//! inspector's string field, its boolean, integer, number and reference
+//! fields, both zone name drafts, the palette filter (with the rows it
+//! keeps), the coordinates, a new anchor's id and a typed portal location
+//! are compared.
 use std::{fs, path::Path};
 use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewCatalog, PreviewLimits, loader};
@@ -241,8 +242,8 @@ fn both_fields_agree_on_every_step_and_on_the_reviewed_action() {
 
 /// Every text draft follows the switch: the string field, the coordinates,
 /// both zone name drafts, a new anchor's id, a portal's typed location and
-/// the palette filter. (The inspector's number, boolean and reference
-/// fields keep the editor's own; the sample grants none of them.)
+/// the palette filter. (The sample grants no typed inspector field; those
+/// follow it in [`every_typed_inspector_field_follows_the_switch_and_ends_an_open_portal_step`].)
 #[test]
 fn every_text_draft_follows_the_switch_to_the_shared_field() {
     let dir = tempfile::tempdir().unwrap();
@@ -1238,6 +1239,404 @@ fn opening_a_coordinate_anchor_or_location_draft_ends_an_open_portal_step() {
                 assert_eq!(tools.portal_step(), None, "{case}");
                 assert!(!tools.portal_picking(), "{case}");
             }
+        }
+    }
+}
+
+/// The fields the hand test adds to a copy of the sample (the docs' step
+/// 16): a boolean, an integer, a number and a reference field in the
+/// object schema (`profile/schema/object.jsonc`), each granted on
+/// `marker_1` in `preview.jsonc`'s `editing.fields`.
+const TYPED_SCHEMA: [(&str, &str); 4] = [
+    ("flag", r#"{"type": "boolean"}"#),
+    ("count", r#"{"type": "integer", "min": -2, "max": 7}"#),
+    ("weight", r#"{"type": "number", "min": -1, "max": 2}"#),
+    ("kind", r#"{"type": "reference", "target": "proto"}"#),
+];
+
+/// The sample with [`TYPED_SCHEMA`] added and granted, and `marker_1`'s
+/// values for them set to `stored` (`None`: absent, as in the hand test).
+fn typed_world(root: &Path, stored: Option<[serde_json::Value; 4]>) {
+    world_with(root, "Trail marker");
+    let path = root.join("profile/schema/object.jsonc");
+    let mut schema: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for (name, spec) in TYPED_SCHEMA {
+        schema["fields"][name] = serde_json::from_str(spec).unwrap();
+    }
+    fs::write(path, serde_json::to_vec_pretty(&schema).unwrap()).unwrap();
+    let path = root.join("preview.jsonc");
+    let mut catalog: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let grants = catalog["editing"]["fields"].as_array_mut().unwrap();
+    for (name, _) in TYPED_SCHEMA {
+        grants.push(serde_json::json!({"uid": "marker_1", "field": name}));
+    }
+    fs::write(path, serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
+    if let Some(stored) = stored {
+        let path = root.join("planes/main/layers/0/0_0.jsonc");
+        let mut chunk: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let fields = &mut chunk["objects"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|object| object["uid"] == "marker_1")
+            .unwrap()["fields"];
+        for ((name, _), value) in TYPED_SCHEMA.into_iter().zip(stored) {
+            fields[name] = value;
+        }
+        fs::write(path, serde_json::to_vec_pretty(&chunk).unwrap()).unwrap();
+    }
+}
+
+/// The inspector's typed fields: a boolean, an integer, a number and a
+/// reference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum Scalar {
+    Flag,
+    Count,
+    Weight,
+    Kind,
+}
+
+impl Scalar {
+    const ALL: [Self; 4] = [Self::Flag, Self::Count, Self::Weight, Self::Kind];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Flag => "flag",
+            Self::Count => "count",
+            Self::Weight => "weight",
+            Self::Kind => "kind",
+        }
+    }
+
+    /// Text typed into the draft first: accepted, refused by each review
+    /// check, at and past the schema's range, and in between.
+    fn start(self, random: &mut Seeded) -> String {
+        let starts: &[&str] = match self {
+            Self::Flag => &[
+                "true", "false", "TRUE", "True", "1", "yes", " true", "false ", "",
+            ],
+            Self::Count => &[
+                "7",
+                "-2",
+                "8",
+                "-3",
+                "0",
+                "-0",
+                "+3",
+                "3.0",
+                "1e1",
+                "٣",
+                "9223372036854775807",
+                "9223372036854775808",
+                " 3",
+                "",
+            ],
+            Self::Weight => &[
+                "2",
+                "-1",
+                "1.5",
+                "2.01",
+                "-1.01",
+                "2.0000001",
+                "NaN",
+                "inf",
+                "-inf",
+                "1e0",
+                ".5",
+                "5.",
+                "+1",
+                "1,5",
+                "٣",
+                "-0",
+                "",
+            ],
+            Self::Kind => &[
+                "marker", "stone", "grass", "Marker", "unknown", "marker ", "lamp", "",
+            ],
+        };
+        match random.below(starts.len() + 2) {
+            index if index < starts.len() => starts[index].to_owned(),
+            // Zeros filling the draft's 4,096 bytes, or one more.
+            index => "0".repeat(4095 + index - starts.len()),
+        }
+    }
+}
+
+/// The sample with [`TYPED_SCHEMA`], its document, catalog and `marker_1`.
+struct TypedSample {
+    _dir: tempfile::TempDir,
+    document: WorldDocument,
+    catalog: PreviewCatalog,
+    marker: SelectionKey,
+}
+
+impl TypedSample {
+    fn new(stored: Option<[serde_json::Value; 4]>) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        typed_world(dir.path(), stored);
+        let document = WorldDocument::open(dir.path()).unwrap();
+        let (catalog, _) = loader::load(
+            document.source(),
+            document.world(),
+            PreviewLimits::default(),
+        )
+        .unwrap();
+        Self {
+            _dir: dir,
+            document,
+            catalog,
+            marker: Sample::marker(),
+        }
+    }
+
+    fn view(&self) -> tilewright_editor_ui::inspector::Inspector<'_> {
+        inspect(
+            self.document.world(),
+            &self.catalog,
+            Some(&self.marker),
+            4,
+            self.document.revision(),
+        )
+    }
+}
+
+/// The stored values the typed runs open: absent, and each type's own.
+fn typed_stored() -> [Option<[serde_json::Value; 4]>; 2] {
+    [
+        None,
+        Some([
+            serde_json::json!(true),
+            serde_json::json!(3),
+            serde_json::json!(0.5),
+            serde_json::json!("marker"),
+        ]),
+    ]
+}
+
+/// The randomised parity run of [`both_fields_agree_on_every_step_and_on_the_reviewed_action`]
+/// for the inspector's boolean, integer, number and reference fields:
+/// every step and refusal, then the `SetField` (or the refusal, in each
+/// type's own words) review builds from each field's committed text.
+#[test]
+#[allow(clippy::too_many_lines)] // The outcomes are listed inline.
+fn both_fields_agree_on_every_typed_inspector_field_step_and_on_the_reviewed_value() {
+    let mut random = Seeded(0x5ca1_a7ed);
+    let (mut steps, mut refusals) = (0, 0);
+    let mut reviewed = std::collections::BTreeMap::<(Scalar, String), usize>::new();
+    for stored in typed_stored() {
+        let sample = TypedSample::new(stored.clone());
+        let view = sample.view();
+        for round in 0..800 {
+            let scalar = Scalar::ALL[round % 4];
+            let [mut own, mut shared] = FieldImplementation::ALL.map(|implementation| {
+                let mut tools = ToolState::default();
+                tools.set_string_field(implementation);
+                tools.begin_field(&view, scalar.name(), false).unwrap();
+                tools
+            });
+            // Each side really is the implementation it is named for.
+            assert!(own.shared_draft().is_none(), "{scalar:?}");
+            assert!(shared.shared_draft().is_some(), "{scalar:?}");
+            assert_eq!(own.draft_text(), shared.draft_text(), "{scalar:?}");
+            let stale = [
+                own.input_revision().unwrap(),
+                shared.input_revision().unwrap(),
+            ];
+            let mut ops = vec![Op::Input(scalar.start(&mut random))];
+            if random.below(4) != 0 {
+                ops.insert(0, Op::SelectAll);
+            }
+            ops.extend((0..random.below(6)).map(|_| op(&mut random)));
+            for op in &ops {
+                let before = [own.input_revision(), shared.input_revision()];
+                let results = [
+                    apply(&mut own, op, stale[0]),
+                    apply(&mut shared, op, stale[1]),
+                ];
+                assert_eq!(results[0], results[1], "{scalar:?} {op:?}");
+                refusals += usize::from(results[0].is_err());
+                assert_eq!(own.draft_text(), shared.draft_text(), "{scalar:?} {op:?}");
+                assert_eq!(
+                    comparable(own.draft_snapshot().unwrap()),
+                    comparable(shared.draft_snapshot().unwrap()),
+                    "{scalar:?} {op:?}"
+                );
+                assert_eq!(own.is_composing(), shared.is_composing());
+                assert_eq!(
+                    before[0] == own.input_revision(),
+                    before[1] == shared.input_revision(),
+                    "{scalar:?} {op:?}"
+                );
+                steps += 1;
+            }
+            let actions = [
+                own.build_action(&view, false),
+                shared.build_action(&view, false),
+            ];
+            assert_eq!(actions[0], actions[1], "{scalar:?} {ops:?}");
+            let kind = match &actions[0] {
+                Ok(Action::SetField { field, .. }) => {
+                    assert_eq!(field, scalar.name());
+                    "set field".to_owned()
+                }
+                Ok(other) => panic!("{other:?}"),
+                Err(error) => error.0.to_owned(),
+            };
+            *reviewed.entry((scalar, kind)).or_default() += 1;
+        }
+    }
+    // Every outcome of each type's review was reached, refusals included.
+    let composing = "Finish or cancel composition before review";
+    for (scalar, kind) in [
+        (Scalar::Flag, "set field"),
+        (Scalar::Flag, "Enter true or false"),
+        (Scalar::Flag, composing),
+        (Scalar::Count, "set field"),
+        (Scalar::Count, "Enter an integer"),
+        (Scalar::Count, "Integer is outside schema range"),
+        (Scalar::Count, composing),
+        (Scalar::Weight, "set field"),
+        (Scalar::Weight, "Enter a finite number"),
+        (
+            Scalar::Weight,
+            "Number is non-finite or outside schema range",
+        ),
+        (Scalar::Weight, composing),
+        (Scalar::Kind, "set field"),
+        (
+            Scalar::Kind,
+            "Reference does not name an authoritative definition",
+        ),
+        (Scalar::Kind, composing),
+    ] {
+        assert!(
+            reviewed
+                .get(&(scalar, kind.to_owned()))
+                .is_some_and(|count| *count > 0),
+            "{scalar:?} {kind}: {reviewed:?}"
+        );
+    }
+    assert!(steps > 4_000 && refusals > 400, "{steps} {refusals}");
+}
+
+/// The typed fields' 4,096-byte limit, refused in the editor's own wording
+/// in both fields, a character straddling the limit refused whole, and
+/// what review makes of text that fills the limit exactly.
+#[test]
+fn both_fields_refuse_typed_inspector_fields_at_their_byte_limit() {
+    const REFUSED: ToolError =
+        ToolError("Input exceeds byte budget or contains control characters or line breaks");
+    let sample = TypedSample::new(None);
+    let view = sample.view();
+    let limit = tilewright_editor_ui::inspector::MAX_INPUT_BYTES;
+    assert_eq!(limit, 4096);
+    let full = "0".repeat(limit);
+    for scalar in Scalar::ALL {
+        let mut reviews = Vec::new();
+        for implementation in FieldImplementation::ALL {
+            let case = format!("{scalar:?} {implementation:?}");
+            let mut tools = ToolState::default();
+            tools.set_string_field(implementation);
+            tools.begin_field(&view, scalar.name(), false).unwrap();
+            assert_eq!(
+                tools.shared_draft().is_some(),
+                implementation == FieldImplementation::Shared,
+                "{case}"
+            );
+            assert_eq!(tools.draft_text(), Some(""), "{case}: absent");
+            // One byte over, at once: refused and nothing changes.
+            assert_eq!(tools.input(&format!("{full}0")), Err(REFUSED), "{case}");
+            assert_eq!(tools.draft_text(), Some(""), "{case}");
+            // One byte short, then a two-byte character: refused whole.
+            tools.input(&full[..limit - 1]).unwrap();
+            assert_eq!(tools.input("é"), Err(REFUSED), "{case}");
+            assert_eq!(tools.update_preedit("é", 1, 0), Err(REFUSED), "{case}");
+            // Exactly the limit: taken, then nothing more.
+            tools.input("0").unwrap();
+            assert_eq!(tools.draft_text(), Some(full.as_str()), "{case}");
+            assert_eq!(tools.input("0"), Err(REFUSED), "{case}");
+            assert_eq!(tools.update_preedit("0", 1, 0), Err(REFUSED), "{case}");
+            reviews.push(tools.build_action(&view, false));
+            // Deleting one makes room for one.
+            tools.backspace();
+            tools.input("0").unwrap();
+            assert_eq!(tools.draft_text().map(str::len), Some(limit), "{case}");
+        }
+        assert_eq!(reviews[0], reviews[1], "{scalar:?}");
+        match (scalar, &reviews[0]) {
+            (Scalar::Count, Ok(Action::SetField { value, .. })) => {
+                assert_eq!(value, &serde_json::json!(0));
+            }
+            (Scalar::Weight, Ok(Action::SetField { value, .. })) => {
+                assert_eq!(value, &serde_json::json!(0.0));
+            }
+            (Scalar::Flag, Err(ToolError("Enter true or false")))
+            | (
+                Scalar::Kind,
+                Err(ToolError("Reference does not name an authoritative definition")),
+            ) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+/// Every typed inspector field follows the switch, from absent and from a
+/// stored value, opens with the same text in both fields, and ends an
+/// open portal step as every other draft does.
+#[test]
+fn every_typed_inspector_field_follows_the_switch_and_ends_an_open_portal_step() {
+    for stored in typed_stored() {
+        let sample = TypedSample::new(stored.clone());
+        let view = sample.view();
+        for scalar in Scalar::ALL {
+            let mut opened = Vec::new();
+            for implementation in FieldImplementation::ALL {
+                for step in [None, Some(PortalStep::PickTile), Some(PortalStep::Anchors)] {
+                    let case = format!("{stored:?} {scalar:?} {implementation:?} {step:?}");
+                    let mut tools = ToolState::default();
+                    tools.begin_field(&view, scalar.name(), false).unwrap();
+                    assert!(tools.shared_draft().is_none(), "{case}: off by default");
+                    tools.set_string_field(implementation);
+                    if let Some(step) = step {
+                        assert!(
+                            tools
+                                .toggle_portal_step(
+                                    sample.document.world(),
+                                    &sample.catalog,
+                                    Some(&Sample::gate()),
+                                    step,
+                                    sample.document.revision(),
+                                    false,
+                                )
+                                .unwrap(),
+                            "{case}"
+                        );
+                    }
+                    tools.begin_field(&view, scalar.name(), false).unwrap();
+                    assert_eq!(
+                        tools.shared_draft().is_some(),
+                        implementation == FieldImplementation::Shared,
+                        "{case}"
+                    );
+                    assert_eq!(tools.portal_step(), None, "{case}");
+                    assert!(!tools.portal_picking(), "{case}");
+                    opened.push(comparable(tools.draft_snapshot().unwrap()));
+                }
+            }
+            assert!(
+                opened.windows(2).all(|pair| pair[0] == pair[1]),
+                "{scalar:?}"
+            );
+            let expected = match (&stored, scalar) {
+                (None, _) => "",
+                (Some(_), Scalar::Flag) => "true",
+                (Some(_), Scalar::Count) => "3",
+                (Some(_), Scalar::Weight) => "0.5",
+                (Some(_), Scalar::Kind) => "marker",
+            };
+            assert_eq!(opened[0].committed, expected, "{scalar:?}");
         }
     }
 }
