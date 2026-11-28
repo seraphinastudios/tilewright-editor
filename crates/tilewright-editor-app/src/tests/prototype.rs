@@ -2225,6 +2225,8 @@ mod sculpt_mode;
 mod shared_drafts;
 #[path = "shared_field.rs"]
 mod shared_string_field;
+#[path = "shared_typed_fields.rs"]
+mod shared_typed_fields;
 
 #[path = "flatten_mode.rs"]
 mod flatten_mode;
@@ -2262,6 +2264,9 @@ mod compose_candidates;
 
 #[path = "stamps.rs"]
 mod stamps;
+
+#[path = "capture.rs"]
+mod capture;
 
 #[path = "view_refusal.rs"]
 mod view_refusal;

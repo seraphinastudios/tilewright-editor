@@ -113,6 +113,11 @@ pub enum Control {
     StampTurn,
     /// Mirror the chosen stamp across the anchor's column (M).
     StampMirror,
+    /// Copy area (C): arm it, so a drag over the map copies the objects in
+    /// a rectangle, or disarm it.
+    CopyArea,
+    /// Drop the copy captured from the map (Esc when nothing is pending).
+    DropCopy,
     EditDraft,
     ApplyDraft,
     CancelDraft,
@@ -142,7 +147,7 @@ pub struct Widget {
     /// A 1 px frame of this colour around the swatch, for the badge legend
     /// rows, whose badges carry the same outline.
     pub swatch_outline: Option<[f32; 4]>,
-    /// The row the shared string field draws itself; the editor draws
+    /// The row the shared text field draws itself; the editor draws
     /// nothing there.
     pub shared: bool,
 }
@@ -160,7 +165,7 @@ pub struct WorkspaceUi {
     pub logical_sidebar: Rect,
     pub logical_review: Rect,
     pub widgets: Vec<Widget>,
-    /// The logical row reserved for the shared string field, when laid out.
+    /// The logical row reserved for the shared text field, when laid out.
     pub shared_field: Option<Rect>,
     logical: (u32, u32),
 }
@@ -321,7 +326,7 @@ impl WorkspaceUi {
         }
     }
 
-    /// Reserve `bounds` for the shared string field: a click there edits
+    /// Reserve `bounds` for the shared text field: a click there edits
     /// the draft, as on the editor's own field; the shared field draws it.
     pub fn shared_editable(&mut self, bounds: Rect) {
         let before = self.widgets.len();

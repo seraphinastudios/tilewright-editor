@@ -7,7 +7,8 @@ three pull requests: the desktop's catalog stamps).
 which records a stamp's objects inline as prototypes and final offsets.
 This change gives the desktop its first source of such lists: named stamps
 in the catalog, put down from Place mode. Rectangle capture from the map is
-the third pull request.
+the third pull request; its decisions are recorded below, under
+[Capture from the map](#capture-from-the-map).
 
 ## Owner decisions, 2026-11-26
 
@@ -80,10 +81,68 @@ them.
   there would change an MCP reply; an agent builds its own `place_objects`
   list.
 
+## Capture from the map
+
+Added 2026-11-28 with the third pull request, which settles the
+"rectangle capture" item this record left open. A copy captured from the
+map is the second source of a `place_objects` list; it reuses every rule
+above (R and M, the preview, the click, Review) and adds no catalog
+member, no engine rule and no proposal change.
+
+**Owner decision 3, 2026-11-27:** capture copies prototype and position
+only; copies get the grant's default fields, and their own field values,
+layering and portal links do not come along; an ungranted prototype in
+the rectangle makes the copy refuse, and the status line says so; it uses
+the existing `place_objects` kind.
+
+Implementation decisions (the implementing agent's; the owner can
+revisit any of them):
+
+- **The gesture.** C in Place mode arms Copy area; a press on a view tile,
+  a drag and a release span the rectangle. C was free (only Ctrl or Cmd
+  with C in a text draft copies text). A key, not a modifier-drag, so a
+  touchpad needs no held key and the armed state shows on the status line.
+  No control is laid out before the first C, so a session that never
+  copies draws exactly as before; once armed or holding a copy, Place mode
+  shows "Copy area  C" and "Drop copy  Esc" buttons. C again, Esc, a mode
+  change or an opened portal step stops it.
+- **The rectangle and what counts.** Both corners are view tiles (a
+  pointer off the map keeps the last one), so the rectangle is clipped to
+  the view. Every top-level object on its tiles, on the view's plane and
+  spatial layer, counts; other layers, inventory objects and tiles outside
+  the view never do.
+- **Order and anchor.** Row by row (`y`, then `x`), each tile in stacking
+  order, so stacks come out as they were; the anchor is the rectangle's
+  smallest-`x`, smallest-`y` tile, so every copied offset is `>= 0` and a
+  click puts that corner on the clicked tile.
+- **Refuse the copy, not every click.** No object, more than 64 (the
+  engine's limit) or an ungranted prototype copies nothing, with the
+  reason, and the status line says it while the rectangle is dragged.
+  Copying such a list and letting the engine refuse each click
+  (`grant.missing`) was the alternative; grants cannot change within a
+  session, so that copy could never be stamped, and refusing it once is
+  how catalog stamps with an ungranted prototype are refused (at load).
+- **The clipboard is session state.** One copy, held in the tool state,
+  never written or recorded; a new session starts without it. It is the
+  chosen stamp after a copy; choosing a prototype or a catalog stamp
+  replaces it and a new copy replaces a catalog stamp. Esc drops it only
+  when nothing is pending (a pending change is cancelled first), so Esc
+  after a stamped click keeps the copy for the next one.
+- **Only when the session can prepare.** No rectangle starts, and C does
+  not arm, while a change is pending; no rectangle starts while editing
+  is paused; and a release copies nothing when a change became pending,
+  editing paused or the session blocked during the drag. A focus loss
+  ends a drag copying nothing, as it ends a stroke. So the copy is always
+  of the committed World as shown.
+- **Discoverability.** `HELP` (the window title and the start-up line)
+  names C and Esc for the copy, as it names R and M.
+
 ## Not decided here
 
 Whether M should flip across the screen's vertical in an isometric view
 (`[dx, dy] → [dy, dx]` there) rather than across the anchor's column,
-rectangle capture (the next pull request), stamps of terrain, a preview of
-the objects' art rather than their tiles, and a stamp list in the catalog
-report or MCP.
+stamps of terrain, a preview of the objects' art rather than their tiles,
+a stamp list in the catalog report or MCP, copying field values, render
+layers, `sub_layer`, `z` or portals of captured objects (decided against
+for now by the owner), keeping a copy across sessions or saving it as a
+catalog stamp, and selecting objects one by one rather than by rectangle.
