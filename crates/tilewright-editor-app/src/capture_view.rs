@@ -26,6 +26,14 @@ pub(super) const CAPTURE_PENDING: &str =
 /// The refusal of a press off the view's tiles.
 pub(super) const CAPTURE_OFF_VIEW: &str =
     "Copy area starts on a tile of the view: no tile under the pointer.";
+/// The refusal of a release after a change became pending during the drag.
+pub(super) const CAPTURE_BECAME_PENDING: &str = "Nothing copied: a change became pending during the drag. Accept or cancel it, then copy again.";
+/// The refusal of a release after the session was blocked during the drag.
+pub(super) const CAPTURE_BLOCKED: &str =
+    "Nothing copied: editing is blocked, so nothing can be copied or placed.";
+/// The notice after a focus loss ended a rectangle being dragged.
+pub(super) const CAPTURE_INTERRUPTED: &str =
+    "Copy area interrupted: the window lost focus, so nothing was copied.";
 /// The pinned row's words for a copy, after its count.
 pub(super) const COPIED: &str = "Copied";
 
@@ -84,6 +92,14 @@ impl Application {
                 if self.session.status().phase == SessionPhase::Blocked {
                     return Err(STAMP_BLOCKED.into());
                 }
+                // Arming while a change is pending would hide its review
+                // line, and no rectangle could start: refuse it (C still
+                // stops an armed Copy area).
+                if self.tools.capture_gesture().is_none()
+                    && self.session.history().pending().is_some()
+                {
+                    return Err(CAPTURE_PENDING.into());
+                }
                 self.tools
                     .toggle_capture()
                     .map_err(|error| error.to_string())?;
@@ -112,6 +128,15 @@ impl Application {
     /// stamp.
     pub(super) fn copy_droppable(&self) -> bool {
         self.session.history().pending().is_none() && self.tools.copy_choice().is_some()
+    }
+
+    /// A focus loss in the middle of a drag: the rectangle ends copying
+    /// nothing, as a stroke does, and Copy area stays armed.
+    pub(super) fn interrupt_capture(&mut self) {
+        if self.tools.abandon_capture_drag() {
+            self.notice = Some(CAPTURE_INTERRUPTED.into());
+            self.presented_generation = None;
+        }
     }
 
     /// Whether a press on the map starts or ends Copy area's rectangle.
@@ -172,7 +197,30 @@ impl Application {
 
     /// Release: copy the rectangle's objects, or say why nothing was
     /// copied (the earlier choice stays then, and Copy area stays armed).
+    ///
+    /// A rectangle is copied only while the session could prepare a
+    /// change, as when it started: one that became pending (Z during the
+    /// drag), a pause or a blocked session ends the drag copying nothing,
+    /// so a copy is always of the committed World as shown.
     pub(super) fn finish_capture(&mut self) -> Result<()> {
+        if self.capture_dragging() {
+            let refusal = if self.session.status().phase == SessionPhase::Blocked {
+                self.tools.stop_capture();
+                Some(CAPTURE_BLOCKED.to_owned())
+            } else if let Err(reason) = self.refuse_while_paused() {
+                Some(format!("Nothing copied: {reason}"))
+            } else if !self.session.can_prepare() {
+                Some(CAPTURE_BECAME_PENDING.to_owned())
+            } else {
+                None
+            };
+            if let Some(refusal) = refusal {
+                self.tools.abandon_capture_drag();
+                self.forget_hover();
+                self.presented_generation = None;
+                return Err(refusal);
+            }
+        }
         let world = self.session.history().document().world();
         let outcome = self.tools.finish_capture(world, self.session.catalog());
         self.forget_hover();

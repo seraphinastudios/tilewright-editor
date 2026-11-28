@@ -1821,7 +1821,9 @@ release on one tile copies that tile. C again, or Esc, stops without
 copying; so does a mode change, and opening a portal step (C in turn ends
 an open portal step, so a press is never both). C is Place mode's own key:
 elsewhere it does nothing, and a focused text draft or palette filter
-takes it as text.
+takes it as text; Ctrl or Cmd with C never arms it. While a change is
+pending C is refused ("Accept or cancel the pending change before copying
+an area."), so the review line stays on the status line.
 
 What a copy holds:
 
@@ -1846,7 +1848,9 @@ What a copy holds:
   is new: a new uid, the grant's render `layer` and the grant's `defaults`,
   exactly what one Place click of that prototype writes.
 - **1 to 64 objects.** A rectangle with no object, more than 64 (the
-  engine's limit), or any prototype `editing.objects` does not grant
+  engine's limit; a dense copy stamped into dense chunks can still exceed
+  the review's visible limit, which refuses Accept as for any change), or
+  any prototype `editing.objects` does not grant
   copies nothing: the status line says so while it is dragged ("…: 65
   objects, more than 64; release copies nothing.", "…: not granted:
   marker; release copies nothing."), and the release is refused with the
@@ -1856,9 +1860,16 @@ What a copy holds:
   within a session, so a copy with an ungranted prototype could never be
   stamped; refusing the copy says so once, before any click, instead of on
   every click.
-- Nothing can be copied while a change is pending or editing is paused (a
-  press is refused with the reason), so a copy is always of the committed
-  World as shown. Copying writes nothing and records nothing.
+- Nothing can be copied while a change is pending, editing is paused or
+  the session is blocked: a press is refused with the reason, and a
+  release whose drag saw one of them arise (Z while holding the button,
+  for example) copies nothing and says why ("Nothing copied: a change
+  became pending during the drag. …"). So a copy is always of the
+  committed World as shown. A focus loss in the middle of a drag ends it
+  as it ends a brush stroke, copying nothing ("Copy area interrupted: the
+  window lost focus, so nothing was copied."); a press while dragging
+  (a missed release) copies, and a press on a control then also does what
+  the control does. Copying writes nothing and records nothing.
 
 The copy is the session's clipboard and lives only in its tool state: it
 is never saved, and a new session starts without one. After a copy it is

@@ -1432,6 +1432,18 @@ impl ToolState {
         self.capture = Some(crate::capture::CaptureGesture::Armed);
         Ok(true)
     }
+    /// End a rectangle being dragged, copying nothing; Copy area stays
+    /// armed. Whether one was dragged.
+    pub fn abandon_capture_drag(&mut self) -> bool {
+        if !matches!(
+            self.capture,
+            Some(crate::capture::CaptureGesture::Dragging { .. })
+        ) {
+            return false;
+        }
+        self.capture = Some(crate::capture::CaptureGesture::Armed);
+        true
+    }
     /// End Copy area, armed or dragged, copying nothing. Whether it was on.
     pub fn stop_capture(&mut self) -> bool {
         self.capture.take().is_some()

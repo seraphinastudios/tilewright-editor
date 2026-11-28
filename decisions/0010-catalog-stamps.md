@@ -128,9 +128,12 @@ revisit any of them):
   replaces it and a new copy replaces a catalog stamp. Esc drops it only
   when nothing is pending (a pending change is cancelled first), so Esc
   after a stamped click keeps the copy for the next one.
-- **Only when the session can prepare.** No rectangle starts while a
-  change is pending or editing is paused, so the copy is always of the
-  committed World as shown.
+- **Only when the session can prepare.** No rectangle starts, and C does
+  not arm, while a change is pending; no rectangle starts while editing
+  is paused; and a release copies nothing when a change became pending,
+  editing paused or the session blocked during the drag. A focus loss
+  ends a drag copying nothing, as it ends a stroke. So the copy is always
+  of the committed World as shown.
 - **Discoverability.** `HELP` (the window title and the start-up line)
   names C and Esc for the copy, as it names R and M.
 

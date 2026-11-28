@@ -624,11 +624,12 @@ fn c_and_esc_act_only_where_they_should() {
     // A pending change: Esc cancels it first, and the copy stays.
     click(&mut app, [4, 1]).unwrap();
     assert!(app.session.history().pending().is_some());
-    // No rectangle starts while it is pending.
-    press(&mut app, Keycode::C).unwrap();
-    let (down, _) = drag(&mut app, [1, 1], &[]);
-    assert_eq!(down.unwrap_err(), CAPTURE_PENDING);
-    press(&mut app, Keycode::C).unwrap();
+    // C is refused while it is pending, and the review line stays.
+    let review = app.status_label();
+    assert_eq!(review, "Review changes, then Accept or Cancel.");
+    assert_eq!(press(&mut app, Keycode::C).unwrap_err(), CAPTURE_PENDING);
+    assert_eq!(app.tools.capture_gesture(), None);
+    assert_eq!(app.status_label(), review);
     route(&mut app, &key(Keycode::Escape)).unwrap();
     assert!(app.session.history().pending().is_none());
     assert!(app.tools.copy_choice().is_some());
@@ -813,6 +814,47 @@ fn the_copy_rows_fit_at_1280_by_800_720_by_480_and_double_scale() {
         .unwrap();
         let case = format!("{logical:?} x{scale}");
         assert_eq!(rectangle(&mut app), span([0, 2], [3, 4]), "{case}");
+        // Over the sidebar the corner stays, even where view tiles are drawn
+        // under it (at 720x480 the view's last columns are).
+        app.refresh_ui();
+        let frame = app.frame(true).unwrap();
+        let width = frame.width;
+        let cells: BTreeSet<_> = app.prepared.cell_picks.keys().map(|id| id.0).collect();
+        let sidebar = app.ui.sidebar;
+        let hidden = frame
+            .semantic_ids
+            .iter()
+            .enumerate()
+            .find_map(|(index, id)| {
+                let (px, py) = (
+                    u32::try_from(index).unwrap() % width,
+                    u32::try_from(index).unwrap() / width,
+                );
+                (cells.contains(id) && sidebar.contains(px, py)).then_some((px, py))
+            });
+        if logical == (720, 480) {
+            assert!(hidden.is_some(), "{case}: no view tile under the sidebar");
+        }
+        if let Some((px, py)) = hidden {
+            assert!(!matches!(app.ui.hit(px, py), Hit::World(..)), "{case}");
+            #[allow(clippy::cast_precision_loss)]
+            let over = [px as f32 / scale as f32, py as f32 / scale as f32];
+            route_sized(
+                &mut app,
+                &Event::MouseMotion {
+                    timestamp: 0,
+                    window_id: 7,
+                    which: 0,
+                    mousestate: sdl3::mouse::MouseState::from_sdl_state(1),
+                    x: over[0],
+                    y: over[1],
+                    xrel: 0.0,
+                    yrel: 0.0,
+                },
+            )
+            .unwrap();
+            assert_eq!(rectangle(&mut app), span([0, 2], [3, 4]), "{case}");
+        }
         route_sized(&mut app, &button(false, end)).unwrap();
         assert_eq!(
             app.tools.copy_choice().unwrap().objects().len(),
@@ -904,4 +946,161 @@ fn without_copy_area_place_mode_is_as_before() {
     route(&mut app, &key(Keycode::Escape)).unwrap_or_default();
     assert!(app.session.history().pending().is_none());
     assert_eq!(app.status_label(), "Ready. Click a tile to place bush.");
+}
+
+/// A window event, as SDL delivers it.
+fn window(win_event: sdl3::event::WindowEvent) -> Event {
+    Event::Window {
+        timestamp: 0,
+        window_id: 7,
+        win_event,
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_drag_copies_nothing_once_a_change_is_pending_paused_blocked_or_focus_is_lost() {
+    use crate::prototype::capture_view::{
+        CAPTURE_BECAME_PENDING, CAPTURE_BLOCKED, CAPTURE_INTERRUPTED,
+    };
+    let (temporary, mut app) = stamp_application();
+    // Something to undo: one accepted crate.
+    app.control(Control::PlacePalette("crate".into())).unwrap();
+    click(&mut app, [5, 5]).unwrap();
+    press(&mut app, Keycode::Return).unwrap();
+    copy(&mut app, [0, 2], [3, 4]);
+    let held = app.tools.copy_choice().cloned();
+
+    // Z during the drag makes an undo pending: the release copies nothing.
+    press(&mut app, Keycode::C).unwrap();
+    acknowledge_ui(&mut app);
+    let start = cell_pixel(&mut app, 4, 4);
+    route(&mut app, &button(true, start)).unwrap();
+    let end = cell_pixel(&mut app, 5, 5);
+    motion(&mut app, end, true).unwrap();
+    press(&mut app, Keycode::Z).unwrap();
+    assert!(app.session.history().pending().is_some());
+    assert_eq!(
+        route(&mut app, &button(false, end)).unwrap_err(),
+        CAPTURE_BECAME_PENDING
+    );
+    assert_eq!(app.tools.copy_choice().cloned(), held);
+    assert_eq!(app.tools.capture_gesture(), Some(CaptureGesture::Armed));
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    assert!(app.session.history().pending().is_none());
+
+    // A pause during the drag: the same, in the pause's words.
+    press(&mut app, Keycode::C).unwrap();
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, start)).unwrap();
+    motion(&mut app, end, true).unwrap();
+    app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::Present,
+        "test pause",
+    ));
+    assert_eq!(
+        route(&mut app, &button(false, end)).unwrap_err(),
+        "Nothing copied: rendering blocked editing: test pause"
+    );
+    assert_eq!(app.tools.copy_choice().cloned(), held);
+    app.blocked = None;
+
+    // A focus loss ends the drag as it ends a stroke: nothing is copied,
+    // and the next motion without the button copies nothing either.
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, start)).unwrap();
+    motion(&mut app, end, true).unwrap();
+    route(&mut app, &window(sdl3::event::WindowEvent::FocusLost)).unwrap();
+    assert_eq!(app.tools.capture_gesture(), Some(CaptureGesture::Armed));
+    assert_eq!(app.notice.as_deref(), Some(CAPTURE_INTERRUPTED));
+    motion(&mut app, end, false).unwrap();
+    assert_eq!(app.tools.copy_choice().cloned(), held);
+
+    // Blocked during the drag: nothing is copied and Copy area ends.
+    acknowledge_ui(&mut app);
+    route(&mut app, &button(true, start)).unwrap();
+    motion(&mut app, end, true).unwrap();
+    let catalog = temporary.path().join("world/preview.jsonc");
+    let original = fs::read(&catalog).unwrap();
+    fs::write(&catalog, [original.as_slice(), b"\n"].concat()).unwrap();
+    assert!(app.action(Action::Reopen).is_err());
+    assert_eq!(app.session.status().phase, SessionPhase::Blocked);
+    assert_eq!(
+        route(&mut app, &button(false, end)).unwrap_err(),
+        CAPTURE_BLOCKED
+    );
+    assert_eq!(app.tools.capture_gesture(), None);
+    assert_eq!(app.tools.copy_choice().cloned(), held);
+}
+
+#[test]
+fn while_armed_a_hover_promises_no_stamp_and_ctrl_c_never_arms() {
+    let (_temporary, mut app) = stamp_application();
+    for choose in [true, false] {
+        if choose {
+            app.control(Control::StampPalette("camp".into())).unwrap();
+        } else {
+            copy(&mut app, [0, 2], [3, 4]);
+        }
+        acknowledge_ui(&mut app);
+        hover(&mut app, [3, 2]);
+        assert!(app.stamp_preview().is_some());
+        press(&mut app, Keycode::C).unwrap();
+        acknowledge_ui(&mut app);
+        hover(&mut app, [3, 3]);
+        assert!(app.stamp_preview().is_none(), "copy {}", !choose);
+        assert!(marked(&mut app).is_empty());
+        assert_eq!(app.status_label(), CAPTURE_ARMED);
+        press(&mut app, Keycode::C).unwrap();
+    }
+    // Ctrl or Cmd with C is a text copy: Copy area stays off.
+    for keymod in [sdl3::keyboard::Mod::LCTRLMOD, sdl3::keyboard::Mod::RGUIMOD] {
+        let Event::KeyDown {
+            timestamp,
+            window_id,
+            keycode,
+            scancode,
+            repeat,
+            which,
+            raw,
+            ..
+        } = input_key(7, Keycode::C, false)
+        else {
+            unreachable!();
+        };
+        acknowledge_ui(&mut app);
+        route(
+            &mut app,
+            &Event::KeyDown {
+                timestamp,
+                window_id,
+                keycode,
+                scancode,
+                keymod,
+                repeat,
+                which,
+                raw,
+            },
+        )
+        .unwrap();
+        assert_eq!(app.tools.capture_gesture(), None);
+    }
+}
+
+#[test]
+fn a_press_on_a_control_while_dragging_copies_and_does_what_the_control_does() {
+    let (_temporary, mut app) = stamp_application();
+    copy(&mut app, [3, 2], [3, 2]);
+    press(&mut app, Keycode::C).unwrap();
+    acknowledge_ui(&mut app);
+    let start = cell_pixel(&mut app, 0, 2);
+    route(&mut app, &button(true, start)).unwrap();
+    let end = cell_pixel(&mut app, 3, 4);
+    motion(&mut app, end, true).unwrap();
+    // The release was missed; the press lands on the Mirror button.
+    let mirror = super::widget_point(&mut app, &Control::StampMirror);
+    route(&mut app, &button(true, mirror)).unwrap();
+    assert_eq!(app.tools.copy_choice().unwrap().objects().len(), 3);
+    assert_eq!(app.tools.stamp_turn(), StampTurn::NONE.flipped());
 }

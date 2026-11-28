@@ -6372,8 +6372,9 @@ fn native_text_event(
             ..
         } => {
             input.lose_focus();
-            // A window without focus hovers nothing.
+            // A window without focus hovers nothing, and drags no rectangle.
             app.forget_hover();
+            app.interrupt_capture();
             let result = if app.tools.draft_text().is_some() {
                 app.tools
                     .cancel_preedit()
@@ -6758,6 +6759,20 @@ fn native_input_event(
             capture_position(app, [*x, *y], logical, physical);
             app.finish_capture()
         }
+        // Ctrl or Cmd with C is a text copy, never Copy area.
+        Event::KeyDown {
+            keycode: Some(Keycode::C),
+            keymod,
+            ..
+        } if keymod.intersects(
+            sdl3::keyboard::Mod::LCTRLMOD
+                | sdl3::keyboard::Mod::RCTRLMOD
+                | sdl3::keyboard::Mod::LGUIMOD
+                | sdl3::keyboard::Mod::RGUIMOD,
+        ) =>
+        {
+            Ok(())
+        }
         Event::KeyDown {
             keycode: Some(key),
             repeat: false,
@@ -6819,9 +6834,16 @@ fn native_pointer_selection(
         return Err(STROKE_INTERRUPTED.into());
     }
     // A press while Copy area's rectangle is dragged means its release was
-    // missed: copy what it spans, as the release would have.
+    // missed: copy what it spans, as the release would have. A press on a
+    // control then also does what the control does.
     if app.capture_dragging() {
-        return app.finish_capture();
+        let hit = crate::viewport::physical_pixel(position, logical, physical)
+            .map(|(x, y)| app.ui.hit(x, y));
+        app.finish_capture()?;
+        return match hit {
+            Some(Hit::Control(control)) => app.control(control),
+            _ => Ok(()),
+        };
     }
     if !app.displayed_input_ready() {
         return Err("input waits for the current displayed frame".into());
