@@ -347,38 +347,16 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let desktop = root.join("desktop");
     let proposal_file = sandbox.join("proposals").join(&name);
     let proposal_bytes = std::fs::read(&proposal_file).unwrap();
-    let ran = Command::new("python3")
-        .arg("-I")
-        .arg(repository().join("tools/provision-prototype.py"))
-        .arg("--world")
-        .arg(&source)
-        .arg("--destination")
-        .arg(&desktop)
-        .arg("--editor")
-        .arg(env!("CARGO_BIN_EXE_tilewright-editor"))
-        .arg("--font-pack")
-        .arg(
-            std::env::var_os("TILEWRIGHT_UNICODE_FONT_ROOT")
-                .expect("the desktop pass needs the font pack: set TILEWRIGHT_UNICODE_FONT_ROOT"),
-        )
-        .args([
-            "--demo-script",
-            "--reference",
-            "--actor",
-            PERSON,
-            "--proposal",
-        ])
-        .arg(&proposal_file)
-        .output()
-        .unwrap();
-    let output = String::from_utf8_lossy(&ran.stdout);
-    assert!(
-        ran.status.success(),
-        "{} {}",
-        String::from_utf8_lossy(&ran.stderr),
-        &output[output.len().saturating_sub(2000)..]
-    );
+    let output = desktop_pass(&source, &desktop, &proposal_file, &[]);
     assert_eq!(tree(&desktop.join("world")), tree(&sandbox.join("world")));
+    // The shared field, the default, is named at start.
+    assert!(
+        output
+            .lines()
+            .any(|line| line == "string field: tilewright-ui 0.1.3 (default)"),
+        "{}",
+        &output[..output.len().min(2000)]
+    );
     // The session holds its own copy; the sandbox's file is as it was.
     assert_eq!(
         std::fs::read(desktop.join("proposal").join(&name)).unwrap(),
@@ -447,6 +425,33 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
             .len(),
         9
     );
+    // The opt-out, through the real start-up: a fourth copy with
+    // `--editor-text-field` applies the same proposal with the editor's own
+    // field; it is recorded in the receipt, and no frame names the shared one.
+    let own = root.join("desktop-own");
+    let output = desktop_pass(&source, &own, &proposal_file, &["--editor-text-field"]);
+    assert_eq!(tree(&own.join("world")), tree(&sandbox.join("world")));
+    assert!(
+        !output.lines().any(|line| line.starts_with("string field:")),
+        "{}",
+        &output[..output.len().min(2000)]
+    );
+    let receipt: Value =
+        serde_json::from_slice(&std::fs::read(own.join("provision.json")).unwrap()).unwrap();
+    assert_eq!(receipt["editor_text_field"], true);
+    assert!(receipt.get("string_field").is_none(), "{receipt}");
+    let records = tree(&own.join("evidence"));
+    let mut frames = 0;
+    for (name, bytes) in &records {
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let record: Value = serde_json::from_slice(bytes.as_ref().unwrap()).unwrap();
+        assert!(record.get("string_field").is_none(), "{name}");
+        frames += usize::from(record.get("proposal").is_some());
+    }
+    // The pending and applied frames of every step at least.
+    assert!(frames >= 18, "{frames} {:?}", records.keys());
 
     // Neither the source nor the fixture changed.
     assert_eq!(tree(&source), original);
@@ -458,10 +463,50 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         &person,
         &desktop,
         &desktop.join("proposal"),
+        &own,
+        &own.join("proposal"),
     ] {
         let mode = std::fs::metadata(directory).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700, "{}", directory.display());
     }
+}
+
+/// Provision `destination` with the proposal and the person's actor and run
+/// the scripted reference pass in it, with `flags` added; its stdout.
+fn desktop_pass(source: &Path, destination: &Path, proposal: &Path, flags: &[&str]) -> String {
+    let ran = Command::new("python3")
+        .arg("-I")
+        .arg(repository().join("tools/provision-prototype.py"))
+        .arg("--world")
+        .arg(source)
+        .arg("--destination")
+        .arg(destination)
+        .arg("--editor")
+        .arg(env!("CARGO_BIN_EXE_tilewright-editor"))
+        .arg("--font-pack")
+        .arg(
+            std::env::var_os("TILEWRIGHT_UNICODE_FONT_ROOT")
+                .expect("the desktop pass needs the font pack: set TILEWRIGHT_UNICODE_FONT_ROOT"),
+        )
+        .args([
+            "--demo-script",
+            "--reference",
+            "--actor",
+            PERSON,
+            "--proposal",
+        ])
+        .arg(proposal)
+        .args(flags)
+        .output()
+        .unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).into_owned();
+    assert!(
+        ran.status.success(),
+        "{flags:?} {} {}",
+        String::from_utf8_lossy(&ran.stderr),
+        &output[output.len().saturating_sub(2000)..]
+    );
+    output
 }
 
 fn status_receipt(notice: &Value) -> String {
