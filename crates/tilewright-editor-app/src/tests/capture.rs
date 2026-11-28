@@ -36,8 +36,8 @@ use tilewright_editor_ui::{Action, SessionPhase};
 const MAIN: &str = "world/planes/main/layers/0/0_0.jsonc";
 const SEED: u64 = 7;
 
-/// What a drag over (0, 2)-(3, 4) copies from the sample: marker_1 at
-/// (3, 2), gate_west at (0, 3) and marker_2 at (1, 4), an asymmetric L
+/// What a drag over (0, 2)-(3, 4) copies from the sample: `marker_1` at
+/// (3, 2), `gate_west` at (0, 3) and `marker_2` at (1, 4), an asymmetric L
 /// that every turn and mirror moves differently.
 const COPIED: [(&str, [i64; 2]); 3] = [("marker", [3, 0]), ("gate", [0, 1]), ("marker", [1, 2])];
 
@@ -204,8 +204,15 @@ fn a_dragged_copy_stamps_exactly_a_direct_place_objects_in_every_turn_and_mirror
         app.status_label(),
         "Copy (3, 4) to (3, 4), 1 x 1 tiles: no objects; release copies nothing."
     );
+    // Every moved corner asks for a new frame, as a stroke sample does;
+    // motion within the same tile does not.
     let middle = cell_pixel(&mut app, 2, 3);
+    acknowledge_ui(&mut app);
     motion(&mut app, middle, true).unwrap();
+    assert!(!app.displayed_input_ready());
+    acknowledge_ui(&mut app);
+    motion(&mut app, [middle[0] + 1.0, middle[1]], true).unwrap();
+    assert!(app.displayed_input_ready());
     assert_eq!(rectangle(&mut app), span([2, 3], [3, 4]));
     let end = cell_pixel(&mut app, 0, 2);
     motion(&mut app, end, true).unwrap();
@@ -337,7 +344,11 @@ fn a_dragged_copy_stamps_exactly_a_direct_place_objects_in_every_turn_and_mirror
     // The copies carry the grant's layer and defaults, never the
     // originals' label, settings or portal.
     let world = app.session.world();
-    for uid in mine.steps().iter().flat_map(|step| step.placed_objects()) {
+    for uid in mine
+        .steps()
+        .iter()
+        .flat_map(tilewright_editor_proposal::ProposalStep::placed_objects)
+    {
         let object = world.object(uid).unwrap();
         assert!(object.fields.is_empty(), "{uid}: {:?}", object.fields);
         assert!(object.portal.is_none(), "{uid}");
@@ -408,15 +419,13 @@ fn a_rectangle_is_any_shape_clipped_to_the_view_and_refusals_copy_nothing() {
     motion(&mut app, corner, true).unwrap();
     app.refresh_ui();
     let sidebar = app.ui.sidebar;
+    let (px, py) = (
+        sidebar.x + sidebar.width / 2,
+        sidebar.y + sidebar.height - 4,
+    );
     #[allow(clippy::cast_precision_loss)]
-    let outside = [
-        (sidebar.x + sidebar.width / 2) as f32,
-        (sidebar.y + sidebar.height - 4) as f32,
-    ];
-    assert!(!matches!(
-        app.ui.hit(outside[0] as u32, outside[1] as u32),
-        Hit::World(..)
-    ));
+    let outside = [px as f32, py as f32];
+    assert!(!matches!(app.ui.hit(px, py), Hit::World(..)));
     motion(&mut app, outside, true).unwrap();
     assert_eq!(rectangle(&mut app), span([5, 3], [7, 5]));
     // A map pixel with no tile of the view keeps it too.
@@ -480,7 +489,7 @@ fn map_background(app: &mut Application) -> [f32; 2] {
 }
 
 /// The sample with 64 more crates over the view's first two rows, four to
-/// a tile: with gate_east, 65 objects in (0, 0)-(7, 1).
+/// a tile: with `gate_east`, 65 objects in (0, 0)-(7, 1).
 fn with_crates(root: &Path) {
     with_stamps(root);
     edit_json(root, "planes/main/layers/0/0_0.jsonc", |chunk| {
@@ -632,6 +641,11 @@ fn c_and_esc_act_only_where_they_should() {
         .unwrap();
     assert_eq!(app.tools.capture_gesture(), None);
     press(&mut app, Keycode::Return).unwrap();
+    assert_eq!(app.tools.palette_filter(), "c");
+    // Esc ends Copy area before it clears the filter.
+    press(&mut app, Keycode::C).unwrap();
+    press(&mut app, Keycode::Escape).unwrap();
+    assert_eq!(app.tools.capture_gesture(), None);
     assert_eq!(app.tools.palette_filter(), "c");
     press(&mut app, Keycode::Escape).unwrap();
     assert_eq!(app.tools.palette_filter(), "");

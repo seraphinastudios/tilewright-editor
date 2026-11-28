@@ -7034,31 +7034,12 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
     {
         return result;
     }
-    // Esc ends an open portal step, then clears a palette filter, before
-    // it cancels a pending edit.
-    if key == Keycode::Escape && app.tools.retire_portal() {
-        app.presented_generation = None;
-        return Ok(());
-    }
-    // Esc ends Copy area, armed or dragged, copying nothing.
-    if key == Keycode::Escape && app.tools.stop_capture() {
-        app.forget_hover();
-        app.presented_generation = None;
-        return Ok(());
-    }
-    if key == Keycode::Escape && app.tools.clear_filter() {
-        app.presented_generation = None;
+    if key == Keycode::Escape && escape_step(app) {
         return Ok(());
     }
     match key {
         Keycode::Return | Keycode::KpEnter => app.action(Action::Accept),
-        // With nothing pending, Esc drops a held copy; a pending change is
-        // cancelled first, and the copy stays for another stamp.
-        Keycode::Escape
-            if app.session.history().pending().is_none() && app.tools.copy_choice().is_some() =>
-        {
-            app.control(Control::DropCopy)
-        }
+        Keycode::Escape if app.copy_droppable() => app.control(Control::DropCopy),
         Keycode::Escape => app.action(Action::Cancel),
         Keycode::Z => app.action(Action::Undo),
         Keycode::Y => app.action(Action::Redo),
@@ -7113,6 +7094,17 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         | Keycode::Minus => view_key(app, key),
         _ => stamp_key(app, key),
     }
+}
+
+/// What Esc ends before it cancels a pending edit or drops a copy: an
+/// open portal step, then Copy area, then a non-empty palette filter.
+/// Whether it ended one.
+fn escape_step(app: &mut Application) -> bool {
+    let ended = app.tools.retire_portal() || app.escape_capture() || app.tools.clear_filter();
+    if ended {
+        app.presented_generation = None;
+    }
+    ended
 }
 
 /// R and M with a stamp chosen in Place mode ([`stamp_keys`]): turn it a

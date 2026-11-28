@@ -96,6 +96,24 @@ impl Application {
         Ok(())
     }
 
+    /// Esc ends Copy area, armed or dragged, copying nothing: after an
+    /// open portal step and before the palette filter. Whether it did.
+    pub(super) fn escape_capture(&mut self) -> bool {
+        if !self.tools.stop_capture() {
+            return false;
+        }
+        self.forget_hover();
+        self.presented_generation = None;
+        true
+    }
+
+    /// Whether Esc drops the held copy: only with nothing pending. A
+    /// pending change is cancelled first, so the copy stays for another
+    /// stamp.
+    pub(super) fn copy_droppable(&self) -> bool {
+        self.session.history().pending().is_none() && self.tools.copy_choice().is_some()
+    }
+
     /// Whether a press on the map starts or ends Copy area's rectangle.
     pub(super) fn capturing(&self) -> bool {
         self.tools.mode() == ToolMode::Place && self.tools.capture_gesture().is_some()
@@ -127,18 +145,26 @@ impl Application {
         let tile = self.view_tile(&cell).ok_or(CAPTURE_OFF_VIEW)?;
         self.tools
             .begin_capture(tile)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        // The rectangle is drawn on the next frame.
+        self.presented_generation = None;
+        Ok(())
     }
 
     /// A drag sample at physical world pixel `x, y`: the rectangle's far
     /// corner follows the pointer over view tiles; off the map it stays on
     /// the last one, so the rectangle is always inside the view.
     pub(super) fn capture_sample(&mut self, x: u32, y: u32) {
+        let before = self.tools.capture_gesture();
         if let Some(tile) = self
             .hover_mask_pick(x, y)
             .and_then(|cell| self.view_tile(&cell))
         {
             self.tools.extend_capture(tile);
+        }
+        // A moved corner is drawn on the next frame.
+        if self.tools.capture_gesture() != before {
+            self.presented_generation = None;
         }
     }
 
