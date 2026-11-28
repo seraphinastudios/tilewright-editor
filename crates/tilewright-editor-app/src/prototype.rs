@@ -954,6 +954,16 @@ impl Application {
         }
     }
 
+    /// The tools' `pending` for an edit, or for opening or reviewing a text
+    /// draft: whether the session cannot prepare an edit. While rendering
+    /// pauses editing each is refused here, in the pause's own words, since
+    /// the tools' refusal names a pending edit and there may be none.
+    /// Nothing is changed, so an open draft keeps its text.
+    fn edit_unavailable(&self) -> Result<bool> {
+        self.refuse_while_paused()?;
+        Ok(!self.session.can_prepare())
+    }
+
     fn action(&mut self, action: Action) -> Result<()> {
         let advice = undrawable_advice(Some(&action));
         self.advised_action(action, advice)
@@ -1226,12 +1236,10 @@ impl Application {
             self.session.generation(),
             self.session.history().document().revision(),
         );
+        let unavailable = self.edit_unavailable()?;
         let action = self
             .tools
-            .remove_action(
-                &inspected,
-                self.blocked.is_some() || !self.session.can_prepare(),
-            )
+            .remove_action(&inspected, unavailable)
             .map_err(|error| error.to_string())?;
         self.action(action)
     }
@@ -1421,6 +1429,18 @@ impl Application {
     /// Release: the whole gesture becomes one pending reviewed transaction.
     fn finish_stroke(&mut self) -> Result<()> {
         self.stroke_mask = None;
+        // While rendering pauses editing the gesture prepares nothing, in
+        // the pause's own words; a stroke from an earlier view still says
+        // so first. Either way the stroke ends, as a refused release does.
+        if self
+            .tools
+            .stroke()
+            .is_some_and(|stroke| stroke.generation() == self.view.frame_revision)
+            && let Err(reason) = self.refuse_while_paused()
+        {
+            self.tools.cancel_stroke();
+            return Err(reason);
+        }
         let action = self
             .tools
             .finish_stroke(
@@ -4858,16 +4878,19 @@ impl Application {
             self.session.generation(),
             self.session.history().document().revision(),
         );
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
         match control {
-            Control::Coordinates => self
-                .tools
-                .begin_move(&inspected, unavailable)
-                .map_err(|error| error.to_string()),
-            Control::Field(field) => self
-                .tools
-                .begin_field(&inspected, &field, unavailable)
-                .map_err(|error| error.to_string()),
+            Control::Coordinates => {
+                let unavailable = self.edit_unavailable()?;
+                self.tools
+                    .begin_move(&inspected, unavailable)
+                    .map_err(|error| error.to_string())
+            }
+            Control::Field(field) => {
+                let unavailable = self.edit_unavailable()?;
+                self.tools
+                    .begin_field(&inspected, &field, unavailable)
+                    .map_err(|error| error.to_string())
+            }
             _ => {
                 let snapshot = self.tools.draft_snapshot().ok_or("no draft")?;
                 let layout = self
@@ -4877,6 +4900,7 @@ impl Application {
                 if !layout.missing_glyphs().is_empty() {
                     return Err("missing font glyphs: review blocked; draft preserved".into());
                 }
+                let unavailable = self.edit_unavailable()?;
                 let action = self
                     .tools
                     .build_action(&inspected, unavailable)
@@ -4890,7 +4914,6 @@ impl Application {
     /// management rows. Edits leave as Session actions; the Session checks
     /// the grant, the revision and every refusal again.
     fn zone_control(&mut self, control: Control) -> Result<()> {
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
         let expected = self.session.history().document().revision();
         let plane = self.session.catalog().view().0.to_owned();
         let chosen = match self.tools.zone_choice() {
@@ -4907,14 +4930,14 @@ impl Application {
                 self.session.world(),
                 self.session.catalog(),
                 expected,
-                unavailable,
+                self.edit_unavailable()?,
             ),
             Control::ZoneCreate(parent) => self.tools.begin_zone_create(
                 self.session.world(),
                 self.session.catalog(),
                 parent,
                 expected,
-                unavailable,
+                self.edit_unavailable()?,
             ),
             Control::ZoneParents => self
                 .tools
@@ -4952,7 +4975,6 @@ impl Application {
     /// the Session checks the grant, the view, the revision and every
     /// refusal again.
     fn anchor_control(&mut self, control: Control) -> Result<()> {
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
         let expected = self.session.history().document().revision();
         let (world, catalog) = (self.session.world(), self.session.catalog());
         let action = match control {
@@ -4965,7 +4987,12 @@ impl Application {
             Control::AnchorCreate => {
                 return self
                     .tools
-                    .begin_anchor_create(catalog, self.session.selection(), expected, unavailable)
+                    .begin_anchor_create(
+                        catalog,
+                        self.session.selection(),
+                        expected,
+                        self.edit_unavailable()?,
+                    )
                     .map_err(|error| error.to_string());
             }
             Control::AnchorMove => self.tools.move_anchor_action(
@@ -4973,11 +5000,11 @@ impl Application {
                 catalog,
                 self.session.selection(),
                 expected,
-                unavailable,
+                self.edit_unavailable()?,
             ),
             Control::AnchorDelete => {
                 self.tools
-                    .delete_anchor_action(world, catalog, expected, unavailable)
+                    .delete_anchor_action(world, catalog, expected, self.edit_unavailable()?)
             }
             _ => return Ok(()),
         }
@@ -4996,7 +5023,7 @@ impl Application {
         if !layout.missing_glyphs().is_empty() {
             return Err("missing font glyphs: review blocked; draft preserved".into());
         }
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
+        let unavailable = self.edit_unavailable()?;
         let action = self
             .tools
             .anchor_action(self.session.world(), self.session.catalog(), unavailable)
@@ -5008,7 +5035,6 @@ impl Application {
     /// the Session checks the grant, the object's view, the revision and
     /// the target again.
     fn portal_control(&mut self, control: Control) -> Result<()> {
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
         let expected = self.session.history().document().revision();
         let (world, catalog) = (self.session.world(), self.session.catalog());
         let selection = self.session.selection();
@@ -5021,14 +5047,27 @@ impl Application {
                 };
                 return self
                     .tools
-                    .toggle_portal_step(world, catalog, selection, step, expected, unavailable)
+                    .toggle_portal_step(
+                        world,
+                        catalog,
+                        selection,
+                        step,
+                        expected,
+                        self.edit_unavailable()?,
+                    )
                     .map(|_| ())
                     .map_err(|error| error.to_string());
             }
             Control::PortalLocation => {
                 return self
                     .tools
-                    .begin_portal_location(world, catalog, selection, expected, unavailable)
+                    .begin_portal_location(
+                        world,
+                        catalog,
+                        selection,
+                        expected,
+                        self.edit_unavailable()?,
+                    )
                     .map_err(|error| error.to_string());
             }
             Control::PortalAnchor { plane, anchor } => self.tools.portal_anchor_action(
@@ -5036,12 +5075,15 @@ impl Application {
                 catalog,
                 selection,
                 (&plane, &anchor),
-                unavailable,
+                self.edit_unavailable()?,
             ),
-            Control::PortalClear => {
-                self.tools
-                    .clear_portal_action(world, catalog, selection, expected, unavailable)
-            }
+            Control::PortalClear => self.tools.clear_portal_action(
+                world,
+                catalog,
+                selection,
+                expected,
+                self.edit_unavailable()?,
+            ),
             _ => return Ok(()),
         }
         .map_err(|error| error.to_string())?;
@@ -5090,7 +5132,7 @@ impl Application {
         if !layout.missing_glyphs().is_empty() {
             return Err("missing font glyphs: review blocked; draft preserved".into());
         }
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
+        let unavailable = self.edit_unavailable()?;
         let action = self
             .tools
             .portal_location_action(
@@ -5114,7 +5156,7 @@ impl Application {
         if !layout.missing_glyphs().is_empty() {
             return Err("missing font glyphs: review blocked; draft preserved".into());
         }
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
+        let unavailable = self.edit_unavailable()?;
         let action = self
             .tools
             .zone_action(self.session.world(), self.session.catalog(), unavailable)
