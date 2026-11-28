@@ -1429,3 +1429,268 @@ fn an_optional_height_range_parses_strictly_in_both_formats_within_the_hard_boun
         assert!(error.contains(expected), "case {case}: {error}");
     }
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn optional_stamps_parse_strictly_in_both_formats_and_their_absence_changes_nothing() {
+    use tilewright_editor_preview::{
+        MAXIMUM_STAMP_MEMBER_OFFSET, MAXIMUM_STAMP_MEMBERS, MAXIMUM_STAMPS, Stamp, StampMember,
+    };
+    let (dir, root, world, mut original) = fixture(false, false);
+    original["editing"]["objects"] =
+        json!([{"proto": "marker", "layer": "item"}, {"proto": "grass", "layer": "floor"}]);
+    let (absent, _) = load_catalog(dir.path(), &root, &world, &original).unwrap();
+    assert!(absent.editing().stamps.is_empty());
+    let object = |proto: &str, dx: Value, dy: Value| json!({"proto": proto, "offset": [dx, dy]});
+    let stamp = |name: &str, objects: Value| json!({"name": name, "objects": objects});
+    let edge = MAXIMUM_STAMP_MEMBER_OFFSET;
+    for format in ["tilewright.editor-preview/1", "tilewright.editor-preview/2"] {
+        let mut granted = original.clone();
+        granted["format"] = json!(format);
+        granted["editing"]["stamps"] = json!([
+            stamp(
+                "post",
+                json!([
+                    object("marker", json!(0), json!(0)),
+                    object("grass", json!(-1), json!(2)),
+                    // Repeats and shared tiles are allowed, as in the engine.
+                    object("marker", json!(0), json!(0)),
+                ])
+            ),
+            stamp(
+                "edges",
+                json!([
+                    object("marker", json!(edge), json!(-edge)),
+                    object("marker", json!(-edge), json!(edge)),
+                ])
+            ),
+        ]);
+        let (catalog, _) = load_catalog(dir.path(), &root, &world, &granted).unwrap();
+        let stamps = &catalog.editing().stamps;
+        // Keyed by name; each keeps its objects in catalog order.
+        assert_eq!(stamps.keys().collect::<Vec<_>>(), ["edges", "post"]);
+        let member = |proto: &str, offset| StampMember {
+            proto: proto.into(),
+            offset,
+        };
+        assert_eq!(
+            stamps["post"],
+            Stamp {
+                objects: vec![
+                    member("marker", [0, 0]),
+                    member("grass", [-1, 2]),
+                    member("marker", [0, 0])
+                ]
+            }
+        );
+        assert_eq!(
+            stamps["edges"].objects,
+            [
+                member("marker", [edge, -edge]),
+                member("marker", [-edge, edge])
+            ]
+        );
+        // Every other capability is exactly what the catalog without the
+        // member grants.
+        assert_eq!(catalog.editing().objects, absent.editing().objects);
+        assert_eq!(catalog.editing().terrain, absent.editing().terrain);
+        assert_eq!(catalog.editing().palettes, absent.editing().palettes);
+    }
+    // An empty list is allowed and names no stamp.
+    let mut empty = original.clone();
+    empty["editing"]["stamps"] = json!([]);
+    let (catalog, _) = load_catalog(dir.path(), &root, &world, &empty).unwrap();
+    assert!(catalog.editing().stamps.is_empty());
+    // The most stamps, each with the most objects, load.
+    let full = |count: usize| {
+        Value::Array(
+            (0..count)
+                .map(|_| object("marker", json!(1), json!(1)))
+                .collect(),
+        )
+    };
+    let many = |count: usize| {
+        Value::Array(
+            (0..count)
+                .map(|index| stamp(&format!("s{index}"), full(MAXIMUM_STAMP_MEMBERS)))
+                .collect(),
+        )
+    };
+    let mut largest = original.clone();
+    largest["editing"]["stamps"] = many(MAXIMUM_STAMPS);
+    let (catalog, _) = load_catalog(dir.path(), &root, &world, &largest).unwrap();
+    assert_eq!(catalog.editing().stamps.len(), 32);
+    assert!(
+        catalog
+            .editing()
+            .stamps
+            .values()
+            .all(|s| s.objects.len() == 64)
+    );
+
+    let good = || json!([object("marker", json!(0), json!(0))]);
+    for (case, (stamps, expected)) in [
+        (json!({}), "expected array"),
+        (json!([{"name": "post"}]), "stamp 1: unknown or missing"),
+        (
+            json!([{"name": "post", "objects": good(), "anchor": [0, 0]}]),
+            "stamp 1: unknown or missing",
+        ),
+        (json!([{"objects": good()}]), "stamp 1: unknown or missing"),
+        (json!(["post"]), "stamp 1: expected object"),
+        (json!([stamp("", good())]), "bounded nonempty"),
+        (json!([stamp("Post", good())]), "invalid identifier"),
+        (json!([stamp(&"s".repeat(65), good())]), "name too long"),
+        (
+            json!([stamp("a", good()), stamp("a", good())]),
+            "stamp a: duplicate stamp name",
+        ),
+        (
+            json!([stamp("post", json!({}))]),
+            "stamp post: expected array",
+        ),
+        (json!([stamp("post", json!([]))]), "1 to 64 objects"),
+        (json!([stamp("post", full(65))]), "1 to 64 objects"),
+        (
+            json!([stamp("post", json!([{"proto": "marker"}]))]),
+            "stamp post object 1: unknown or missing",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([{"proto": "marker", "offset": [0, 0], "layer": "item"}])
+            )]),
+            "unknown or missing",
+        ),
+        (
+            json!([stamp("post", json!([{"proto": "marker", "at": [0, 0]}]))]),
+            "unknown or missing",
+        ),
+        (
+            json!([stamp("post", json!([object("Marker", json!(0), json!(0))]))]),
+            "invalid identifier",
+        ),
+        (
+            // A prototype the catalog maps but does not grant for placing.
+            json!([stamp(
+                "post",
+                json!([object("nothing", json!(0), json!(0))])
+            )]),
+            "stamp post object 1: stamp prototype is not granted by editing.objects",
+        ),
+        (
+            json!([stamp("post", json!([{"proto": "marker", "offset": [0]}]))]),
+            "stamp offset",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([{"proto": "marker", "offset": [0, 0, 0]}])
+            )]),
+            "stamp offset",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([{"proto": "marker", "offset": {"x": 0, "y": 0}}])
+            )]),
+            "stamp offset",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([object("marker", json!(edge + 1), json!(0))])
+            )]),
+            "stamp offset",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([object("marker", json!(0), json!(-edge - 1))])
+            )]),
+            "stamp offset",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([object("marker", json!(1.0), json!(0))])
+            )]),
+            "stamp offset",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([object("marker", json!(0.5), json!(0))])
+            )]),
+            "stamp offset",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([object("marker", json!("1"), json!(0))])
+            )]),
+            "stamp offset",
+        ),
+        (
+            // Integers beyond 2^53 never reach the stamp reader.
+            json!([stamp(
+                "post",
+                json!([object("marker", json!(i64::MIN), json!(0))])
+            )]),
+            "integer_out_of_range",
+        ),
+        (
+            json!([stamp(
+                "post",
+                json!([object("marker", json!(1_i64 << 52), json!(0))])
+            )]),
+            "stamp offset",
+        ),
+        (
+            // The strict reader itself refuses an integer past i64.
+            json!([stamp(
+                "post",
+                json!([object("marker", json!(u64::MAX), json!(0))])
+            )]),
+            "integer_out_of_range",
+        ),
+        (many(33), "too many stamps"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut c = original.clone();
+        c["editing"]["stamps"] = stamps;
+        let Err(error) = load_catalog(dir.path(), &root, &world, &c) else {
+            panic!("case {case} loaded");
+        };
+        assert!(error.contains(expected), "case {case}: {error}");
+    }
+    // The second object of a stamp is named by its place.
+    let mut c = original.clone();
+    c["editing"]["stamps"] = json!([stamp(
+        "post",
+        json!([
+            object("marker", json!(0), json!(0)),
+            object("marker", json!(4096), json!(0))
+        ])
+    )]);
+    let Err(error) = load_catalog(dir.path(), &root, &world, &c) else {
+        panic!("loaded");
+    };
+    assert!(
+        error.contains("stamp post object 2: stamp offset"),
+        "{error}"
+    );
+    // Without editing.objects no prototype is granted, so no stamp loads.
+    let mut ungranted = original.clone();
+    ungranted["editing"]
+        .as_object_mut()
+        .unwrap()
+        .remove("objects");
+    ungranted["editing"]["stamps"] = json!([stamp("post", good())]);
+    let Err(error) = load_catalog(dir.path(), &root, &world, &ungranted) else {
+        panic!("loaded");
+    };
+    assert!(error.contains("not granted by editing.objects"), "{error}");
+}

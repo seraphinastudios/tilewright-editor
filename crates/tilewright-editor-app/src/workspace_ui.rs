@@ -106,6 +106,13 @@ pub enum Control {
     FavouriteRemove(tilewright_editor_ui::favourites::Favourite),
     /// The Place palette filter field, unfocused: focus it.
     PaletteFilter,
+    /// A row of Place mode's stamps: put this catalog stamp
+    /// (`editing.stamps`) down instead of one prototype.
+    StampPalette(String),
+    /// Turn the chosen stamp a quarter turn clockwise (R).
+    StampTurn,
+    /// Mirror the chosen stamp across the anchor's column (M).
+    StampMirror,
     EditDraft,
     ApplyDraft,
     CancelDraft,

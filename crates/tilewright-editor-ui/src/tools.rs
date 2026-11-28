@@ -403,6 +403,13 @@ pub struct ToolState {
     mode: ToolMode,
     terrain: Option<TerrainChoice>,
     placement: Option<String>,
+    /// The catalog stamp Place mode puts down instead of the chosen
+    /// prototype, while one is chosen; choosing a prototype ends it. Kept
+    /// across modes like the prototype.
+    stamp: Option<String>,
+    /// How the chosen stamp is turned and mirrored (R and M); back to the
+    /// catalog layout when another stamp is chosen.
+    stamp_turn: crate::stamps::StampTurn,
     /// The palette filter's committed text while it is not focused. While it
     /// is focused, the focused draft holds the text.
     filter: String,
@@ -1340,6 +1347,7 @@ impl ToolState {
         self.placement.as_deref()
     }
     /// Choose the prototype Place mode puts down; it must be in the palette.
+    /// It replaces a chosen stamp.
     pub fn choose_placement(
         &mut self,
         catalog: &PreviewCatalog,
@@ -1351,7 +1359,70 @@ impl ToolState {
             ));
         }
         self.placement = Some(prototype.into());
+        self.stamp = None;
         Ok(())
+    }
+    /// The catalog stamp a tile click puts down, when one is chosen.
+    pub fn stamp_choice(&self) -> Option<&str> {
+        self.stamp.as_deref()
+    }
+    /// How the chosen stamp is turned and mirrored.
+    pub fn stamp_turn(&self) -> crate::stamps::StampTurn {
+        self.stamp_turn
+    }
+    /// Choose catalog stamp `name` (`editing.stamps`) for Place mode to put
+    /// down instead of a prototype. Another stamp starts in its catalog
+    /// layout; choosing the chosen one again keeps its turn.
+    pub fn choose_stamp(&mut self, catalog: &PreviewCatalog, name: &str) -> Result<(), ToolError> {
+        if !catalog.editing().stamps.contains_key(name) {
+            return Err(ToolError("The catalog has no stamp of this name"));
+        }
+        if self.stamp.as_deref() != Some(name) {
+            self.stamp_turn = crate::stamps::StampTurn::NONE;
+        }
+        self.stamp = Some(name.into());
+        Ok(())
+    }
+    /// R: turn the chosen stamp a quarter turn clockwise. Local view state:
+    /// it touches no World, so a pending change does not block it.
+    pub fn turn_stamp(&mut self) -> Result<(), ToolError> {
+        self.stamp_ready()?;
+        self.stamp_turn = self.stamp_turn.turned();
+        Ok(())
+    }
+    /// M: mirror the chosen stamp across the anchor's column, as shown.
+    pub fn mirror_stamp(&mut self) -> Result<(), ToolError> {
+        self.stamp_ready()?;
+        self.stamp_turn = self.stamp_turn.flipped();
+        Ok(())
+    }
+    fn stamp_ready(&self) -> Result<(), ToolError> {
+        if self.mode != ToolMode::Place {
+            return Err(ToolError("Stamps are only in Place mode"));
+        }
+        if self.stamp.is_none() {
+            return Err(ToolError("Choose a stamp in the sidebar first"));
+        }
+        Ok(())
+    }
+    /// The chosen stamp's objects as a click would record them: turned and
+    /// mirrored, in catalog order. `None` without a chosen stamp the
+    /// catalog has.
+    pub fn stamp_objects(
+        &self,
+        catalog: &PreviewCatalog,
+    ) -> Option<Vec<crate::stamp::StampObject>> {
+        let stamp = catalog.editing().stamps.get(self.stamp.as_deref()?)?;
+        Some(crate::stamps::stamp_objects(stamp, self.stamp_turn))
+    }
+    /// The catalog stamps the palette filter keeps, in name order, by the
+    /// same rule as the prototype rows.
+    pub fn filtered_stamps<'a>(&self, catalog: &'a PreviewCatalog) -> Vec<&'a str> {
+        let filter = self.palette_filter();
+        crate::stamps::catalog_stamps(catalog)
+            .map(|(name, _)| name)
+            .filter(|name| palette_matches(name, filter))
+            .collect()
     }
     /// The palette filter's committed text (an active composition is not
     /// part of it until committed).
@@ -1442,7 +1513,9 @@ impl ToolState {
         focused || had_text
     }
     /// One placement on the exact cell `cell` picked from the current
-    /// frame. The session checks the grant, view and revision again.
+    /// frame: the chosen stamp anchored there ([`Action::PlaceObjects`],
+    /// turned and mirrored), or else one object of the chosen prototype.
+    /// The session checks the grants, view and revision again.
     pub fn place_action(
         &self,
         catalog: &PreviewCatalog,
@@ -1453,6 +1526,25 @@ impl ToolState {
         available(pending)?;
         if self.mode != ToolMode::Place {
             return Err(ToolError("Place tool is not active"));
+        }
+        if self.stamp.is_some() {
+            let objects = self
+                .stamp_objects(catalog)
+                .ok_or(ToolError("Choose a stamp in the sidebar"))?;
+            let SelectionKey::Cell {
+                plane, layer, x, y, ..
+            } = cell
+            else {
+                return Err(ToolError("Place requires a tile"));
+            };
+            return Ok(Action::PlaceObjects {
+                plane: plane.clone(),
+                layer: *layer,
+                x: *x,
+                y: *y,
+                objects,
+                expected,
+            });
         }
         let proto = self
             .placement

@@ -133,6 +133,48 @@ fn undrawable_heights(observed: &Observed) -> Option<Finding> {
     })
 }
 
+/// The findings for catalog stamps (`editing.stamps`) that can never be
+/// put down whole. The desktop anchors a stamp on a clicked tile of the
+/// view, and refuses it when any object lands outside the view, so a stamp
+/// fits only when one tile of the view can anchor it with every object
+/// inside: on each axis of size `s`, its offsets from `lo` to `hi` need
+/// `hi - lo + 1 <= s`, `lo >= -(s - 1)` and `hi <= s - 1`, in the layout as
+/// listed or turned a quarter turn (which swaps the axes; a further turn or
+/// a mirror only negates an axis, which keeps the three conditions). Their
+/// text is all this editor's: the stamp's name, a catalog identifier, is in
+/// the location.
+fn unplaceable_stamps(
+    catalog: &tilewright_editor_preview::PreviewCatalog,
+) -> impl Iterator<Item = Finding> + '_ {
+    let (_, _, [_, _, width, height]) = catalog.view();
+    catalog
+        .editing()
+        .stamps
+        .iter()
+        .filter_map(move |(name, stamp)| {
+            let range = |axis: usize| {
+                let values = stamp.objects.iter().map(|object| object.offset[axis]);
+                Some((values.clone().min()?, values.max()?))
+            };
+            let (across, down) = (range(0)?, range(1)?);
+            let fits = |(lo, hi): (i64, i64), size: i64| {
+                hi - lo < size && lo > -size && hi < size
+            };
+            let placeable = (fits(across, width) && fits(down, height))
+                || (fits(down, width) && fits(across, height));
+            (!placeable).then(|| Finding {
+                code: "catalog.stamp_unplaceable",
+                severity: Severity::Warning,
+                location: Map::new().text("path", "preview.jsonc").text("stamp", name),
+                message: format!(
+                    "No tile of the {width} x {height} view can anchor the stamp with every object inside the view, in any turn: its offsets run from {} to {} across and from {} to {} down, so it can never be placed whole.",
+                    across.0, across.1, down.0, down.1
+                ),
+                detail: None,
+            })
+        })
+}
+
 /// The message, at most 256 characters with any numbers the catalog can
 /// hold, so that it is never clipped.
 fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) -> String {
@@ -219,6 +261,7 @@ pub fn findings(observed: &Observed) -> Vec<Finding> {
             let (catalog, resources) = &**loaded;
             found.extend(project_art(catalog.project_art_resources()));
             found.extend(undrawable_heights(observed));
+            found.extend(unplaceable_stamps(catalog));
             let (plane, layer, _) = catalog.view();
             let view = || Map::new().text("plane", plane).with("layer", layer);
             // The view the desktop editor opens, prepared as it prepares it.

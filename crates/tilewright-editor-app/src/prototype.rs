@@ -34,7 +34,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | L flattens, E smooths the last road | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Stamp in Place: R turns, M mirrors | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | L flattens, E smooths the last road | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | R reopen (not while stamping) | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -78,6 +78,9 @@ use tilewright_editor_ui::review::{REVIEW_LIMIT_MESSAGE, Review};
 /// helper's `--actor human:<name>` names the person.
 const ACTOR: &str = "editor:prototype";
 const PERSON_PREFIX: &str = "human:";
+/// The refusal of the Turn and Mirror controls in a blocked session.
+const STAMP_BLOCKED: &str =
+    "Editing is blocked: nothing can be placed, so the stamp stays as it is.";
 const NOTHING_TO_PLACE: &str = "Place is unavailable: the catalog grants no prototype to place.";
 /// The refusal of Sculpt mode (U) under a catalog without
 /// `editing.heights`; its sidebar row is then not shown.
@@ -345,6 +348,26 @@ struct RoadPreview {
     points: Vec<[i64; 2]>,
     stroke: std::result::Result<tilewright_editor_ui::brush::Stroke, String>,
     changes: std::result::Result<Vec<[i64; 2]>, String>,
+}
+
+/// What a click on the hovered cell would put down with the chosen stamp:
+/// the action itself (so the preview is what the click prepares), each
+/// object's tile in object order (an overflowing one left out) and how many
+/// of them fall outside the view.
+struct StampPreview {
+    grid: String,
+    tiles: Vec<[i64; 2]>,
+    outside: usize,
+    action: Action,
+}
+
+/// "1 object" or "N objects".
+fn objects_words(count: usize) -> String {
+    if count == 1 {
+        "1 object".into()
+    } else {
+        format!("{count} objects")
+    }
 }
 
 /// The pointer over the map in Terrain mode: where it is, and with the Fill
@@ -1460,10 +1483,11 @@ impl Application {
     /// than the pick while the pointer stays in the same cell.
     fn hover_at(&mut self, pixel: Option<(u32, u32)>) {
         self.hover.pixel = pixel;
-        if self.blocked.is_some() || !self.session.can_prepare() || !self.tools.filling() {
+        let hovering = self.tools.filling() || self.stamping();
+        if self.blocked.is_some() || !self.session.can_prepare() || !hovering {
             self.hover.cell = None;
             self.hover.preview = None;
-            if !self.tools.filling() {
+            if !hovering {
                 self.hover.mask = None;
             }
             return;
@@ -1478,6 +1502,101 @@ impl Application {
         }
         self.hover.cell = hover;
         self.refresh_fill_preview();
+    }
+
+    /// Whether Place mode puts a stamp down: the hovered cell then shows
+    /// where its objects would go.
+    /// Not while a portal pick step is open: the click then picks the
+    /// portal's target, so no stamp may be previewed or promised.
+    fn stamping(&self) -> bool {
+        self.tools.mode() == ToolMode::Place
+            && self.tools.stamp_choice().is_some()
+            && !self.tools.portal_picking()
+    }
+
+    /// Where the chosen stamp's objects would go if the hovered cell were
+    /// clicked: the action a click would prepare there, with each object's
+    /// tile. `None` without a hovered cell of the current frame, outside
+    /// Place mode with a stamp, or while nothing can be prepared.
+    fn stamp_preview(&self) -> Option<StampPreview> {
+        let (frame, cell) = self.hover.cell.as_ref()?;
+        if *frame != self.view.frame_revision
+            || self.prepared.frame_revision != self.view.frame_revision
+            || !self.stamping()
+            || self.blocked.is_some()
+            || !self.session.can_prepare()
+        {
+            return None;
+        }
+        let action = self
+            .tools
+            .place_action(
+                self.session.catalog(),
+                cell,
+                self.session.history().document().revision(),
+                false,
+            )
+            .ok()?;
+        let Action::PlaceObjects {
+            plane,
+            layer,
+            x,
+            y,
+            objects,
+            ..
+        } = &action
+        else {
+            return None;
+        };
+        let catalog = self.session.catalog();
+        let tiles: Vec<Option<[i64; 2]>> = objects
+            .iter()
+            .map(|object| tilewright_editor_ui::stamp::member_tile([*x, *y], object.offset))
+            .collect();
+        let outside = tiles
+            .iter()
+            .filter(|tile| {
+                tile.is_none_or(|[tx, ty]| !catalog.tile_in_active_view(plane, *layer, tx, ty))
+            })
+            .count();
+        let SelectionKey::Cell { grid, .. } = cell else {
+            return None;
+        };
+        Some(StampPreview {
+            grid: grid.clone(),
+            tiles: tiles.into_iter().flatten().collect(),
+            outside,
+            action,
+        })
+    }
+
+    /// The status line while hovering with a stamp: where it would go and
+    /// how many of its objects fall outside the view (the click is then
+    /// refused by the engine, in its own words).
+    fn stamp_status(&self) -> Option<String> {
+        let preview = self.stamp_preview()?;
+        let Action::PlaceObjects { x, y, objects, .. } = &preview.action else {
+            return None;
+        };
+        let name = self.tools.stamp_choice()?;
+        let count = objects_words(objects.len());
+        Some(if preview.outside == 0 {
+            format!(
+                "Stamp {name} at ({x}, {y}): {count}; click to review.{}",
+                if self.preview_omitted {
+                    " Too many cells to preview."
+                } else if self.prepared.cell_slots().is_none() {
+                    " Preview unavailable for this view."
+                } else {
+                    ""
+                }
+            )
+        } else {
+            format!(
+                "Stamp {name} at ({x}, {y}): {} of {count} outside the view.",
+                preview.outside
+            )
+        })
     }
 
     /// Forget where the pointer is: after a mode or rule change, or when it
@@ -2594,7 +2713,8 @@ impl Application {
         (self.tools.zones_visible()
             || self.tools.heights_visible()
             || self.tools.stroke().is_some()
-            || self.fill_changes().is_some())
+            || self.fill_changes().is_some()
+            || self.stamp_preview().is_some())
             && self.prepared.cell_slots().is_none()
     }
 
@@ -3053,6 +3173,40 @@ impl Application {
         for proto in palette {
             self.place_row(rows, proto, ready);
         }
+        self.stamp_rows(rows, ready);
+    }
+
+    /// Place mode's stamps, after the prototype palette and only when the
+    /// catalog has `editing.stamps`: one row per stamp the filter keeps, in
+    /// name order, naming how many objects it puts down; choosing one makes
+    /// a tile click put the whole stamp down.
+    fn stamp_rows(&self, rows: &mut UiRows, ready: bool) {
+        let catalog = self.session.catalog();
+        let total = catalog.editing().stamps.len();
+        if total == 0 {
+            return;
+        }
+        let shown = self.tools.filtered_stamps(catalog);
+        rows.push((
+            if self.tools.palette_filter().is_empty() {
+                "Stamps: R turns, M mirrors".into()
+            } else {
+                format!("Stamps: {} of {total} match", shown.len())
+            },
+            None,
+            true,
+            false,
+        ));
+        for name in shown {
+            let count = catalog.editing().stamps[name].objects.len();
+            rows.push((
+                // The count first, so a long name is cut, never the count.
+                format!("{}: {name}", objects_words(count)),
+                Some(Control::StampPalette(name.to_owned())),
+                ready,
+                self.tools.stamp_choice() == Some(name),
+            ));
+        }
     }
 
     /// The Place palette's row of prototype `proto`, which a favourite of
@@ -3069,7 +3223,9 @@ impl Application {
             format!("{proto} / {layer}"),
             Some(Control::PlacePalette(proto.to_owned())),
             ready,
-            self.tools.placement_choice() == Some(proto),
+            // While a stamp is chosen a click stamps: no prototype row, nor
+            // its favourite copy, is marked.
+            self.tools.stamp_choice().is_none() && self.tools.placement_choice() == Some(proto),
         ));
     }
 
@@ -3895,7 +4051,8 @@ impl Application {
         match self.tools.mode() {
             ToolMode::Place if !tools::object_palette(self.session.catalog()).is_empty() => {
                 y = self.filter_field(ui, y);
-                self.placing_row(ui, y)
+                y = self.placing_row(ui, y);
+                self.stamp_turn_row(ui, y)
             }
             ToolMode::Terrain => self.rule_row(ui, y),
             ToolMode::Sculpt => self.sculpt_tool_row(ui, y),
@@ -3967,12 +4124,21 @@ impl Application {
 
     fn placing_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
         let catalog = self.session.catalog();
-        let (text, thumbnail) = match self.tools.placement_choice() {
-            Some(proto) => (
+        let (text, thumbnail) = match (self.tools.stamp_choice(), self.tools.placement_choice()) {
+            // A stamp has no one thumbnail: its row names it and its count.
+            (Some(name), _) => {
+                let count = catalog
+                    .editing()
+                    .stamps
+                    .get(name)
+                    .map_or(0, |stamp| stamp.objects.len());
+                (format!("Stamping {}: {name}", objects_words(count)), None)
+            }
+            (None, Some(proto)) => (
                 format!("Placing: {proto}"),
                 self.session.resources().prototype_texture(catalog, proto),
             ),
-            None => ("Placing: choose a type below".into(), None),
+            (None, None) => ("Placing: choose a type below".into(), None),
         };
         let height = if thumbnail.is_some() {
             PALETTE_ROW_HEIGHT
@@ -3998,6 +4164,52 @@ impl Application {
             widget.thumbnail = thumbnail;
         }
         y + height + ROW_GAP
+    }
+
+    /// With a stamp chosen, under the placing row: its turn and its mirror,
+    /// each a button that does what its key does (R, M) and shows the
+    /// current state, always on screen. Like the keys they never touch the
+    /// World, so they stay enabled while a change is pending. Returns the
+    /// next free row.
+    fn stamp_turn_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
+        if self.tools.stamp_choice().is_none() {
+            return y;
+        }
+        let turn = self.tools.stamp_turn();
+        // Like R and M, inert in a blocked session, where nothing can be
+        // placed.
+        let enabled = self.session.status().phase != SessionPhase::Blocked;
+        let x = ui.sidebar_x();
+        let half = ui.sidebar_width().saturating_sub(ROW_GAP) / 2;
+        ui.widget(
+            Rect {
+                x,
+                y,
+                width: half,
+                height: TEXT_ROW_HEIGHT,
+            },
+            format!("Turn: {}\u{b0}  R", turn.degrees()),
+            Some(Control::StampTurn),
+            enabled,
+            turn.degrees() != 0,
+        );
+        ui.widget(
+            Rect {
+                x: x + half + ROW_GAP,
+                y,
+                width: half,
+                height: TEXT_ROW_HEIGHT,
+            },
+            if turn.mirrored() {
+                "Mirror: on  M"
+            } else {
+                "Mirror: off  M"
+            },
+            Some(Control::StampMirror),
+            enabled,
+            turn.mirrored(),
+        );
+        y + TEXT_ROW_HEIGHT + ROW_GAP
     }
 
     fn review(&mut self, ui: &mut WorkspaceUi) {
@@ -4179,6 +4391,9 @@ impl Application {
         if let Some(status) = self.fill_status() {
             return status;
         }
+        if let Some(status) = self.stamp_status() {
+            return status;
+        }
         if self.preview_omitted {
             // Badges show with the zones, and alone in Anchor mode.
             return match (self.tools.heights_visible(), self.tools.zones_visible()) {
@@ -4206,7 +4421,8 @@ impl Application {
         if self.overlay_unavailable() {
             let others = self.tools.zones_visible()
                 || self.tools.stroke().is_some()
-                || self.fill_changes().is_some();
+                || self.fill_changes().is_some()
+                || self.stamp_preview().is_some();
             return match (self.tools.heights_visible(), others) {
                 (true, true) => HEIGHTS_AND_OVERLAY_UNAVAILABLE,
                 (true, false) => HEIGHTS_UNAVAILABLE,
@@ -4226,6 +4442,20 @@ impl Application {
         match self.session.status().phase {
             SessionPhase::Ready if self.session.status().applied == Some(true) => {
                 "Changes saved. Ready to edit."
+            }
+            SessionPhase::Ready if self.stamping() => {
+                let name = self.tools.stamp_choice().unwrap_or_default();
+                let count = self
+                    .session
+                    .catalog()
+                    .editing()
+                    .stamps
+                    .get(name)
+                    .map_or(0, |stamp| stamp.objects.len());
+                return format!(
+                    "Ready. Click a tile to stamp {name} ({}); R turns, M mirrors.",
+                    objects_words(count)
+                );
             }
             SessionPhase::Ready if self.tools.mode() == ToolMode::Place => {
                 return self.tools.placement_choice().map_or_else(
@@ -4451,6 +4681,9 @@ impl Application {
                 .tools
                 .choose_placement(self.session.catalog(), &prototype)
                 .map_err(|error| error.to_string()),
+            Control::StampPalette(_) | Control::StampTurn | Control::StampMirror => {
+                self.stamp_control(&control)
+            }
             Control::Clear => self.action(Action::ClearSelection),
             Control::Delete => self.delete_selected(),
             Control::Accept => self.action(Action::Accept),
@@ -4498,6 +4731,24 @@ impl Application {
             Control::Coordinates | Control::Field(_) | Control::ApplyDraft => {
                 self.draft_control(control)
             }
+        }
+    }
+
+    /// Place mode's stamp controls: choose a stamp, turn it, mirror it.
+    /// Turning and mirroring are inert in a blocked session, like R and M.
+    fn stamp_control(&mut self, control: &Control) -> Result<()> {
+        if matches!(control, Control::StampTurn | Control::StampMirror)
+            && self.session.status().phase == SessionPhase::Blocked
+        {
+            return Err(STAMP_BLOCKED.into());
+        }
+        match control {
+            Control::StampPalette(name) => self
+                .tools
+                .choose_stamp(self.session.catalog(), name)
+                .map_err(|error| error.to_string()),
+            Control::StampTurn => self.tools.turn_stamp().map_err(|error| error.to_string()),
+            _ => self.tools.mirror_stamp().map_err(|error| error.to_string()),
         }
     }
 
@@ -6443,7 +6694,9 @@ fn native_input_event(
             app.forget_hover();
             Ok(())
         }
-        Event::MouseMotion { x, y, .. } if !minimized && app.tools.mode() == ToolMode::Terrain => {
+        Event::MouseMotion { x, y, .. }
+            if !minimized && matches!(app.tools.mode(), ToolMode::Terrain | ToolMode::Place) =>
+        {
             native_hover(app, [*x, *y], logical, physical);
             Ok(())
         }
@@ -6711,7 +6964,7 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         Keycode::Escape => app.action(Action::Cancel),
         Keycode::Z => app.action(Action::Undo),
         Keycode::Y => app.action(Action::Redo),
-        Keycode::R => app.action(Action::Reopen),
+        Keycode::R if !stamp_keys(app) => app.action(Action::Reopen),
         // The proposal panel's control: prepare the step, or continue or
         // resume the proposal. Nothing without an open proposal.
         Keycode::G if app.proposal.is_some() => {
@@ -6760,8 +7013,31 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         | Keycode::Plus
         | Keycode::Equals
         | Keycode::Minus => view_key(app, key),
+        _ => stamp_key(app, key),
+    }
+}
+
+/// R and M with a stamp chosen in Place mode ([`stamp_keys`]): turn it a
+/// quarter turn clockwise, mirror it across the anchor's column. Every other key goes
+/// on to [`grade_key`].
+fn stamp_key(app: &mut Application, key: Keycode) -> Result<()> {
+    match key {
+        Keycode::R if stamp_keys(app) => app.control(Control::StampTurn),
+        Keycode::M if stamp_keys(app) => app.control(Control::StampMirror),
         _ => grade_key(app, key),
     }
+}
+
+/// Whether R and M turn and mirror the chosen stamp: in Place mode with a
+/// stamp chosen. Elsewhere R is Reopen and M does nothing. In a blocked
+/// session (an uncertain publication) nothing can be placed, so R keeps
+/// its old meaning there, Reopen (which re-inspects the source; it does not
+/// unblock the session), and M does nothing, like the Turn and Mirror
+/// buttons, which are disabled then.
+fn stamp_keys(app: &Application) -> bool {
+    app.tools.mode() == ToolMode::Place
+        && app.tools.stamp_choice().is_some()
+        && app.session.status().phase != SessionPhase::Blocked
 }
 
 /// Grade road's keys in Terrain mode: L levels (flattens), E evens out
@@ -6785,7 +7061,10 @@ fn grade_key(app: &mut Application, key: Keycode) -> Result<()> {
 /// another grid), and Accept, Cancel and a draft's own controls, which have
 /// nothing to act on then (a road click ends every draft, and no change is
 /// pending while a road is drawn). Everything that prepares an edit or
-/// opens a draft or a pick step is refused, and laid out disabled.
+/// opens a draft or a pick step is refused, and laid out disabled. Place
+/// mode's rows (a prototype, a stamp, its turn and mirror) are refused
+/// too: a road is drawn only in Terrain mode, so they are never laid out
+/// then, and the Place control itself ends the road first.
 fn road_allows(control: &Control) -> bool {
     matches!(
         control,
@@ -7148,6 +7427,9 @@ fn previewed_cells(app: &Application) -> std::collections::BTreeSet<[i64; 2]> {
             .map(|(_, cells)| cells.into_iter().collect())
             .unwrap_or_default();
     }
+    if let Some(preview) = app.stamp_preview() {
+        return preview.tiles.into_iter().collect();
+    }
     match app.tools.stroke() {
         Some(_) => stroke_changes(app)
             .unwrap_or_default()
@@ -7158,6 +7440,31 @@ fn previewed_cells(app: &Application) -> std::collections::BTreeSet<[i64; 2]> {
             .map(|cells| cells.iter().copied().collect())
             .unwrap_or_default(),
     }
+}
+
+/// The hover preview of a stamp: the tile of every object a click would
+/// put down, marked like a terrain stroke's cells through the same
+/// overlay. Tiles outside the view have no prepared cell and are not
+/// drawn; the status line counts them.
+fn stamp_overlay(app: &Application) -> Vec<tilewright_scene::Quad> {
+    let Some(preview) = app.stamp_preview() else {
+        return Vec::new();
+    };
+    let Action::PlaceObjects { plane, layer, .. } = &preview.action else {
+        return Vec::new();
+    };
+    let cells = preview
+        .tiles
+        .iter()
+        .map(|&[x, y]| SelectionKey::Cell {
+            plane: plane.clone(),
+            layer: *layer,
+            grid: preview.grid.clone(),
+            x,
+            y,
+        })
+        .collect();
+    crate::workspace_render::stroke_overlay(&app.prepared, &cells)
 }
 
 /// The zone overlay: every in-view tile that has a zone, tinted with its
@@ -7356,6 +7663,9 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     let mut person = height_overlay(app);
     person.extend(zone_overlay(app));
     let mut stroke = stroke_overlay(app);
+    // A stamp's hover preview is the person's own preview too; it is only
+    // in Place mode, where no stroke runs.
+    stroke.extend(stamp_overlay(app));
     if matches!(
         app.tools
             .stroke()
