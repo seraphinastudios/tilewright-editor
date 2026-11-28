@@ -204,7 +204,7 @@ Severities are defined by the desktop editor's entry points:
   starts on a private copy, opens the world with the prototype load budget
   (`tilewright_editor_document::prototype_load_options`: at most 16,384
   files, 32,768 directory entries and 256 MiB read, 1 MiB per document;
-  [LARGE-WORLDS.md](LARGE-WORLDS.md) gives the reasons), then requires
+  the repository's `docs/LARGE-WORLDS.md` gives the reasons), then requires
   `preview.jsonc` to load and the catalog's view to be prepared.
 - Before that, the provisioning helper (`tools/provision-prototype.py`)
   copies the whole tree with limits of its own: at most 65,536 directory
