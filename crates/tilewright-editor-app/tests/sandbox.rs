@@ -443,7 +443,7 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let records = tree(&own.join("evidence"));
     let mut frames = 0;
     for (name, bytes) in &records {
-        if !name.ends_with(".json") {
+        if Path::new(name).extension() != Some("json".as_ref()) {
             continue;
         }
         let record: Value = serde_json::from_slice(bytes.as_ref().unwrap()).unwrap();
