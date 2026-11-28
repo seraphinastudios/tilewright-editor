@@ -202,12 +202,13 @@ Severities are defined by the desktop editor's entry points:
 - `window` opens no world.
 - The editing entry point, `prototype`, which the provisioning helper
   starts on a private copy, opens the world with the prototype load budget
-  (`tilewright_editor_document::prototype_load_options`: at most 256 files,
-  1,024 directory entries and 8 MiB read, 1 MiB per document), then requires
+  (`tilewright_editor_document::prototype_load_options`: at most 16,384
+  files, 32,768 directory entries and 256 MiB read, 1 MiB per document;
+  the repository's `docs/LARGE-WORLDS.md` gives the reasons), then requires
   `preview.jsonc` to load and the catalog's view to be prepared.
 - Before that, the provisioning helper (`tools/provision-prototype.py`)
-  copies the whole tree with limits of its own: at most 4,096 directory
-  entries and 4,096 regular files, 64 MiB in total and a directory depth of
+  copies the whole tree with limits of its own: at most 65,536 directory
+  entries and 65,536 regular files, 512 MiB in total and a directory depth of
   32, and it refuses links and special files. Lint does not check these:
   these commands read only through the World loader, which sees World's
   files and none of the helper's tree walk.

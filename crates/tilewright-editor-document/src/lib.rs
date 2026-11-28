@@ -27,11 +27,16 @@ pub const MAXIMUM_DIAGNOSTICS: usize = 256;
 
 /// Explicit bounds for the offline prototype; the general document API retains
 /// its existing World defaults. Every reload and transaction retains these.
+///
+/// One chunk is one file, so 16,384 files hold two planes at the preview's
+/// 8,192-chunk plane budget, or one and its definitions. The generated
+/// worlds of `docs/LARGE-WORLDS.md` open in about 0.6 s at 8,100 chunks
+/// (about 30 MB); 256 MiB is 16 KiB a file on average.
 pub fn prototype_load_options() -> LoadOptions {
     let mut options = load_options();
-    options.maximum_files = 256;
-    options.maximum_entries = 1_024;
-    options.maximum_total_bytes = 8 << 20;
+    options.maximum_files = 16_384;
+    options.maximum_entries = 32_768;
+    options.maximum_total_bytes = 256 << 20;
     options.limits.max_input_bytes = 1 << 20;
     options.limits.max_values = 65_536;
     options.limits.max_array_items = 65_536;

@@ -365,19 +365,20 @@ fn every_list_is_bounded_and_counts_what_it_leaves_out() {
     assert_eq!(matched["zone_palette"].as_array().unwrap().len(), 10);
     assert_eq!(matched["prototypes"].as_array().unwrap().len(), 0);
 
-    let (lint, printed) = json_of("lint", &root, &[], cli::EXIT_FINDINGS);
+    // Warnings alone are not an error.
+    let (lint, printed) = json_of("lint", &root, &[], 0);
     assert!(printed.len() <= limits::MAXIMUM_OUTPUT_BYTES);
     assert_eq!(
         lint["findings"].as_array().unwrap().len(),
         limits::MAXIMUM_FINDINGS
     );
     // 70 own-tile portals, 300 unused zones, 11 unreferenced anchors and
-    // the preview's own note.
-    // The crowded world is over the editing budget too.
-    assert_eq!(lint["counts"]["error"], 1);
+    // the preview's own note. The crowded world is within the editing
+    // budget.
+    assert_eq!(lint["counts"]["error"], 0);
     assert_eq!(lint["counts"]["warning"], 70);
     assert_eq!(lint["counts"]["info"], 300 + 11 + 1);
-    assert_eq!(more(&lint, "findings"), 1 + 70 + 312 - 256);
+    assert_eq!(more(&lint, "findings"), 70 + 312 - 256);
 
     // The text forms are bounded the same way.
     for (command, extra) in [
@@ -389,7 +390,7 @@ fn every_list_is_bounded_and_counts_what_it_leaves_out() {
         let mut arguments = vec![root.to_str().unwrap()];
         arguments.extend_from_slice(extra);
         let text = run(command, &arguments);
-        assert_eq!(text.code, u8::from(command == "lint"));
+        assert_eq!(text.code, 0);
         assert!(text.stdout.len() <= limits::MAXIMUM_OUTPUT_BYTES);
     }
 }
@@ -759,12 +760,8 @@ fn reports_at_every_bound_with_the_longest_ids_and_text_fit_the_budget() {
             }
             arguments.extend_from_slice(extra);
             let outcome = run(command, &arguments);
-            assert_eq!(
-                outcome.code,
-                u8::from(command == "lint"),
-                "{command}: {}",
-                outcome.stderr
-            );
+            // Within the editing budget: lint finds no error.
+            assert_eq!(outcome.code, 0, "{command}: {}", outcome.stderr);
             eprintln!("{command} json={json}: {} bytes", outcome.stdout.len());
             assert!(outcome.stdout.len() <= limits::MAXIMUM_OUTPUT_BYTES);
         }
@@ -785,7 +782,7 @@ fn reports_at_every_bound_with_the_longest_ids_and_text_fit_the_budget() {
     assert!(more(&overview, "planes") > 0 && more(&overview["planes"][1], "layers") > 0);
     assert!(more(&overview["profile"], "render_layers") > 0);
     assert!(more(&overview["catalog"]["grants"], "objects") > 0);
-    let (lint, _) = json_of("lint", &root, &[], cli::EXIT_FINDINGS);
+    let (lint, _) = json_of("lint", &root, &[], 0);
     assert!(more(&lint, "findings") > 0);
 }
 
@@ -817,8 +814,10 @@ fn world_files(root: &Path) -> usize {
 
 #[test]
 fn lint_reports_a_world_over_the_editing_budget_and_everything_else() {
-    // The review's repro: 300 more definitions than the budget's files.
-    let (directory, root) = with_definitions(300);
+    // As many definitions as the budget has files: with the sample's own
+    // files, the world is over it.
+    let files = tilewright_editor_document::prototype_load_options().maximum_files;
+    let (directory, root) = with_definitions(files);
     let (before, beside) = (snapshot(&root), snapshot(directory.path()));
     let (lint, printed) = json_of("lint", &root, &[], cli::EXIT_FINDINGS);
     // Both loads only read.
@@ -873,7 +872,7 @@ fn lint_reports_a_world_over_the_editing_budget_and_everything_else() {
     }
     // The other commands load with World's default bounds and describe it.
     let (overview, _) = json_of("overview", &root, &[], 0);
-    assert_eq!(overview["definitions"], 323);
+    assert_eq!(overview["definitions"], files + 23);
 }
 
 #[test]

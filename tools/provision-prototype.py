@@ -19,8 +19,11 @@ import stat
 import subprocess
 import sys
 
-MAX_FILES = 4096
-MAX_BYTES = 64 << 20
+# Room for a world at the editor's load budget (16,384 files, 32,768
+# entries, 256 MiB: tilewright_editor_document::prototype_load_options) and
+# its catalog's resources (64 MiB), with the same bound on entries and files.
+MAX_FILES = 65536
+MAX_BYTES = 512 << 20
 PERSISTENT_LOCAL = {'ext2', 'ext3', 'ext4', 'xfs', 'btrfs', 'f2fs', 'zfs', 'bcachefs'}
 # A proposal file as the proposal store names it, and its size bound
 # (tilewright_editor_proposal::limits::BYTES).

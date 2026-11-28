@@ -11,7 +11,7 @@ findings:
     severity: error
     location:
       codes: [source.budget, source.missing_file]
-    message: The editing entry point (prototype) refuses this world: its load budget is 256 files, 1024 directory entries and 8388608 bytes, and per document 1048576 bytes, 65536 values and 65536 array items.
+    message: The editing entry point (prototype) refuses this world: its load budget is 16384 files, 32768 directory entries and 268435456 bytes, and per document 1048576 bytes, 65536 values and 65536 array items.
     detail: none
   - code: preview.effects-neutral
     severity: info

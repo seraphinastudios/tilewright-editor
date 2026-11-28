@@ -1548,13 +1548,19 @@ dependencies = [
 name = "tilewright-editor-preview"
 version = "0.1.0"
 dependencies = [
+ "pollster",
  "serde_json",
  "sha2",
  "tempfile",
+ "tilewright-edit",
+ "tilewright-editor-commands",
+ "tilewright-editor-document",
+ "tilewright-editor-testkit",
  "tilewright-jsonc",
  "tilewright-render-api",
  "tilewright-render-resources",
  "tilewright-render-testkit",
+ "tilewright-render-wgpu",
  "tilewright-render-world",
  "tilewright-scene",
  "tilewright-source",
