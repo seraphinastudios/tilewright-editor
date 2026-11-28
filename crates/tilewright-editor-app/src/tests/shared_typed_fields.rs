@@ -566,7 +566,7 @@ fn the_shared_typed_inspector_fields_cover_and_paint_what_the_editors_own_do() {
     let cases: [(&str, Scalar, Edit); 20] = [
         ("opened", Scalar::Flag, |_| {}),
         ("typed", Scalar::Flag, |app| {
-            app.tools.input("false").unwrap()
+            app.tools.input("false").unwrap();
         }),
         ("selection", Scalar::Flag, |app| {
             app.tools.input("true").unwrap();
@@ -584,7 +584,9 @@ fn the_shared_typed_inspector_fields_cover_and_paint_what_the_editors_own_do() {
             app.tools.input("tr\u{e000}ue").unwrap();
         }),
         ("opened", Scalar::Count, |_| {}),
-        ("typed", Scalar::Count, |app| app.tools.input("-2").unwrap()),
+        ("typed", Scalar::Count, |app| {
+            app.tools.input("-2").unwrap();
+        }),
         ("long, scrolled to the end", Scalar::Count, |app| {
             app.tools.input(&"7".repeat(90)).unwrap();
         }),
@@ -596,7 +598,7 @@ fn the_shared_typed_inspector_fields_cover_and_paint_what_the_editors_own_do() {
         }),
         ("opened", Scalar::Weight, |_| {}),
         ("typed", Scalar::Weight, |app| {
-            app.tools.input("1.5").unwrap()
+            app.tools.input("1.5").unwrap();
         }),
         ("long, scrolled to the end", Scalar::Weight, |app| {
             app.tools
@@ -617,7 +619,7 @@ fn the_shared_typed_inspector_fields_cover_and_paint_what_the_editors_own_do() {
         }),
         ("opened", Scalar::Kind, |_| {}),
         ("typed", Scalar::Kind, |app| {
-            app.tools.input("marker").unwrap()
+            app.tools.input("marker").unwrap();
         }),
         ("long, scrolled to the end", Scalar::Kind, |app| {
             app.tools.input(&"marker_".repeat(14)).unwrap();
@@ -842,6 +844,7 @@ fn the_road_fence_and_the_pause_refuse_typed_fields_with_either_field() {
 /// hint, refuses in its type's words, reviews the same `SetField` with the
 /// same review lines, is accepted, and Undo brings the absent value back.
 #[test]
+#[allow(clippy::too_many_lines)] // The hand test's steps are listed inline.
 fn the_hand_test_typed_fields_give_the_same_hints_refusals_and_reviews_with_either_field() {
     use super::zone_manage::{all_texts, enter, press, type_text};
     use super::zones::{key, zone_application};
