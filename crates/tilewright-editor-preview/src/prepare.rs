@@ -20,6 +20,18 @@ fn global(chunk: i64, local: u16) -> Result<i64, PreviewError> {
         .and_then(|v| v.checked_add(i64::from(local)))
         .ok_or_else(|| failure("chunk coordinate overflow"))
 }
+/// The first and last chunk coordinates under `bounds`, which
+/// [`validate_bounds`] has checked.
+fn chunk_span(bounds: [i64; 4]) -> ([i64; 2], [i64; 2]) {
+    let side = i64::from(CHUNK_SIZE);
+    (
+        [bounds[0].div_euclid(side), bounds[1].div_euclid(side)],
+        [
+            (bounds[0] + bounds[2] - 1).div_euclid(side),
+            (bounds[1] + bounds[3] - 1).div_euclid(side),
+        ],
+    )
+}
 fn inside(bounds: [i64; 4], x: i64, y: i64) -> bool {
     x >= bounds[0] && y >= bounds[1] && x < bounds[0] + bounds[2] && y < bounds[1] + bounds[3]
 }
@@ -381,22 +393,24 @@ impl Adapter<'_> {
         let plane = &world.planes()[&view.plane];
         let mut scanned = 0usize;
         let mut inventory = 0usize;
-        for (&(layer, cx, cy), chunk) in &plane.chunks {
-            if layer != view.layer {
-                continue;
-            }
-            let left = global(cx, 0)?;
-            let top = global(cy, 0)?;
+        // Only the chunks under the view, looked up by their key rather than
+        // found by a scan of the plane, in the plane's key order (column,
+        // then row), so objects are inserted in the order a scan gave.
+        let (first, last) = chunk_span(view.bounds);
+        let under = (first[0]..=last[0])
+            .flat_map(|cx| (first[1]..=last[1]).map(move |cy| (cx, cy)))
+            .filter_map(|(cx, cy)| {
+                plane
+                    .chunks
+                    .get(&(view.layer, cx, cy))
+                    .map(|chunk| (cx, cy, chunk))
+            });
+        for (cx, cy, chunk) in under {
             // Validate the whole chunk's checked coordinate interval, including negatives.
+            global(cx, 0)?;
+            global(cy, 0)?;
             global(cx, 31)?;
             global(cy, 31)?;
-            if left > view.bounds[0] + view.bounds[2] - 1
-                || top > view.bounds[1] + view.bounds[3] - 1
-                || left.checked_add(31).is_none_or(|v| v < view.bounds[0])
-                || top.checked_add(31).is_none_or(|v| v < view.bounds[1])
-            {
-                continue;
-            }
             for object in &chunk.objects {
                 scanned = scanned
                     .checked_add(1)
@@ -447,15 +461,7 @@ impl Adapter<'_> {
             .ok_or_else(|| failure("unknown plane"))?;
         // Resolve each bounded chunk once using the released transition resolver,
         // including absent chunks where neighbouring terrain can derive edge tiles.
-        let side = i64::from(CHUNK_SIZE);
-        let first = [
-            view.bounds[0].div_euclid(side),
-            view.bounds[1].div_euclid(side),
-        ];
-        let last = [
-            (view.bounds[0] + view.bounds[2] - 1).div_euclid(side),
-            (view.bounds[1] + view.bounds[3] - 1).div_euclid(side),
-        ];
+        let (first, last) = chunk_span(view.bounds);
         for cy in first[1]..=last[1] {
             for cx in first[0]..=last[0] {
                 global(cx, 0)?;

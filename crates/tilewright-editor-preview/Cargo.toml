@@ -18,8 +18,14 @@ tilewright-render-testkit.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+pollster.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+tilewright-edit.workspace = true
+tilewright-editor-commands.workspace = true
+tilewright-editor-document.workspace = true
+tilewright-editor-testkit.workspace = true
+tilewright-render-wgpu.workspace = true
 
 [lints]
 workspace = true

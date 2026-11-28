@@ -900,7 +900,8 @@ its cells are still what it covers:
 - any change of the committed World or of the active view (plane, layer,
   bounds) that did not come from its grade forgets it; a World or catalog
   changed on disk pauses or blocks every edit, grades included;
-- leaving Terrain mode, pans and zooms, a Reopen (also during the road's
+- leaving Terrain mode, zooms and pans that keep the
+  [view window](#moving-view-window), a Reopen (also during the road's
   or a grade's Review: the change accepted after it is remembered as
   usual), drawing another road (until that one is accepted) and dropping
   it keep it.
@@ -2015,6 +2016,27 @@ Export is a separate explicit toolkit CLI operation on committed World data.
 Pending scenes are never export input. Keep the original content tree read-only
 and export into a new task-owned output. See the adapter's own usage and tests
 for its manifest/stale-source/unsupported-edit rejection contract.
+
+### Moving view window
+
+The catalog's `view.bounds` is where a session starts: the active view, of
+at most 4,096 tiles, that is drawn, picked and edited. WASD pans the camera
+one tile; while the tile under the camera's centre stays inside the view,
+nothing else changes. When a pan takes it outside, the view moves with the
+camera: a view of the same size around that tile, on the same plane and
+spatial layer, as a new session centres its camera on the catalog's view.
+Everything scoped to the active view (drawing, picking, every edit and grant,
+selection, the overlays and a proposal's highlight) then follows the moved
+view, so a world larger than one view can be panned and edited all over. A
+selected tile outside the moved view is no longer selected. While a change
+is pending the view stays where its review was prepared, and the camera pans
+inside it as before. A pan whose moved view cannot be drawn is refused like
+any other: the camera and the view go back. A proposal step is prepared
+under the view at the time: a step outside it is refused as outside the
+view, and a fill recorded under another view diverges
+([PROPOSALS.md](PROPOSALS.md#applying-in-the-desktop)); pan back to where
+it was recorded. The scripted demonstration does not pan, so its frames do
+not change.
 
 ## Project art
 

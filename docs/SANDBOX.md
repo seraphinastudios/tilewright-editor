@@ -79,8 +79,8 @@ The helper:
 3. copies the world, from the descriptor it checked, into `world/` with
    exactly the prototype helper's rules
    and limits (`tools/provision-prototype.py`: regular files and
-   directories only, no links or special files, at most 4,096 entries and
-   64 MiB, files 0600, everything synced);
+   directories only, no links or special files, at most 65,536 entries and
+   512 MiB, files 0600, everything synced);
 4. writes the receipt `provision.json` (0600, synced), then one line to
    standard error;
 5. checks the directories' identities and mounts again, and replaces itself

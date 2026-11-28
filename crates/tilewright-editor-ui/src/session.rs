@@ -568,6 +568,29 @@ impl Session {
     pub fn resources(&self) -> &ReadyResources {
         &self.resources
     }
+    /// Moves the active view to `bounds` on the catalog's plane and layer
+    /// (the moving view window, [`PreviewCatalog::with_view_bounds`]):
+    /// every later edit, grant and selection is scoped to it. A selected
+    /// cell outside it is no longer selected. Refused while a change is
+    /// pending, whose review was prepared under the view it has.
+    ///
+    /// # Errors
+    /// [`RefusalCode::PendingExists`] while a change is pending;
+    /// [`RefusalCode::InputBudget`] for bounds the cell budget refuses.
+    pub fn move_view(&mut self, bounds: [i64; 4]) -> Result<(), SessionError> {
+        if self.history.pending().is_some() {
+            return Err(refuse(
+                RefusalCode::PendingExists,
+                "the view stays while a change is pending",
+            ));
+        }
+        self.catalog = self
+            .catalog
+            .with_view_bounds(bounds, PreviewLimits::default())
+            .map_err(|e| SessionError::new(RefusalCode::InputBudget, e.to_string()))?;
+        self.revalidate_selection();
+        Ok(())
+    }
     pub fn generation(&self) -> u64 {
         self.generation
     }
