@@ -156,10 +156,10 @@ invalidate earlier masks.
 
 `--shared-string-field` (given to `tools/provision-prototype.py`, which
 records `"string_field": "tilewright-ui 0.1.2"` in the receipt and passes the
-flag to the editor) switches the inspector's **string** fields and every other
-text draft (the two **zone name** drafts, the Place **palette filter**, the
-**coordinates**, a new **anchor id** and a portal's **typed location**) to the
-shared text field of `tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the editor's own
+flag to the editor) switches the inspector's **string** fields, the two **zone
+name** drafts, the Place **palette filter**, the **coordinates**, a new
+**anchor id** and a portal's **typed location** to the shared text field of
+`tilewright-ui` 0.1.2, drawn by `tilewright-ui-render` with the editor's own
 text system and font pack. It is off by default; without it nothing changes,
 and the frame records and images of a session are byte-identical. With it,
 each frame record carries the same `"string_field": "tilewright-ui 0.1.2"`
@@ -170,47 +170,47 @@ field. The drafts that change hands are string field drafts; a zone's display
 name ("Edit display name") and a new zone's id and name ("New zone under X",
 "New top-level zone"), see [Managing zones](#managing-zones); the filter at the
 top of the sidebar in Place mode, see [Placing objects](#placing-objects); the
-coordinates draft ("Edit position (x,y)"); "New anchor at (x, y)", see [Anchors](#anchors); and "Type a location", see [Portals](#portals).
-A shared draft keeps the same refusals and messages, stored line breaks
-as the same markers (now drawn by the shared field), the same keys, clipboard
-and input method events, and Enter or Review hands the engine the same action
-with the shared field's committed text: `SetField` for a string field,
-`RenameZone` or `CreateZone` for a zone draft, `Move` for coordinates,
-`CreateAnchor` for an anchor id and `SetPortal` for a typed location. A zone
-draft keeps its own byte
+coordinates draft ("Edit position (x,y)"); "New anchor at (x, y)", see
+[Anchors](#anchors); and "Type a location", see [Portals](#portals). A shared
+draft keeps the same refusals and messages, stored line breaks as the same
+markers (now drawn by the shared field), the same keys, clipboard and input
+method events, and Enter or Review hands the engine the same action with the
+shared field's committed text: `SetField` for a string field, `RenameZone` or
+`CreateZone` for a zone draft, `Move` for coordinates, `CreateAnchor` for an
+anchor id and `SetPortal` for a typed location. A zone draft keeps its own byte
 limit (1,024 bytes for a display name, 1,153 for a new zone's id, space and
 name), refused in the editor's own words, its own hint ("Name of meadow; empty
 = none", "New zone under meadow: id, name"), the review-time checks (an empty
 name is no name; the id's syntax, a used id and the 256-character name, each
 with its message; text the font pack cannot draw) and the same road fence and
 pause: no zone draft opens while a road is drawn or editing is paused. The
-coordinates, a new anchor's id and a typed location keep theirs too: their
-byte limits (4,096 bytes for coordinates, 128 for an anchor id, 191 for a
-location) refused in the same words; their hints ("Ctrl+A selects / Enter
-reviews", "New anchor id at (2, 3); Enter reviews", "Portal of gate_west:
-[plane] layer x y"); their review-time checks, each with its message (`x,y`
-and whole numbers; the id's syntax and an id the plane uses; three or four
-values, the plane, a 32-bit layer, x and y within World's range, and a target
-where the portal already leads; text the font pack cannot draw); opening one
-ends an open portal step; and the same road fence and pause: none opens while
-a road is drawn or editing is paused, and an open one is not reviewed while
-paused. The shared filter keeps the filter's own rules: the 64-byte limit with the same
-refusal, every key is text while it is focused (N and O type, they do not
-act), `/` or a click focuses it, Enter or a click elsewhere releases it and
-keeps the text, Esc clears and releases it, a composition is dropped on
-release, and it is never reviewed and never makes a change. Each committed
-edit filters the palette and pulls the sidebar's scroll back as before. It
-cannot be focused while a road is drawn (a road is only drawn in Terrain
-mode), and while editing is paused it is focused, edited, released and cleared
-as before. The arrows step the caret with the shared field's own `step_caret`,
-which steps over a marker's zero-width space in one press and counts two caret
-stops at the same place as one, so every press moves the caret. Its text is
-the editor's own size (18 px), so an arrow or a click lands on the same visual
-stop, with the same side, as in the editor's own field. The editor's own field
-steps its caret by the same rule, so neither field has a press that moves
-nothing on screen, including two caret stops at the same place at a change of
-direction, U+0600 before a stored break, some emoji sequences beside
-right-to-left text or breaks, and a value of breaks only.
+coordinates, a new anchor's id and a typed location keep theirs too: their byte
+limits (4,096 bytes for coordinates, 128 for an anchor id, 191 for a location)
+refused in the same words; their hints ("Ctrl+A selects / Enter reviews", "New
+anchor id at (2, 3); Enter reviews", "Portal of gate_west: [plane] layer x y");
+their review-time checks, each with its message (`x,y` and whole numbers; the
+id's syntax and an id the plane uses; three or four values, the plane, a 32-bit
+layer, x and y within World's range, and a target where the portal already
+leads; text the font pack cannot draw); opening one ends an open portal step;
+and the same road fence and pause: none opens while a road is drawn or editing
+is paused, and an open one is not reviewed while paused. The shared filter
+keeps the filter's own rules: the 64-byte limit with the same refusal, every
+key is text while it is focused (N and O type, they do not act), `/` or a click
+focuses it, Enter or a click elsewhere releases it and keeps the text, Esc
+clears and releases it, a composition is dropped on release, and it is never
+reviewed and never makes a change. Each committed edit filters the palette and
+pulls the sidebar's scroll back as before. It cannot be focused while a road is
+drawn (a road is only drawn in Terrain mode), and while editing is paused it is
+focused, edited, released and cleared as before. The arrows step the caret with
+the shared field's own `step_caret`, which steps over a marker's zero-width
+space in one press and counts two caret stops at the same place as one, so
+every press moves the caret. Its text is the editor's own size (18 px), so an
+arrow or a click lands on the same visual stop, with the same side, as in the
+editor's own field. The editor's own field steps its caret by the same rule, so
+neither field has a press that moves nothing on screen, including two caret
+stops at the same place at a change of direction, U+0600 before a stored break,
+some emoji sequences beside right-to-left text or breaks, and a value of breaks
+only.
 
 The field looks like the editor's own: it is laid out with the editor's own
 field row values (`workspace_render`'s `FIELD_ROW_HEIGHT`, `text_size`,
@@ -304,7 +304,7 @@ in the coordinates, a new anchor's id and a typed location, with step 15.
     the filter has no Review or Discard: check that only its hint, "Enter
     keeps the filter / Esc clears it", sits below the row, and that Enter
     while composing does not release the field.
-15. **Coordinates, anchor ids and locations.** Select the marker and press
+15. **Coordinates, anchor ids and locations.** Select marker_1 and press
     "Edit position (x,y)": the draft shows its position (`3,2`) with
     "Ctrl+A selects / Enter reviews" below; `4,x` and Enter keep the draft
     open with "Invalid y coordinate", `4,4` reviews the move. Press K, click
