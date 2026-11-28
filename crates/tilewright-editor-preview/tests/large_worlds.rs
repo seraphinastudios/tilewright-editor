@@ -206,19 +206,37 @@ fn large_world_benchmark() {
                 })
                 .collect(),
         );
+        let limits = PreviewLimits::default();
+        let mut loaded = None;
+        let catalog_load = median(
+            (0..3)
+                .map(|_| {
+                    let start = Instant::now();
+                    loaded = Some(
+                        loader::load(document.source(), document.world(), limits).expect("catalog"),
+                    );
+                    milliseconds(start)
+                })
+                .collect(),
+        );
+        let (catalog, resources) = loaded.unwrap();
+        let view = catalog.default_view(document.world(), width, height, 1);
         let mut prepared = None;
         let build = median(
             (0..9)
                 .map(|_| {
                     let start = Instant::now();
-                    prepared = Some(view(&document, width, height).1);
+                    prepared = Some(
+                        prepare(document.world(), &catalog, &resources, &view, limits)
+                            .expect("prepare"),
+                    );
                     milliseconds(start)
                 })
                 .collect(),
         );
         let prepared = prepared.unwrap();
         print!(
-            "chunks={chunks} files={source_files} open_ms={open:.1} edit_preview_ms={edit:.1} commit_ms={commit:.1} scene_build_ms={build:.2} quads={} cell_quads={}",
+            "chunks={chunks} files={source_files} open_ms={open:.1} edit_preview_ms={edit:.1} commit_ms={commit:.1} catalog_load_ms={catalog_load:.2} scene_build_ms={build:.2} quads={} cell_quads={}",
             prepared.scene.quads().len(),
             prepared.cell_scene.quads().len(),
         );

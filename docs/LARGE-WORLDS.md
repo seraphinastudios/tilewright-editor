@@ -34,7 +34,8 @@ For each size it generates a world in a temporary directory and prints:
 | `open_ms` | `WorldDocument::open_prototype`, the app's open (median of 3) |
 | `edit_preview_ms` | `tilewright_editor_commands::preview` of a one-tile paint: plan plus baseline reload (median of 3) |
 | `commit_ms` | `History::commit` of that paint: reload, publish, reopen (median of 3; each is undone untimed) |
-| `scene_build_ms` | catalog load and `prepare` of the catalog's 64 × 64 view, the World and cell-pick scenes (median of 9) |
+| `catalog_load_ms` | `loader::load` of the catalog and its resources (median of 3) |
+| `scene_build_ms` | `prepare` of the catalog's 64 × 64 view: the World and cell-pick scenes (median of 9) |
 | `quads`, `cell_quads` | the World scene's and the cell-pick scene's quads |
 | `draw_submit_ms`, `draw_finish_ms` | with `TILEWRIGHT_BENCH_GPU`: the shared renderer's offscreen `draw` of the World scene, and `draw` plus `finish` (median of 9 after 5 warm-up frames; no UI or overlays) |
 
