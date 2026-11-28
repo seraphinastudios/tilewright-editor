@@ -13,7 +13,7 @@ use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewLimits, loader};
 use tilewright_editor_testkit::fixture_world;
 use tilewright_editor_ui::{
-    Action, Actor, SelectionKey, Session, inspector::inspect, tools::ToolState,
+    Action, Actor, RefusalCode, SelectionKey, Session, inspector::inspect, tools::ToolState,
 };
 
 const CHUNK: &str = "planes/main/layers/0/0_0.jsonc";
@@ -259,5 +259,56 @@ fn the_inspector_edits_a_whole_number_and_writes_numbers_as_today() {
         session.dispatch(Action::Undo, &mut records).unwrap();
         session.dispatch(Action::Accept, &mut records).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+}
+
+#[test]
+fn a_stored_value_too_long_for_a_one_line_transaction_is_over_budget() {
+    // The source holds it on a line of its own, within the toolkit's
+    // 1 MiB line budget; the transaction's one line, with the expectation
+    // and the rest of the operation, exceeds it.
+    let stored = format!("\"{}\"", "x".repeat(1_048_402));
+    let (dir, mut session) = fixture(&format!("{{\n\"data\":\n{stored}\n}}"));
+    let path = dir.path().join(CHUNK);
+    let original = fs::read(&path).unwrap();
+    let mut records = Records::default();
+    let error = session
+        .dispatch(set(&session, "data", serde_json::json!(1)), &mut records)
+        .unwrap_err();
+    assert_eq!(error.code(), RefusalCode::InputBudget, "{error}");
+    assert!(session.history().pending().is_none());
+    assert!(records.0.is_empty());
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn a_stored_list_or_object_is_expected_up_to_64_kib_of_canonical_text() {
+    // `["x…x"]`: the canonical text is the string and four bytes.
+    let list = |length: usize| format!("[\"{}\"]", "x".repeat(length - 4));
+    let spaced = |length: usize| {
+        format!(
+            "[ // the source spells it longer\n    \"{}\"   /* than canonical */ ]",
+            "x".repeat(length - 4)
+        )
+    };
+    for (stored, prepares) in [
+        (list(65_535), true),
+        (list(65_536), true),
+        (spaced(65_536), true),
+        (list(65_537), false),
+        (spaced(65_537), false),
+    ] {
+        let (_dir, mut session) = fixture(&format!("{{\"data\": {stored}}}"));
+        let mut records = Records::default();
+        let result = session.dispatch(set(&session, "data", serde_json::json!(1)), &mut records);
+        let length = canonical(&stored).len();
+        if prepares {
+            result.unwrap_or_else(|error| panic!("{length}: {error}"));
+            assert_eq!(pending_expect(&session), canonical(&stored));
+        } else {
+            let error = result.unwrap_err();
+            assert_eq!(error.code(), RefusalCode::InputBudget, "{length}: {error}");
+            assert!(session.history().pending().is_none());
+        }
     }
 }

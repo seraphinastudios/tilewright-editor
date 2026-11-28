@@ -107,17 +107,26 @@ spatial layer, and a destination inside the view.
 
 `SetField { uid, field, value, expected }` prepares one World `set` of the
 object's `fields` member. When the object stores the field, the `set`
-expects the stored value exactly as the source spells it. World compares an
-expectation by kind and canonical text, which keeps each number's spelling
-and each object's member order, so a value the model holds as the number 2
-may be written `2`, `2.0` or `2e0`, and only its own spelling matches. When
-the object does not store the field, the `set` adds the member without an
-expectation; an object with no `fields` member at all gets one, after a
-`test` that it is still absent.
+expects the stored value in World's canonical form of its source:
+comments and whitespace dropped and strings re-escaped, but each number
+spelled as the source spells it and each object's members in source order.
+World compares an expectation by kind and that canonical text, so a value
+the model holds as the number 2 may be written `2`, `2.0` or `2e0`, and
+only its own spelling matches. When the object does not store the field,
+the `set` adds the member without an expectation; an object with no
+`fields` member at all gets one, after a `test` that it is still absent.
+A stored list or object whose canonical text exceeds 64 KiB, or a stored
+value that would make the one-line transaction exceed the toolkit's syntax
+limits, is refused with input.budget.
 
-The new value is written as given, in compact JSON. A number draft in the
-desktop inspector gives a 64-bit float, so `2` is written `2.0`, `2.5` as
-`2.5` and `1e3` as `1000.0`; an integer draft gives an integer.
+The new value is the action's `value`, a serde_json value, written in
+compact JSON as serde_json encodes it: object keys in sorted order, each
+integer as an integer, and every other number as a 64-bit float. A number
+draft in the desktop inspector gives a float, so `2` is written `2.0`,
+`2.5` as `2.5` and `1e3` as `1000.0`; an integer draft gives an integer.
+Values from MCP `set_field` and proposal steps are decoded into the same
+form, so `2.50` is written `2.5`, `1e3` as `1000.0` and `{"b": 1, "a": 2}`
+as `{"a":2,"b":1}`, while `2` stays `2`.
 
 ## Fill and replace
 

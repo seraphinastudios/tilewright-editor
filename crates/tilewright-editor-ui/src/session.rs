@@ -364,9 +364,32 @@ impl SourceSpellings {
                 .and_then(|operation| operation.get(key))
                 .ok_or_else(|| refuse(RefusalCode::Internal, "missing transaction guard"))?
                 .span();
-            syntax = syntax.replace(span, value, limits).map_err(internal)?;
+            syntax = syntax
+                .replace(span, value, limits)
+                .map_err(spliced_budget)?;
         }
         Ok(syntax.source().into())
+    }
+}
+
+/// A spliced transaction that the toolkit's syntax limits refuse: a long
+/// stored value can make its one-line transaction too long. Any other
+/// failure is a bug.
+fn spliced_budget(error: tilewright_jsonc::Error) -> SessionError {
+    use tilewright_jsonc::ErrorCode;
+    match error.code {
+        ErrorCode::InputTooLarge
+        | ErrorCode::TooManyLines
+        | ErrorCode::LineTooLong
+        | ErrorCode::StringTooLong
+        | ErrorCode::DepthLimit
+        | ErrorCode::ValueLimit
+        | ErrorCode::ArrayLimit
+        | ErrorCode::ObjectLimit => SessionError::new(
+            RefusalCode::InputBudget,
+            format!("the transaction exceeds the toolkit's syntax budget: {error}"),
+        ),
+        _ => internal(error),
     }
 }
 
