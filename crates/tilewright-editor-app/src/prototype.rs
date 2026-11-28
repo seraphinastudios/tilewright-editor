@@ -540,7 +540,7 @@ struct Application {
     favourites: Option<favourites_view::Personal>,
     /// The proposal panel's state, derived once for the layout being built.
     proposal_layout: Option<proposal_view::State>,
-    /// The shared text field's compiler, only with `--shared-string-field`.
+    /// The shared text field's compiler, unless `--editor-text-field`.
     shared_field: Option<crate::shared_field::SharedField>,
     /// The last accepted road, which Grade road flattens or smooths, and
     /// the road a pending change comes from ([`RoadMemory`]); settled by
@@ -565,6 +565,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         return Err("provisioned descriptor numbers must be distinct".into());
     }
     let (proposal_root, person) = proposal_arguments(arguments, [&world, &recovery, &evidence])?;
+    let string_field = string_field_argument(arguments)?;
     let reference = arguments.iter().any(|argument| argument == "--reference");
     let demo = arguments.iter().any(|argument| argument == "--demo-script");
     let palettes_root = palettes_argument(
@@ -647,7 +648,7 @@ pub fn run(arguments: &[String]) -> Result<()> {
         println!("{}", terminal_field(&personal.summary()));
         app.favourites = Some(personal);
     }
-    if arguments.iter().any(|arg| arg == "--shared-string-field") {
+    if string_field == tilewright_editor_ui::field_input::FieldImplementation::Shared {
         app.share_string_field()?;
     }
     app.open_proposal(proposal)?;
@@ -672,6 +673,24 @@ pub fn run(arguments: &[String]) -> Result<()> {
         return Ok(());
     }
     native(app, demo)
+}
+
+/// Which field edits every text draft: the shared field, unless
+/// `--editor-text-field` opts out. `--shared-string-field`, the opt-in from
+/// before the shared field was the default, is still accepted and changes
+/// nothing; given with the opt-out it is refused, as the helper refuses it.
+pub(crate) fn string_field_argument(
+    arguments: &[String],
+) -> Result<tilewright_editor_ui::field_input::FieldImplementation> {
+    use tilewright_editor_ui::field_input::FieldImplementation;
+    let given = |name: &str| arguments.iter().any(|argument| argument == name);
+    match (given("--editor-text-field"), given("--shared-string-field")) {
+        (true, true) => {
+            Err("--editor-text-field and --shared-string-field contradict each other".into())
+        }
+        (true, false) => Ok(FieldImplementation::Editor),
+        (false, _) => Ok(FieldImplementation::Shared),
+    }
 }
 
 /// The proposal to open (the provisioned `proposal/` directory and the file
@@ -802,14 +821,14 @@ impl Application {
     /// Switch every text draft (the inspector's string, boolean, integer,
     /// number and reference fields, the zone name drafts, the palette
     /// filter, the Move coordinates, a new anchor's id and a portal's typed
-    /// location) to the shared field (`--shared-string-field`), from the
-    /// next draft or filter focus on.
+    /// location) to the shared field (the default; `--editor-text-field`
+    /// keeps the editor's own), from the next draft or filter focus on.
     fn share_string_field(&mut self) -> Result<()> {
         self.shared_field = Some(crate::shared_field::SharedField::new()?);
         self.tools
             .set_string_field(tilewright_editor_ui::field_input::FieldImplementation::Shared);
         println!(
-            "string field: {} (opt-in)",
+            "string field: {} (default)",
             tilewright_editor_ui::field_input::FieldImplementation::SHARED_NAME
         );
         Ok(())
@@ -5184,7 +5203,8 @@ impl Application {
         {
             record.insert("proposal".into(), proposal);
         }
-        // Only with the shared text field, so other frames are unchanged.
+        // Only with the shared text field (the default), so the frames of
+        // an `--editor-text-field` session are as before.
         if let (true, Some(record)) = (self.shared_field.is_some(), frame_record.as_object_mut()) {
             record.insert(
                 "string_field".into(),

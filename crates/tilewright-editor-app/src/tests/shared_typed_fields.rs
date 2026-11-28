@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! The opt-in shared field on the inspector's boolean, integer, number and
+//! The shared field (the default) on the inspector's boolean, integer, number and
 //! reference fields, in a copy of the sample that grants them (the hand
 //! test's lines): differential runs of real SDL events against the editor's
 //! own field, the frames each draws, the frame budget, the road fence, the

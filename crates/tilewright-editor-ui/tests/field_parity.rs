@@ -267,7 +267,10 @@ fn every_text_draft_follows_the_switch_to_the_shared_field() {
     );
     let mut tools = ToolState::default();
     tools.begin_field(&view, "label", false).unwrap();
-    assert!(tools.shared_draft().is_none(), "off by default");
+    assert!(
+        tools.shared_draft().is_none(),
+        "a bare ToolState keeps the own"
+    );
     tools.set_string_field(FieldImplementation::Shared);
     tools.begin_field(&view, "label", false).unwrap();
     let shared = tools.shared_draft().expect("the string field is shared");
@@ -1597,7 +1600,10 @@ fn every_typed_inspector_field_follows_the_switch_and_ends_an_open_portal_step()
                     let case = format!("{stored:?} {scalar:?} {implementation:?} {step:?}");
                     let mut tools = ToolState::default();
                     tools.begin_field(&view, scalar.name(), false).unwrap();
-                    assert!(tools.shared_draft().is_none(), "{case}: off by default");
+                    assert!(
+                        tools.shared_draft().is_none(),
+                        "{case}: a bare ToolState keeps the own"
+                    );
                     tools.set_string_field(implementation);
                     if let Some(step) = step {
                         assert!(

@@ -1,8 +1,8 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! The text a field draft edits: the editor's own [`TextInput`], or, opt-in
-//! for every text draft (the inspector's string, boolean, integer, number
+//! The text a field draft edits: the editor's own [`TextInput`], or, for
+//! every text draft (the inspector's string, boolean, integer, number
 //! and reference fields, the zone name drafts, the palette filter, the Move
 //! coordinates, a new anchor's id and a portal's typed location), the shared
 //! `tilewright-ui` field.
@@ -25,8 +25,11 @@ use crate::{
     tools::ToolError,
 };
 
-/// Which implementation edits a draft. The editor's own is the default;
-/// every text draft can use the shared one.
+/// Which implementation edits a draft. A bare [`ToolState`] keeps the
+/// editor's own; the editor application chooses the shared one for every
+/// text draft unless it is started with `--editor-text-field`.
+///
+/// [`ToolState`]: crate::tools::ToolState
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum FieldImplementation {
     #[default]

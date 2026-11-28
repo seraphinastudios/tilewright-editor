@@ -124,9 +124,16 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
 }
 
 #[test]
-#[allow(clippy::too_many_lines)]
 fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() {
-    let (temporary, mut app) = application();
+    // The shared field, the default, and the editor's own (the opt-out).
+    for implementation in FieldImplementation::ALL {
+        full_neutral_script(implementation);
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn full_neutral_script(implementation: FieldImplementation) {
+    let (temporary, mut app) = application_using(implementation);
     // The native demonstration installs the same deterministic uid source.
     app.session
         .set_uid_source(Box::new(tilewright_editor_ui::uid::SeededUidSource::new(
@@ -352,6 +359,19 @@ fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() 
                 .path()
                 .join(format!("evidence/{phase}.png"))
                 .is_file()
+        );
+        // Every frame record names the shared field exactly when it is used.
+        let record: serde_json::Value = serde_json::from_slice(
+            &fs::read(temporary.path().join(format!("evidence/{phase}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            record
+                .get("string_field")
+                .and_then(serde_json::Value::as_str),
+            (implementation == FieldImplementation::Shared)
+                .then_some(FieldImplementation::SHARED_NAME),
+            "{phase}"
         );
     }
     assert!(app.session.history().pending().is_none());

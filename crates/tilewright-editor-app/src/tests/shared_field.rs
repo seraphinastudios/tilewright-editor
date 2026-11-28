@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! The opt-in shared field in the application: the switch, the frame
+//! The shared field in the application: the default and its opt-out, the frame
 //! record, the reserved identities, refusals that pause rather than panic,
 //! and differential runs of real SDL events against the editor's own field,
 //! for the inspector's string field, both zone name drafts and the palette
@@ -55,10 +55,47 @@ fn record(temporary: &tempfile::TempDir, name: &str) -> serde_json::Value {
     .unwrap()
 }
 
+/// The editor's arguments for each choice of field, as the helper passes
+/// them (`--shared-string-field` only by hand: the helper never passes it).
+fn field_arguments(flags: &[&str]) -> Result<FieldImplementation, String> {
+    let arguments: Vec<String> = ["prototype", "--world-fd", "3"]
+        .iter()
+        .chain(flags)
+        .map(|&argument| argument.to_owned())
+        .collect();
+    crate::prototype::string_field_argument(&arguments)
+}
+
 #[test]
-fn the_switch_is_off_by_default_and_on_names_the_field_in_every_frame() {
-    for implementation in FieldImplementation::ALL {
-        let shared = implementation == FieldImplementation::Shared;
+fn the_shared_field_is_the_default_the_opt_out_keeps_the_own_and_both_flags_are_refused() {
+    assert_eq!(field_arguments(&[]).unwrap(), FieldImplementation::Shared);
+    // The old opt-in is still accepted and changes nothing.
+    assert_eq!(
+        field_arguments(&["--shared-string-field"]).unwrap(),
+        FieldImplementation::Shared
+    );
+    assert_eq!(
+        field_arguments(&["--editor-text-field"]).unwrap(),
+        FieldImplementation::Editor
+    );
+    for both in [
+        ["--editor-text-field", "--shared-string-field"],
+        ["--shared-string-field", "--editor-text-field"],
+    ] {
+        let error = field_arguments(&both).unwrap_err();
+        assert_eq!(
+            error,
+            "--editor-text-field and --shared-string-field contradict each other"
+        );
+    }
+}
+
+#[test]
+fn the_default_names_the_shared_field_in_every_frame_and_the_opt_out_keeps_the_own() {
+    for flags in [&[][..], &["--editor-text-field"][..]] {
+        let implementation = field_arguments(flags).unwrap();
+        let shared = flags.is_empty();
+        assert_eq!(implementation == FieldImplementation::Shared, shared);
         let (temporary, mut app) = labelled(implementation, "Trail marker", (960, 640));
         app.capture("before").unwrap();
         app.control(Control::Field("label".into())).unwrap();
