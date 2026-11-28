@@ -1804,12 +1804,11 @@ does.
 **R and M** move the offsets, never an object's art, by one convention in
 plane tiles about the anchor:
 
-- **M mirrors** the layout across the anchor's column, the plane's `y`
-  axis through the anchor: `[dx, dy]` becomes `[-dx, dy]`. The rule is on
-  the grid, the same in both projections. Top-down the column is vertical
-  on screen, so M is a left-right mirror; in an isometric view the column
-  runs down-left on screen, so M flips across that diagonal, not across
-  the screen's vertical.
+- **M flips** the layout left to right on screen, across the screen's
+  vertical through the anchor. Top-down that is the anchor's column, the
+  plane's `y` axis: `[dx, dy]` becomes `[-dx, dy]`. An isometric view draws
+  `+x` down-right and `+y` down-left, so there `[dx, dy]` becomes
+  `[dy, dx]`.
 - **R turns** it a quarter turn clockwise: `[dx, dy]` becomes `[-dy, dx]`,
   so `+x` goes to `+y`. Both projections draw `+y` a quarter turn clockwise
   from `+x` (top-down: right, then down; isometric: down-right, then
@@ -1817,7 +1816,8 @@ plane tiles about the anchor:
 - Each key acts on the layout as it is shown. Four R or two M give the
   catalog layout back, and the keys reach the eight turns and mirrors of the
   square. The buttons show the state as a turn applied after an optional
-  mirror, so R then M reads "Turn: 270°" and "Mirror: on".
+  mirror, as the view shows it, so the same keys read the same in both
+  projections: R then M reads "Turn: 270°" and "Mirror: on".
 
 R and M turn and mirror only with a stamp chosen in Place mode; otherwise
 R is Reopen and M does nothing, as before. To reach Reopen while
