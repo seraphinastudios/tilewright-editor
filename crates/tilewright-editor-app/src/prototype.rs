@@ -1436,11 +1436,10 @@ impl Application {
             .tools
             .stroke()
             .is_some_and(|stroke| stroke.generation() == self.view.frame_revision)
+            && let Err(reason) = self.refuse_while_paused()
         {
-            if let Err(reason) = self.refuse_while_paused() {
-                self.tools.cancel_stroke();
-                return Err(reason);
-            }
+            self.tools.cancel_stroke();
+            return Err(reason);
         }
         let action = self
             .tools
