@@ -115,6 +115,7 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
         proposal: None,
+        favourites: None,
         proposal_layout: None,
         shared_field: None,
         roads: tilewright_editor_ui::road::RoadMemory::default(),
@@ -2267,6 +2268,9 @@ mod road;
 
 #[path = "road_grade.rs"]
 mod road_grade;
+
+#[path = "favourites.rs"]
+mod favourites;
 
 fn decoded_png(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(fs::read(path).unwrap()))

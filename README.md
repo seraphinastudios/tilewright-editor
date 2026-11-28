@@ -134,6 +134,12 @@ sandbox world; no MCP client product has been tested against it.
 See [agent sandboxes](docs/SANDBOX.md), [the MCP editing server](docs/MCP-EDITING.md)
 and [proposals](docs/PROPOSALS.md).
 
+A person can bring their favourites (short lists of terrain values, scatter
+palettes and prototypes the catalog grants) into a desktop session with
+`tools/provision-prototype.py --palettes FILE`; their changes are copied back
+when the editor ends ([favourites](docs/OFFLINE-PROTOTYPE.md#favourites)).
+Sandboxes never have them.
+
 `tools/validate.sh` checks formatting, Clippy-as-errors, all tests/docs,
 dependency architecture/licenses/advisories, provenance/assets, path/inventory
 contracts, the shared-renderer empty viewport, SDL lifecycle, Linux release

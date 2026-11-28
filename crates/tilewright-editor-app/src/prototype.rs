@@ -62,6 +62,8 @@ const ROAD_OFF_VIEW: &str =
 
 type Result<T> = std::result::Result<T, String>;
 
+#[path = "favourites_view.rs"]
+mod favourites_view;
 #[path = "proposal_view.rs"]
 mod proposal_view;
 type UiRows = Vec<(String, Option<Control>, bool, bool)>;
@@ -509,6 +511,8 @@ struct Application {
     frame_limits: tilewright_scene::SceneLimits,
     /// The proposal the person opened (`--proposal-fd`), if any.
     proposal: Option<proposal_view::OpenProposal>,
+    /// The person's favourites (`--palettes-fd`), if the helper passed them.
+    favourites: Option<favourites_view::Personal>,
     /// The proposal panel's state, derived once for the layout being built.
     proposal_layout: Option<proposal_view::State>,
     /// The shared string field's compiler, only with `--shared-string-field`.
@@ -538,6 +542,12 @@ pub fn run(arguments: &[String]) -> Result<()> {
     let (proposal_root, person) = proposal_arguments(arguments, [&world, &recovery, &evidence])?;
     let reference = arguments.iter().any(|argument| argument == "--reference");
     let demo = arguments.iter().any(|argument| argument == "--demo-script");
+    let palettes_root = palettes_argument(
+        arguments,
+        &[&world, &recovery, &evidence],
+        proposal_root.as_ref().map(|(root, _)| root),
+        demo,
+    )?;
     let font_path = arguments
         .iter()
         .position(|arg| arg == "--font-pack")
@@ -602,10 +612,16 @@ pub fn run(arguments: &[String]) -> Result<()> {
         anchor_view: None,
         frame_limits: tilewright_scene::SceneLimits::default(),
         proposal: None,
+        favourites: None,
         proposal_layout: None,
         shared_field: None,
         roads: RoadMemory::default(),
     };
+    if let Some(root) = palettes_root {
+        let personal = favourites_view::Personal::open(SourceRoot::new(&root))?;
+        println!("{}", terminal_field(&personal.summary()));
+        app.favourites = Some(personal);
+    }
     if arguments.iter().any(|arg| arg == "--shared-string-field") {
         app.share_string_field()?;
     }
@@ -662,6 +678,28 @@ fn proposal_arguments(
         Some(_) => return Err("--actor takes human:<name>".into()),
     };
     Ok((proposal_root, person))
+}
+
+/// The provisioned `palettes/` directory (`--palettes-fd`), distinct from
+/// the others. The scripted demonstration makes evidence, which a person's
+/// favourites never reach, so it refuses them.
+fn palettes_argument(
+    arguments: &[String],
+    others: &[&PathBuf],
+    proposal: Option<&PathBuf>,
+    demo: bool,
+) -> Result<Option<PathBuf>> {
+    if !arguments.iter().any(|argument| argument == "--palettes-fd") {
+        return Ok(None);
+    }
+    if demo {
+        return Err("favourites are personal and never reach evidence: the scripted demonstration runs without --palettes-fd".into());
+    }
+    let root = descriptor(arguments, "--palettes-fd")?;
+    if others.contains(&&root) || proposal == Some(&root) {
+        return Err("provisioned descriptor numbers must be distinct".into());
+    }
+    Ok(Some(root))
 }
 
 /// The value after option `name`, if the option is given.
@@ -2033,32 +2071,17 @@ impl Application {
         self.sculpt_rows(&mut rows);
         if mode == ToolMode::Terrain {
             self.brush_rows(&mut rows);
+            self.favourite_rows(&mut rows, &mut fits, ready);
             rows.push(("Terrain palette".into(), None, true, false));
             for choice in tools::terrain_palette(self.session.catalog()) {
-                let active = self.tools.terrain_choice() == Some(&choice);
-                // Fitted later so the value each row writes stays readable.
-                fits.push((
-                    rows.len(),
-                    IdText::Id {
-                        id: choice.prototype.clone(),
-                        variants: tools::terrain_label_variants(self.session.world(), &choice),
-                    },
-                ));
-                rows.push((
-                    tools::terrain_label(self.session.world(), &choice),
-                    Some(Control::Palette {
-                        grid: choice.grid,
-                        prototype: choice.prototype,
-                    }),
-                    ready,
-                    active,
-                ));
+                self.terrain_row(&mut rows, &mut fits, choice, ready);
             }
             self.scatter_rows(&mut rows, ready);
             self.rule_rows(&mut rows);
             self.grade_rows(&mut rows);
         }
         if mode == ToolMode::Place {
+            self.favourite_rows(&mut rows, &mut fits, ready);
             self.place_rows(&mut rows, ready);
         }
         if mode == ToolMode::Zone {
@@ -2068,6 +2091,35 @@ impl Application {
             self.anchor_rows(&mut rows, &mut fits, ready);
         }
         (rows, fits)
+    }
+
+    /// The terrain palette's row of `choice`, which a favourite of it
+    /// repeats: its label, fitted later so the value it writes stays
+    /// readable, and the control that chooses it.
+    fn terrain_row(
+        &self,
+        rows: &mut UiRows,
+        fits: &mut Vec<(usize, IdText)>,
+        choice: tools::TerrainChoice,
+        ready: bool,
+    ) {
+        let active = self.tools.terrain_choice() == Some(&choice);
+        fits.push((
+            rows.len(),
+            IdText::Id {
+                id: choice.prototype.clone(),
+                variants: tools::terrain_label_variants(self.session.world(), &choice),
+            },
+        ));
+        rows.push((
+            tools::terrain_label(self.session.world(), &choice),
+            Some(Control::Palette {
+                grid: choice.grid,
+                prototype: choice.prototype,
+            }),
+            ready,
+            active,
+        ));
     }
 
     /// Outside Zone mode, the zone overlay toggle sits between the
@@ -3001,18 +3053,26 @@ impl Application {
             rows.push((NO_PALETTE_MATCH.into(), None, false, false));
         }
         for proto in palette {
-            let layer = catalog
-                .editing()
-                .objects
-                .get(proto)
-                .map_or("", |grant| grant.layer.as_str());
-            rows.push((
-                format!("{proto} / {layer}"),
-                Some(Control::PlacePalette(proto.to_owned())),
-                ready,
-                self.tools.placement_choice() == Some(proto),
-            ));
+            self.place_row(rows, proto, ready);
         }
+    }
+
+    /// The Place palette's row of prototype `proto`, which a favourite of
+    /// it repeats.
+    fn place_row(&self, rows: &mut UiRows, proto: &str, ready: bool) {
+        let layer = self
+            .session
+            .catalog()
+            .editing()
+            .objects
+            .get(proto)
+            .map_or("", |grant| grant.layer.as_str());
+        rows.push((
+            format!("{proto} / {layer}"),
+            Some(Control::PlacePalette(proto.to_owned())),
+            ready,
+            self.tools.placement_choice() == Some(proto),
+        ));
     }
 
     /// Terrain mode's scatter palettes, after the terrain palette and only
@@ -3025,19 +3085,28 @@ impl Application {
             return;
         }
         rows.push(("Scatter palettes".into(), None, true, false));
-        for (name, palette) in palettes {
-            let entries: Vec<String> = palette
-                .entries
-                .iter()
-                .map(|(value, weight)| format!("{value} {weight}"))
-                .collect();
-            rows.push((
-                format!("{} / {name}: {}", palette.grid, entries.join(", ")),
-                Some(Control::ScatterPalette(name.clone())),
-                ready,
-                self.tools.scatter_choice() == Some(name.as_str()),
-            ));
+        for name in palettes.keys() {
+            self.scatter_row(rows, name, ready);
         }
+    }
+
+    /// The row of catalog scatter palette `name`, which a favourite of it
+    /// repeats: its grid, its name and its weighted values.
+    fn scatter_row(&self, rows: &mut UiRows, name: &str, ready: bool) {
+        let Some(palette) = self.session.catalog().editing().palettes.get(name) else {
+            return;
+        };
+        let entries: Vec<String> = palette
+            .entries
+            .iter()
+            .map(|(value, weight)| format!("{value} {weight}"))
+            .collect();
+        rows.push((
+            format!("{} / {name}: {}", palette.grid, entries.join(", ")),
+            Some(Control::ScatterPalette(name.to_owned())),
+            ready,
+            self.tools.scatter_choice() == Some(name),
+        ));
     }
 
     /// Terrain mode's rules, after the palette: the brush drags, fill and
@@ -4408,6 +4477,11 @@ impl Application {
             }
             Control::GradeRoad(grade) => self.grade_road(grade),
             Control::ScatterPalette(name) => self.choose_scatter_palette(&name),
+            Control::FavouriteStar => self.favourite_control(&favourites_view::Change::Star),
+            Control::FavouriteRaise => self.favourite_control(&favourites_view::Change::Raise),
+            Control::FavouriteRemove(favourite) => {
+                self.favourite_control(&favourites_view::Change::Remove(favourite))
+            }
             Control::Palette { grid, prototype } => {
                 self.tools
                     .choose_terrain(self.session.catalog(), &grid, &prototype)
@@ -6733,6 +6807,9 @@ fn road_allows(control: &Control) -> bool {
             | Control::TerrainRule(_)
             | Control::Palette { .. }
             | Control::ScatterPalette(_)
+            | Control::FavouriteStar
+            | Control::FavouriteRaise
+            | Control::FavouriteRemove(_)
             | Control::Clear
             | Control::Accept
             | Control::Cancel
