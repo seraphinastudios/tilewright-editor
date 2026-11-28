@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 //! The text a field draft edits: the editor's own [`TextInput`], or, opt-in
-//! for every text draft (the inspector's fields of every type, the zone
-//! name drafts, the palette filter, the Move coordinates, a new anchor's id
-//! and a portal's typed location), the shared `tilewright-ui` field.
+//! for every text draft (the inspector's string, boolean, integer, number
+//! and reference fields, the zone name drafts, the palette filter, the Move
+//! coordinates, a new anchor's id and a portal's typed location), the shared
+//! `tilewright-ui` field.
 //!
 //! Both answer the same calls with the same results and the same
 //! [`ToolError`] wording, so every caller (native events, the clipboard,

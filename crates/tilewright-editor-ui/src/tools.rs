@@ -438,10 +438,11 @@ pub struct ToolState {
     anchor: Option<String>,
     /// The open portal step of the selected object, if any.
     portal: Option<OpenPortalStep>,
-    /// What edits every text draft (the inspector's fields of every type,
-    /// the zone name drafts, the Place palette filter, the Move
-    /// coordinates, a new anchor's id and a portal's typed location): the
-    /// editor's own field unless the shared field was switched on.
+    /// What edits every text draft (the inspector's string, boolean,
+    /// integer, number and reference fields, the zone name drafts, the
+    /// Place palette filter, the Move coordinates, a new anchor's id and a
+    /// portal's typed location): the editor's own field unless the shared
+    /// field was switched on.
     string_field: FieldImplementation,
     /// Sculpt mode's tool and step, kept across modes.
     sculpt: SculptTool,

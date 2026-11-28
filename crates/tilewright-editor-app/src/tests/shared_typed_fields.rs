@@ -854,6 +854,8 @@ fn the_hand_test_typed_fields_give_the_same_hints_refusals_and_reviews_with_eith
         if implementation == FieldImplementation::Shared {
             app.share_string_field().unwrap();
         }
+        // The session's own copy of the world, the one file the editor
+        // writes (the person's copy is never written).
         let chunk = temporary
             .path()
             .join("world/planes/main/layers/0/0_0.jsonc");
@@ -919,18 +921,27 @@ fn the_hand_test_typed_fields_give_the_same_hints_refusals_and_reviews_with_eith
                 app.tools.shared_draft().is_some(),
                 implementation == FieldImplementation::Shared
             );
-            let attempt = |app: &mut Application, text: &str| {
-                app.tools.select_all().unwrap();
+            // Type into the draft as it is; for the second attempt, select
+            // all with Ctrl+A first, as the step says.
+            let attempt = |app: &mut Application, text: &str, select: bool| {
+                if select {
+                    acknowledge_ui(app);
+                    super::zones::route(app, &modified_input_key(Keycode::A, false, Mod::LCTRLMOD))
+                        .unwrap();
+                    let snapshot = app.tools.draft_snapshot().unwrap();
+                    assert_eq!(snapshot.selection.anchor.byte, 0, "{text}");
+                    assert_eq!(snapshot.selection.focus.byte, snapshot.committed.len());
+                }
                 type_text(app, text);
                 acknowledge_ui(app);
                 let result = super::zones::route(app, &key(Keycode::Return));
                 let pending = app.session.history().pending().is_some();
                 (text.to_owned(), result, pending, app.review_lines(900))
             };
-            let refused = attempt(&mut app, refused);
+            let refused = attempt(&mut app, refused, false);
             assert_eq!(refused.1, Err(refusal.to_owned()), "{scalar:?}");
             assert!(!refused.2, "{scalar:?}");
-            let review = attempt(&mut app, accepted);
+            let review = attempt(&mut app, accepted, true);
             assert!(review.1.is_ok() && review.2, "{scalar:?}: {review:?}");
             // The review's added line names the field and its new value.
             let added = format!("\"{}\": {stored}", scalar.name());
@@ -959,10 +970,19 @@ fn the_hand_test_typed_fields_give_the_same_hints_refusals_and_reviews_with_eith
                 "{scalar:?}"
             );
         }
-        // Undo, four times, brings the absent values back byte for byte.
-        for _ in Scalar::ALL {
-            app.action(Action::Undo).unwrap();
-            app.action(Action::Accept).unwrap();
+        // Undo and Accept (Z, then Enter), four times, bring the absent
+        // values back byte for byte. A second Z before the Enter is refused:
+        // each Undo is a pending change to accept first.
+        for round in 0..Scalar::ALL.len() {
+            acknowledge_ui(&mut app);
+            super::zones::route(&mut app, &key(Keycode::Z)).unwrap();
+            assert!(app.session.history().pending().is_some(), "{round}");
+            if round == 0 {
+                acknowledge_ui(&mut app);
+                assert!(super::zones::route(&mut app, &key(Keycode::Z)).is_err());
+            }
+            enter(&mut app);
+            assert!(app.session.history().pending().is_none(), "{round}");
         }
         assert_eq!(fs::read(&chunk).unwrap(), original);
         transcripts.push(transcript);

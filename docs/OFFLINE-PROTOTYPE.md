@@ -481,15 +481,18 @@ and 2, 6, 9, 11 and 12 in the inspector's typed fields, with step 16.
     true, false" under flag and "Choices: bush, crate, gate, grass,..."
     under kind. Each row opens an empty draft with "Ctrl+A selects / Enter
     reviews" below. `yes` and Enter keep the flag draft open with "Enter
-    true or false", and `true` reviews the added `"flag": true`; in count,
-    `8` gives "Integer is outside schema range" and `-2` reviews; in
-    weight, `inf` gives "Number is non-finite or outside schema range" and
-    `1.5` reviews; in kind, `unknown` gives "Reference does not name an
-    authoritative definition" and `stone` reviews. Accept each: the rows
-    read "flag = true", "count = -2" with "Integer (-2 to 7)" below,
-    "weight = 1.5" with "Number (-1 to 2)" and "kind = stone" with
-    "Reference: proto". Undo four times: all four are absent again and the
-    copy's chunk file is as it was.
+    true or false"; select all (Ctrl+A) and type `true`, and Enter reviews
+    the added `"flag": true`. In the same way, in count `8` gives "Integer
+    is outside schema range" and `-2` reviews; in weight `inf` gives
+    "Number is non-finite or outside schema range" and `1.5` reviews; in
+    kind `unknown` gives "Reference does not name an authoritative
+    definition" and `stone` reviews. Accept each (Enter): the rows read
+    "flag = true", "count = -2" with "Integer (-2 to 7)" below, "weight =
+    1.5" with "Number (-1 to 2)" and "kind = stone" with "Reference:
+    proto". Then Undo and Accept (Z, then Enter), four times: all four are
+    absent again, and the session's chunk file
+    (`<session>/world/planes/main/layers/0/0_0.jsonc`; your copy itself is
+    never written) is as it was.
 
 ### Terrain palette
 
@@ -1699,7 +1702,7 @@ palette row is marked only while shown. When nothing matches, one neutral
 stays editable while a change is pending, when the rows are disabled as
 before. Re-entering Place keeps the filter; switching to another tool clears
 it, so Place opens with the whole palette. With `--shared-string-field` the
-shared text field edits the filter, by the same rules (see [Shared string
+shared text field edits the filter, by the same rules (see [Shared text
 field](#shared-text-field)).
 
 Each palette row is 40 logical pixels tall, and starts with a thumbnail of
