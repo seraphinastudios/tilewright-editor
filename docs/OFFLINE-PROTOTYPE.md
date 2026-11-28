@@ -1773,6 +1773,90 @@ lamp), and provision the copy. In Place mode choose "3 objects: camp",
 hover the map and press R and M to watch the marked tiles turn and flip,
 click a tile, read the review, Accept, then Undo.
 
+#### Copying an area
+
+Objects already on the map can be copied and stamped elsewhere, in any
+catalog with `editing.objects` and no `editing.stamps` needed. In Place
+mode press **C** (Copy area): the status line reads "Copy area: press on
+a tile and drag across the objects to copy; Esc stops." Press on a tile,
+drag to the opposite corner and release: the rectangle between the two
+tiles, both included, is marked in the brush preview's white while it is
+dragged, and the status line counts what release would copy ("Copy (0, 2)
+to (3, 4), 4 x 3 tiles: 3 objects; release to copy."). A press and
+release on one tile copies that tile. C again, or Esc, stops without
+copying; so does a mode change, and opening a portal step (C in turn ends
+an open portal step, so a press is never both). C is Place mode's own key:
+elsewhere it does nothing, and a focused text draft or palette filter
+takes it as text.
+
+What a copy holds:
+
+- **The rectangle is clipped to the view.** Its corners are tiles of the
+  view (the catalog's plane, spatial layer and bounds), picked through the
+  exact cell mask; when the pointer leaves the map, or crosses map pixels
+  that show no tile, the corner stays on the last tile it was over. A
+  press that hits no tile starts nothing.
+- **Which objects count:** every top-level object placed on a tile of the
+  rectangle, on the view's plane and spatial layer. Objects of other
+  layers or planes, carried (inventory) objects and anything outside the
+  view never count.
+- **Order and anchor:** the objects are listed tile by tile, row by row
+  (`y`, then `x`), and on one tile in its stacking order, so each tile's
+  stack comes out as it was. The rectangle's tile with the smallest `x`
+  and `y` (top-left top-down, the top corner in an isometric view) is the
+  anchor: each object's offset is from it, and a click puts that tile of
+  the copy on the clicked tile.
+- **Prototype and position only.** The copy records each object's
+  prototype and offset, never its uid, its field values, its render layer,
+  `sub_layer` or `z`, or its portal. Every object a stamped copy puts down
+  is new: a new uid, the grant's render `layer` and the grant's `defaults`,
+  exactly what one Place click of that prototype writes.
+- **1 to 64 objects.** A rectangle with no object, more than 64 (the
+  engine's limit), or any prototype `editing.objects` does not grant
+  copies nothing: the status line says so while it is dragged ("…: 65
+  objects, more than 64; release copies nothing.", "…: not granted:
+  marker; release copies nothing."), and the release is refused with the
+  reason in the details ("Nothing copied: Place cannot put down marker
+  (not granted by editing.objects)."). The earlier copy or choice stays,
+  and Copy area stays armed for another rectangle. Grants cannot change
+  within a session, so a copy with an ungranted prototype could never be
+  stamped; refusing the copy says so once, before any click, instead of on
+  every click.
+- Nothing can be copied while a change is pending or editing is paused (a
+  press is refused with the reason), so a copy is always of the committed
+  World as shown. Copying writes nothing and records nothing.
+
+The copy is the session's clipboard and lives only in its tool state: it
+is never saved, and a new session starts without one. After a copy it is
+the chosen stamp. The pinned row reads "Copied 3 objects", with the Turn
+and Mirror buttons under it, and under those two more buttons, "Copy area
+C" and "Drop copy  Esc" (laid out only while Copy area is armed or a copy
+is held, so a session that never copies looks exactly as before). From
+here it behaves exactly like a catalog stamp, through the same code: R and
+M turn and mirror it by the same convention, starting from the layout as
+copied; the hover marks the tiles a click would fill and the status line
+says "Stamp the copy at (4, 1): 3 objects; click to review."; a click
+prepares one `place_objects` change for Review, with the engine's own
+refusals and warnings; Accept, Undo and the recorded proposal step are
+those of any stamp, and the copy stays chosen for the next click.
+Choosing a prototype row or a catalog stamp replaces the copy, and a new
+copy replaces a chosen catalog stamp. Esc drops the copy when nothing is
+pending (a pending change is cancelled first, and the copy stays), as does
+the Drop copy button; Place mode then puts down the chosen prototype
+again. Esc's order is: a focused field, a running stroke or road, an open
+portal step, Copy area, a non-empty palette filter, a pending change, then
+the copy. While a copy is held the favourites' star row is disabled as for
+a catalog stamp. The road fence refuses Copy area and Drop copy, and in a
+blocked session Copy area is inert and its button disabled; Drop copy
+still drops the session's own copy. The choices behind these rules are in
+[ADR 0010](../decisions/0010-catalog-stamps.md#capture-from-the-map).
+
+To try it by hand on the neutral sample (no catalog change needed):
+provision a copy, press P, then C, and drag from tile (0, 2) to tile
+(3, 4): "Copied 3 objects" (the two markers and the west gate). Hover the
+map, press R and M, click a tile, read the review (three inserts, no
+label, no portal), Accept, then Undo. Press Esc to drop the copy.
+
 Planned edits are visible before acceptance. Accept retains the exact inverse
 before World publication; Cancel publishes nothing. Undo and redo prepare World
 transactions and require acceptance through the same path. A pending plan must

@@ -2261,6 +2261,9 @@ mod compose_candidates;
 #[path = "stamps.rs"]
 mod stamps;
 
+#[path = "capture.rs"]
+mod capture;
+
 #[path = "view_refusal.rs"]
 mod view_refusal;
 
