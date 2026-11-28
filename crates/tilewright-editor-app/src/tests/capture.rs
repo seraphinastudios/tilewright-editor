@@ -350,8 +350,9 @@ fn a_dragged_copy_stamps_exactly_a_direct_place_objects_in_every_turn_and_mirror
         .flat_map(tilewright_editor_proposal::ProposalStep::placed_objects)
     {
         let object = world.object(uid).unwrap();
-        assert!(object.fields.is_empty(), "{uid}: {:?}", object.fields);
-        assert!(object.portal.is_none(), "{uid}");
+        // The proto names the object in a failure; a uid is never printed.
+        assert!(object.fields.is_empty(), "{}", object.proto);
+        assert!(object.portal.is_none(), "{}", object.proto);
         assert_eq!(object.layer.as_deref(), Some("item"));
     }
     // Undo restores the source exactly.
