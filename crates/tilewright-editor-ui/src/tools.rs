@@ -1510,10 +1510,12 @@ impl ToolState {
         self.stamp_turn = self.stamp_turn.turned();
         Ok(())
     }
-    /// M: mirror the chosen stamp across the anchor's column, as shown.
-    pub fn mirror_stamp(&mut self) -> Result<(), ToolError> {
+    /// M: flip the chosen stamp left to right on screen in `view`, the
+    /// active view's projection, as shown
+    /// ([`crate::stamps::StampTurn::flipped_on_screen`]).
+    pub fn mirror_stamp(&mut self, view: crate::stamps::StampView) -> Result<(), ToolError> {
         self.stamp_ready()?;
-        self.stamp_turn = self.stamp_turn.flipped();
+        self.stamp_turn = self.stamp_turn.flipped_on_screen(view);
         Ok(())
     }
     fn stamp_ready(&self) -> Result<(), ToolError> {

@@ -1569,6 +1569,12 @@ impl Application {
         self.tools.stamp_choice()
     }
 
+    /// The active view's projection, which decides M's rule (a left-right
+    /// flip on screen) and how the Turn and Mirror buttons read the state.
+    fn stamp_view(&self) -> tilewright_editor_ui::stamps::StampView {
+        tilewright_editor_ui::stamps::StampView::of(&self.session.world().profile().projection)
+    }
+
     /// How many objects the chosen stamp or copy puts down.
     fn stamp_count(&self) -> usize {
         if let Some(copy) = self.tools.copy_choice() {
@@ -4247,7 +4253,7 @@ impl Application {
         if !self.tools.stamp_chosen() {
             return y;
         }
-        let turn = self.tools.stamp_turn();
+        let (degrees, mirrored) = self.tools.stamp_turn().shown(self.stamp_view());
         // Like R and M, inert in a blocked session, where nothing can be
         // placed.
         let enabled = self.session.status().phase != SessionPhase::Blocked;
@@ -4260,10 +4266,10 @@ impl Application {
                 width: half,
                 height: TEXT_ROW_HEIGHT,
             },
-            format!("Turn: {}\u{b0}  R", turn.degrees()),
+            format!("Turn: {degrees}\u{b0}  R"),
             Some(Control::StampTurn),
             enabled,
-            turn.degrees() != 0,
+            degrees != 0,
         );
         ui.widget(
             Rect {
@@ -4272,14 +4278,14 @@ impl Application {
                 width: half,
                 height: TEXT_ROW_HEIGHT,
             },
-            if turn.mirrored() {
+            if mirrored {
                 "Mirror: on  M"
             } else {
                 "Mirror: off  M"
             },
             Some(Control::StampMirror),
             enabled,
-            turn.mirrored(),
+            mirrored,
         );
         y + TEXT_ROW_HEIGHT + ROW_GAP
     }
@@ -4823,7 +4829,10 @@ impl Application {
                 .choose_stamp(self.session.catalog(), name)
                 .map_err(|error| error.to_string()),
             Control::StampTurn => self.tools.turn_stamp().map_err(|error| error.to_string()),
-            _ => self.tools.mirror_stamp().map_err(|error| error.to_string()),
+            _ => self
+                .tools
+                .mirror_stamp(self.stamp_view())
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -7194,8 +7203,8 @@ fn escape_step(app: &mut Application) -> bool {
 }
 
 /// R and M with a stamp chosen in Place mode ([`stamp_keys`]): turn it a
-/// quarter turn clockwise, mirror it across the anchor's column. Every other key goes
-/// on to [`grade_key`].
+/// quarter turn clockwise, flip it left to right on screen. Every other key
+/// goes on to [`grade_key`].
 fn stamp_key(app: &mut Application, key: Keycode) -> Result<()> {
     match key {
         Keycode::R if stamp_keys(app) => app.control(Control::StampTurn),

@@ -448,6 +448,258 @@ fn every_turn_and_mirror_previews_exactly_the_tiles_a_click_records() {
     assert_eq!(seen.len(), 8);
 }
 
+/// The sample with stamps, drawn isometric (`+x` down-right, `+y`
+/// down-left).
+fn with_isometric_stamps(root: &Path) {
+    with_stamps(root);
+    edit_json(root, "profile/profile.jsonc", |profile| {
+        profile["projection"] =
+            serde_json::json!({"kind": "isometric", "tile_width": 64, "tile_height": 32});
+    });
+}
+
+/// The centre on screen of every tile the stamp preview marks, from the
+/// corners of its copies of the exact cell quads.
+fn marked_centres(app: &mut Application) -> std::collections::BTreeMap<[i64; 2], [f32; 2]> {
+    app.refresh_ui();
+    let mut corners = std::collections::BTreeMap::<[i64; 2], Vec<[f32; 2]>>::new();
+    for quad in crate::prototype::stamp_overlay(app) {
+        let Some(SelectionKey::Cell { x, y, .. }) = app.prepared.cell_picks.get(&quad.semantic_id)
+        else {
+            panic!("a preview copy of no cell");
+        };
+        corners.entry([*x, *y]).or_default().extend(quad.positions);
+    }
+    corners
+        .into_iter()
+        .map(|(tile, points)| {
+            #[allow(clippy::cast_precision_loss)]
+            let count = points.len() as f32;
+            let sum = points
+                .iter()
+                .fold([0.0, 0.0], |[x, y], [px, py]| [x + px, y + py]);
+            (tile, [sum[0] / count, sum[1] / count])
+        })
+        .collect()
+}
+
+/// The marked tiles' centres relative to the anchor's, in `objects` order.
+fn relative_centres(
+    app: &mut Application,
+    anchor: [i64; 2],
+    objects: &[StampObject],
+) -> Vec<[f32; 2]> {
+    let centres = marked_centres(app);
+    let origin = centres[&anchor];
+    objects
+        .iter()
+        .map(|object| {
+            let centre = centres[&[anchor[0] + object.offset[0], anchor[1] + object.offset[1]]];
+            [centre[0] - origin[0], centre[1] - origin[1]]
+        })
+        .collect()
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn isometric_m_flips_the_shown_stamp_left_to_right_and_a_click_records_it() {
+    let (_temporary, mut app) = zone_application(with_isometric_stamps);
+    app.session
+        .set_uid_source(Box::new(SeededUidSource::new(SEED)));
+    press(&mut app, Keycode::P).unwrap();
+    assert!(matches!(
+        app.session.world().profile().projection,
+        tilewright_source::Projection::Isometric { .. }
+    ));
+    app.control(Control::StampPalette("camp".into())).unwrap();
+    let anchor = [3, 2];
+    // Key sequences, with the shown offsets computed here on their own: R
+    // is `[-dy, dx]` and M, left to right on screen, `[dy, dx]`, each on the
+    // layout as shown.
+    let sequences: [&[Keycode]; 10] = [
+        &[],
+        &[Keycode::M],
+        &[Keycode::M, Keycode::M],
+        &[Keycode::R],
+        &[Keycode::R, Keycode::R],
+        &[Keycode::R, Keycode::M],
+        &[Keycode::M, Keycode::R],
+        &[Keycode::R, Keycode::M, Keycode::R],
+        &[Keycode::M, Keycode::R, Keycode::M],
+        &[Keycode::R, Keycode::R, Keycode::M],
+    ];
+    let mut seen = BTreeSet::new();
+    for keys in sequences {
+        app.control(Control::StampPalette("post".into())).unwrap();
+        app.control(Control::StampPalette("camp".into())).unwrap();
+        let mut objects: Vec<StampObject> = CAMP
+            .iter()
+            .map(|(proto, offset)| StampObject {
+                proto: (*proto).into(),
+                offset: *offset,
+            })
+            .collect();
+        // The buttons read as the top-down keys would: the same turn and
+        // mirror for the same keys.
+        let mut top_down = StampTurn::NONE;
+        for &keycode in keys {
+            press(&mut app, keycode).unwrap();
+            for object in &mut objects {
+                let [dx, dy] = object.offset;
+                object.offset = if keycode == Keycode::R {
+                    [-dy, dx]
+                } else {
+                    [dy, dx]
+                };
+            }
+            top_down = if keycode == Keycode::R {
+                top_down.turned()
+            } else {
+                top_down.flipped()
+            };
+        }
+        let degrees = top_down.degrees();
+        let mirror = if top_down.mirrored() {
+            "Mirror: on  M"
+        } else {
+            "Mirror: off  M"
+        };
+        assert_eq!(
+            turn_row(&mut app),
+            [
+                (format!("Turn: {degrees}\u{b0}  R"), true, degrees != 0),
+                (mirror.to_owned(), true, top_down.mirrored())
+            ],
+            "{keys:?}"
+        );
+        seen.insert(tiles([0, 0], &objects));
+        acknowledge_ui(&mut app);
+        hover(&mut app, anchor);
+        let preview = app.stamp_preview().unwrap();
+        assert_eq!(preview.outside, 0, "{keys:?}");
+        assert_eq!(marked(&mut app), tiles(anchor, &objects), "{keys:?}");
+        assert_eq!(preview.action, place_objects(&app, anchor, objects.clone()));
+
+        // On screen, one more M mirrors every marked tile across the
+        // anchor's vertical: across negated, down kept.
+        let before = relative_centres(&mut app, anchor, &objects);
+        press(&mut app, Keycode::M).unwrap();
+        let flipped: Vec<StampObject> = objects
+            .iter()
+            .map(|object| StampObject {
+                proto: object.proto.clone(),
+                offset: [object.offset[1], object.offset[0]],
+            })
+            .collect();
+        acknowledge_ui(&mut app);
+        hover(&mut app, anchor);
+        let after = relative_centres(&mut app, anchor, &flipped);
+        for ([bx, by], [ax, ay]) in before.iter().zip(&after) {
+            assert!(
+                (ax + bx).abs() < 0.01 && (ay - by).abs() < 0.01,
+                "{keys:?}: {before:?} -> {after:?}"
+            );
+        }
+        // At least one tile moved sideways, so the check has teeth.
+        assert!(before.iter().any(|[x, _]| x.abs() > 1.0));
+    }
+    // M M is the catalog layout again and R M R is M (as M R M is three
+    // R), so eight distinct layouts.
+    assert_eq!(seen.len(), 8);
+
+    // A copy made with C follows the same rule: the sample's `marker_1`,
+    // `gate_west` and `marker_2` copied from (0, 2) to (3, 4), then M or
+    // R M, previewed and clicked on tiles outside that rectangle, so the
+    // second copy copies the same objects.
+    let captured = [("marker", [3, 0]), ("gate", [0, 1]), ("marker", [1, 2])];
+    let mut steps = 0;
+    for (keys, at, offsets) in [
+        // M swaps: [0, 3], [1, 0], [2, 1].
+        (&[Keycode::M][..], [4, 1], [[0, 3], [1, 0], [2, 1]]),
+        // R turns to [0, 3], [-1, 0], [-2, 1]; M then swaps.
+        (
+            &[Keycode::R, Keycode::M][..],
+            [4, 3],
+            [[3, 0], [0, -1], [1, -2]],
+        ),
+    ] {
+        super::capture::copy(&mut app, [0, 2], [3, 4]);
+        let as_copied: Vec<StampObject> = captured
+            .iter()
+            .map(|(proto, offset)| StampObject {
+                proto: (*proto).into(),
+                offset: *offset,
+            })
+            .collect();
+        assert_eq!(
+            app.tools.copy_choice().unwrap().objects(),
+            as_copied.as_slice()
+        );
+        for &keycode in keys {
+            press(&mut app, keycode).unwrap();
+        }
+        let expected: Vec<StampObject> = captured
+            .iter()
+            .zip(offsets)
+            .map(|((proto, _), offset)| StampObject {
+                proto: (*proto).into(),
+                offset,
+            })
+            .collect();
+        acknowledge_ui(&mut app);
+        hover(&mut app, at);
+        let preview = app.stamp_preview().unwrap();
+        assert_eq!(preview.outside, 0, "{keys:?}");
+        assert_eq!(marked(&mut app), tiles(at, &expected), "{keys:?}");
+        assert_eq!(preview.action, place_objects(&app, at, expected.clone()));
+        click(&mut app, at).unwrap();
+        acknowledge_ui(&mut app);
+        route(&mut app, &key(Keycode::Return)).unwrap();
+        assert!(app.session.history().pending().is_none());
+        steps += 1;
+        let recorded = proposal(&app);
+        assert_eq!(recorded.steps().len(), steps);
+        let Action::PlaceObjects { x, y, objects, .. } = recorded.steps()[steps - 1].action()
+        else {
+            panic!("the step is a stamp");
+        };
+        assert_eq!(([*x, *y], objects), (at, &expected), "{keys:?}");
+    }
+
+    // R then M, clicked: the recorded step is the previewed offsets.
+    app.control(Control::StampPalette("post".into())).unwrap();
+    app.control(Control::StampPalette("camp".into())).unwrap();
+    press(&mut app, Keycode::R).unwrap();
+    press(&mut app, Keycode::M).unwrap();
+    acknowledge_ui(&mut app);
+    hover(&mut app, anchor);
+    let preview = app.stamp_preview().unwrap();
+    let Action::PlaceObjects {
+        objects: previewed, ..
+    } = preview.action.clone()
+    else {
+        panic!("the preview is a stamp");
+    };
+    // Turned to [0, 0], [0, 1], [-1, 0], [-1, 2], then swapped.
+    assert_eq!(
+        previewed
+            .iter()
+            .map(|object| object.offset)
+            .collect::<Vec<_>>(),
+        [[0, 0], [1, 0], [0, -1], [2, -1]]
+    );
+    assert_eq!(marked(&mut app), tiles(anchor, &previewed));
+    click(&mut app, anchor).unwrap();
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Return)).unwrap();
+    assert!(app.session.history().pending().is_none());
+    let recorded = proposal(&app);
+    let Action::PlaceObjects { x, y, objects, .. } = recorded.steps()[steps].action() else {
+        panic!("the step is a stamp");
+    };
+    assert_eq!(([*x, *y], objects), (anchor, &previewed));
+}
+
 #[test]
 fn a_stamp_reaching_past_the_view_is_refused_whole_in_the_engines_words() {
     let (temporary, mut app) = stamp_application();
