@@ -200,7 +200,15 @@ its kind: an integer is written without fraction or exponent (an integer
 member refuses `4.0` and `4e0`), and other numbers keep their value. In a
 field value, `1` (an integer) and `1.0` (a number) are different values,
 so a tool that rewrites one as the other changes the action, and the step
-then diverges or is refused when the proposal is applied. A reader refuses
+then diverges or is refused when the proposal is applied. The order of a
+`set_field` action's `value` members, the spelling of its numbers within
+their kinds and its string escapes are not part of the action: the step's
+`set` writes the value as `serde_json` encodes it, object keys sorted
+([ENGINE.md, Field values](ENGINE.md#field-values)), as for a value from
+MCP `set_field`, so the transaction prepared again is the one recorded.
+The step's `transaction` and a stored value's `expect` keep their member
+order and number spelling
+([Equal but for the actor](#equal-but-for-the-actor)). A reader refuses
 comments, a byte-order mark, duplicate keys, unknown or missing members,
 wrong types, non-finite numbers, integers beyond ±(2^53 − 1) and number
 tokens longer than 128 bytes. The body digest covers the body's bytes

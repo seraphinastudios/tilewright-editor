@@ -205,8 +205,12 @@ to agree (more than 300 cases). To make them agree, the server rewrites a
 number with no fraction (`3.0`, `1e3`), which JSON Schema's `integer`
 admits, to the integer it is, in `x`, `y`, `layer`, `seed`, `amount`, `kernel`, a flatten's `target`, the cells, a
 stamp object's `offset` and a location's `layer` and `at`, before decoding; a field `value` is never
-rewritten. What JSON Schema cannot say, the server still refuses, and a
-test holds each:
+rewritten to an integer: `1.0` stays a number. A `set_field` value's member
+order, number spelling within its kind and string escapes are not kept:
+the new value is written as `serde_json` encodes it, object keys sorted,
+so `{"b": 1, "a": 2.50}` is written `{"a":2.5,"b":1}` and `"é\/"` as
+`"é/"` ([ENGINE.md, Field values](ENGINE.md#field-values)). What JSON
+Schema cannot say, the server still refuses, and a test holds each:
 
 - the order of a stroke's cells (increasing, as the engine requires);
 - a string's size in UTF-8 bytes: the bound is 4,096 bytes, and
