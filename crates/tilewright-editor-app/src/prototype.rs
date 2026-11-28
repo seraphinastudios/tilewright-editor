@@ -954,6 +954,16 @@ impl Application {
         }
     }
 
+    /// The tools' `pending` for a text draft's review: whether the session
+    /// cannot prepare an edit. While rendering pauses editing the review is
+    /// refused here, in the pause's own words, since the tools' refusal
+    /// names a pending edit and there may be none. Nothing is changed, so
+    /// the draft keeps its text.
+    fn draft_unavailable(&self) -> Result<bool> {
+        self.refuse_while_paused()?;
+        Ok(!self.session.can_prepare())
+    }
+
     fn action(&mut self, action: Action) -> Result<()> {
         let advice = undrawable_advice(Some(&action));
         self.advised_action(action, advice)
@@ -4868,6 +4878,7 @@ impl Application {
                 if !layout.missing_glyphs().is_empty() {
                     return Err("missing font glyphs: review blocked; draft preserved".into());
                 }
+                let unavailable = self.draft_unavailable()?;
                 let action = self
                     .tools
                     .build_action(&inspected, unavailable)
@@ -4987,7 +4998,7 @@ impl Application {
         if !layout.missing_glyphs().is_empty() {
             return Err("missing font glyphs: review blocked; draft preserved".into());
         }
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
+        let unavailable = self.draft_unavailable()?;
         let action = self
             .tools
             .anchor_action(self.session.world(), self.session.catalog(), unavailable)
@@ -5081,7 +5092,7 @@ impl Application {
         if !layout.missing_glyphs().is_empty() {
             return Err("missing font glyphs: review blocked; draft preserved".into());
         }
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
+        let unavailable = self.draft_unavailable()?;
         let action = self
             .tools
             .portal_location_action(
@@ -5105,7 +5116,7 @@ impl Application {
         if !layout.missing_glyphs().is_empty() {
             return Err("missing font glyphs: review blocked; draft preserved".into());
         }
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
+        let unavailable = self.draft_unavailable()?;
         let action = self
             .tools
             .zone_action(self.session.world(), self.session.catalog(), unavailable)
