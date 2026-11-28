@@ -403,14 +403,20 @@ in the coordinates, a new anchor's id and a typed location, with step 15.
    mixed text is known, in the editor's own field too.
 9. **Review.** Enter and Review each show the same pending change. A click
    at the right end of the field places the caret; it does not review.
-   Accept, then Undo: the label returns exactly.
+   Accept, then Undo: the label returns exactly. In the other drafts Undo
+   brings back what they changed: the marker's position after the
+   coordinates, the anchor list without the new anchor after an anchor id,
+   and the portal's earlier target (the Portal line in the inspector) after
+   a typed location.
 10. **Unsupported text.** Paste a character the font pack lacks: the hint
     says "Unsupported text; cannot review", and Enter and Review refuse with
     the same reason.
 11. **Scaling.** At 125 % or 150 % display scaling the caret, clicks and the
     candidate window line up with the text.
-12. **Esc and the other fields.** Esc discards the draft. Numbers look and
-    behave exactly as before.
+12. **Esc.** Esc discards the draft. The inspector's numbers, booleans and
+    references keep the editor's own field; the sample grants only `label`,
+    so they cannot be tried there (`tests/inspector.rs` checks them with the
+    switch on).
 13. **Zone drafts.** "Edit display name" shows the name with "Name of
     meadow; empty = none" below; clearing it and pressing Enter reviews
     "Removes the display name 'Quiet meadow' of zone meadow; it shows no
