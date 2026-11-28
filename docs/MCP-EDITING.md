@@ -215,6 +215,11 @@ test holds each:
 - a field value's budgets: 8 levels deep, 4,096 values, 256 members in an
   object, 64 KiB encoded, integers within the World range.
 
+A `set_field` value's member order and number spelling within its kind
+are not kept: the new value is written as serde_json encodes it, object
+keys sorted, so `{"b": 1, "a": 2.50}` is written `{"a":2.5,"b":1}`
+([ENGINE.md, Field values](ENGINE.md#field-values)).
+
 A NUL, an integer past 2^53 − 1 or more than 4,096 items anywhere in the
 message is refused by the parser before any tool runs (-32700), as in the
 read-only server.

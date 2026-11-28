@@ -200,9 +200,12 @@ its kind: an integer is written without fraction or exponent (an integer
 member refuses `4.0` and `4e0`), and other numbers keep their value. In a
 field value, `1` (an integer) and `1.0` (a number) are different values,
 so a tool that rewrites one as the other changes the action, and the step
-then diverges or is refused when the proposal is applied. A reader refuses
-comments, a byte-order mark, duplicate keys, unknown or missing members,
-wrong types, non-finite numbers, integers beyond ±(2^53 − 1) and number
+then diverges or is refused when the proposal is applied. Member order
+and spelling within a kind are not part of a field value: the step's
+`set` writes the value as serde_json encodes it, object keys sorted
+([ENGINE.md, Field values](ENGINE.md#field-values)), the same form for a
+value from MCP `set_field`. A reader refuses comments, a byte-order mark,
+duplicate keys, unknown or missing members, wrong types, non-finite numbers, integers beyond ±(2^53 − 1) and number
 tokens longer than 128 bytes. The body digest covers the body's bytes
 exactly as they are in the file, from its `{` to its `}`, so two writers
 that format a number differently within its kind still read each other's
