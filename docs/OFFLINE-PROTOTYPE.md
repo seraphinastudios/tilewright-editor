@@ -277,21 +277,19 @@ input before world picking. The world remains full-window behind the panels;
 the editor does not translate or rasterize world geometry. Resize/camera/session changes
 invalidate earlier masks.
 
-### Shared string field
+### Shared text field
 
 `--shared-string-field` (given to `tools/provision-prototype.py`, which
 records `"string_field": "tilewright-ui 0.1.3"` in the receipt and passes the
-flag to the editor) switches the inspector's **string** fields, the two **zone
-name** drafts, the Place **palette filter**, the **coordinates**, a new
-**anchor id** and a portal's **typed location** to the shared text field of
+flag to the editor) switches every text draft to the shared text field of
 `tilewright-ui` 0.1.3, drawn by `tilewright-ui-render` with the editor's own
 text system and font pack. It is off by default; without it nothing changes,
 and the frame records and images of a session are byte-identical. With it,
 each frame record carries the same `"string_field": "tilewright-ui 0.1.3"`
 member and the editor prints it at start.
 
-Only the inspector's numbers, booleans and references keep the editor's own
-field. The drafts that change hands are string field drafts; a zone's display
+The drafts that change hands are the inspector's field drafts of every type
+(string, boolean, integer, number and reference); a zone's display
 name ("Edit display name") and a new zone's id and name ("New zone under X",
 "New top-level zone"), see [Managing zones](#managing-zones); the filter at the
 top of the sidebar in Place mode, see [Placing objects](#placing-objects); the
@@ -300,9 +298,17 @@ coordinates draft ("Edit position (x,y)"); "New anchor at (x, y)", see
 draft keeps the same refusals and messages, stored line breaks as the same
 markers (now drawn by the shared field), the same keys, clipboard and input
 method events, and Enter or Review hands the engine the same action with the
-shared field's committed text: `SetField` for a string field, `RenameZone` or
+shared field's committed text: `SetField` for an inspector field, `RenameZone` or
 `CreateZone` for a zone draft, `Move` for coordinates, `CreateAnchor` for an
-anchor id and `SetPortal` for a typed location. A zone draft keeps its own byte
+anchor id and `SetPortal` for a typed location. An inspector field keeps its
+type's own parsing and refusals ("Enter true or false" for a boolean, which
+takes exactly `true` or `false`; "Enter an integer" and "Integer is outside
+schema range"; "Enter a finite number" and "Number is non-finite or outside
+schema range"; "Reference does not name an authoritative definition"; and the
+string's length and choices), its 4,096-byte limit refused in the editor's own
+words, its hint ("Ctrl+A selects / Enter reviews") and the rows below it (the
+type and range, or "Optional: enter a value to add", and the choices), and the
+same road fence and pause. A zone draft keeps its own byte
 limit (1,024 bytes for a display name, 1,153 for a new zone's id, space and
 name), refused in the editor's own words, its own hint ("Name of meadow; empty
 = none", "New zone under meadow: id, name"), the review-time checks (an empty
@@ -369,8 +375,9 @@ session with `--shared-string-field`; the terminal prints
 `string field: tilewright-ui 0.1.3 (opt-in)`. Select a marker and click its
 `label` row; then repeat 1, 2, 6, 9 and 12 in a zone draft (N, choose
 meadow, "Edit display name"; and "New zone under meadow"), 1, 2, 3, 6
-and 11 in the palette filter (P, then `/`), with step 14, and 2, 6, 9 and 11
-in the coordinates, a new anchor's id and a typed location, with step 15.
+and 11 in the palette filter (P, then `/`), with step 14, 2, 6, 9 and 11
+in the coordinates, a new anchor's id and a typed location, with step 15,
+and 2, 6, 9, 11 and 12 in the inspector's typed fields, with step 16.
 
 1. **Looks.** Open the same field with and without the switch: the row has
    the same height and blue fill, the hint and the Review and Discard
@@ -414,9 +421,8 @@ in the coordinates, a new anchor's id and a typed location, with step 15.
 11. **Scaling.** At 125 % or 150 % display scaling the caret, clicks and the
     candidate window line up with the text.
 12. **Esc.** Esc discards the draft. The inspector's numbers, booleans and
-    references keep the editor's own field; the sample grants only `label`,
-    so they cannot be tried there (`tests/inspector.rs` checks them with the
-    switch on).
+    references use the shared field too; the sample grants only `label`, so
+    try them in a copy (step 16).
 13. **Zone drafts.** "Edit display name" shows the name with "Name of
     meadow; empty = none" below; clearing it and pressing Enter reviews
     "Removes the display name 'Quiet meadow' of zone meadow; it shows no
@@ -446,6 +452,44 @@ in the coordinates, a new anchor's id and a typed location, with step 15.
     three or four values: layer x y, or plane layer x y", `main 0, 5, 5`
     reviews "gate_west now leads to main, layer 0, (5, 5)". With "Target a
     tile in view" open, "Type a location" ends the pick step and its prompt.
+16. **Typed fields, in a copy.** Copy
+    `crates/tilewright-editor-testkit/fixtures/prototype-neutral` to a
+    directory of your own. In the copy's `profile/schema/object.jsonc`, add
+    these lines right after `"fields": {`:
+
+    ```jsonc
+    "flag": {"type": "boolean"},
+    "count": {"type": "integer", "min": -2, "max": 7},
+    "weight": {"type": "number", "min": -1, "max": 2},
+    "kind": {"type": "reference", "target": "proto"},
+    ```
+
+    and in the copy's `preview.jsonc`, add these lines right after
+    `"fields": [` under `"editing"`:
+
+    ```jsonc
+    {"uid": "marker_1", "field": "flag"},
+    {"uid": "marker_1", "field": "count"},
+    {"uid": "marker_1", "field": "weight"},
+    {"uid": "marker_1", "field": "kind"},
+    ```
+
+    Provision the copy with `tools/provision-prototype.py --world <copy>
+    --shared-string-field` as above and select marker_1. The inspector shows
+    "flag = <absent>", "count = <absent>", "weight = <absent>" and "kind =
+    <absent>", each with "Optional: enter a value to add" below, "Choices:
+    true, false" under flag and "Choices: bush, crate, gate, grass,..."
+    under kind. Each row opens an empty draft with "Ctrl+A selects / Enter
+    reviews" below. `yes` and Enter keep the flag draft open with "Enter
+    true or false", and `true` reviews the added `"flag": true`; in count,
+    `8` gives "Integer is outside schema range" and `-2` reviews; in
+    weight, `inf` gives "Number is non-finite or outside schema range" and
+    `1.5` reviews; in kind, `unknown` gives "Reference does not name an
+    authoritative definition" and `stone` reviews. Accept each: the rows
+    read "flag = true", "count = -2" with "Integer (-2 to 7)" below,
+    "weight = 1.5" with "Number (-1 to 2)" and "kind = stone" with
+    "Reference: proto". Undo four times: all four are absent again and the
+    copy's chunk file is as it was.
 
 ### Terrain palette
 
@@ -1490,7 +1534,7 @@ again whatever the window offered, and World's validation stands behind it.
   array, or `document.create` of `anchors.jsonc` when the plane has none
   (Undo deletes that document again). Two anchors may share a tile. With
   `--shared-string-field` the shared text field edits the id, by the same
-  rules (see [Shared string field](#shared-string-field)).
+  rules (see [Shared text field](#shared-text-field)).
 - **Move.** Choose an anchor that is on a tile of the view, select its new
   tile and press "Move here: (x, y)": one `set` of its `at`, expecting the old
   position (its `layer` stays). Every portal that names it now leads to the
@@ -1553,7 +1597,7 @@ byte-exact Undo and Redo:
   within plus or minus 2^53 - 1, as World accepts. An error (and a target
   where the portal already leads) keeps the draft open with its text. With
   `--shared-string-field` the shared text field edits the draft, by the same
-  rules (see [Shared string field](#shared-string-field)).
+  rules (see [Shared text field](#shared-text-field)).
 - **Clear portal** prepares its removal; disabled when there is none.
 
 The written portal leaves `plane` out when the target is in the object's own
@@ -1656,7 +1700,7 @@ stays editable while a change is pending, when the rows are disabled as
 before. Re-entering Place keeps the filter; switching to another tool clears
 it, so Place opens with the whole palette. With `--shared-string-field` the
 shared text field edits the filter, by the same rules (see [Shared string
-field](#shared-string-field)).
+field](#shared-text-field)).
 
 Each palette row is 40 logical pixels tall, and starts with a thumbnail of
 its prototype: the prototype's ready preview texture from the catalog, the

@@ -783,7 +783,7 @@ pub fn text_size(height: u32) -> f32 {
 }
 
 /// The look of the editor's own text field row, in logical pixels. The
-/// opt-in shared string field is styled from these same values
+/// opt-in shared text field is styled from these same values
 /// (`shared_field::layout_options`), so the two rows match.
 ///
 /// The open draft's field row height; its text is `text_size` of it.

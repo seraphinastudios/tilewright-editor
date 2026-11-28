@@ -438,12 +438,10 @@ pub struct ToolState {
     anchor: Option<String>,
     /// The open portal step of the selected object, if any.
     portal: Option<OpenPortalStep>,
-    /// What edits the inspector's string fields and every other text
-    /// draft (the zone name drafts, the Place palette filter, the Move
+    /// What edits every text draft (the inspector's fields of every type,
+    /// the zone name drafts, the Place palette filter, the Move
     /// coordinates, a new anchor's id and a portal's typed location): the
-    /// editor's own field unless the shared field was switched on. The
-    /// inspector's number, boolean and reference fields always keep the
-    /// editor's own.
+    /// editor's own field unless the shared field was switched on.
     string_field: FieldImplementation,
     /// Sculpt mode's tool and step, kept across modes.
     sculpt: SculptTool,
@@ -1473,8 +1471,7 @@ impl ToolState {
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        // The filter follows the switch, like every other text draft but
-        // the inspector's typed fields.
+        // The filter follows the switch, like every other text draft.
         let input =
             FieldInput::with_limit(text.clone(), identity, MAX_FILTER_BYTES, self.string_field);
         let input = match input {
@@ -1588,14 +1585,10 @@ impl ToolState {
         if text.len() > MAX_INPUT_BYTES {
             return Err(ToolError("Input exceeds byte budget"));
         }
-        // Of the inspector's fields only string fields may use the shared
-        // field; the others keep the editor's own.
-        let implementation = if matches!(row.spec.field_type, FieldType::String { .. }) {
-            self.string_field
-        } else {
-            FieldImplementation::Editor
-        };
-        let input = self.new_input_with(text, MAX_INPUT_BYTES, implementation)?;
+        // Every field type follows the switch: a boolean, an integer, a
+        // number and a reference are typed text drafts like a string, and
+        // each keeps its own parsing and wording in `parse_scalar`.
+        let input = self.new_shareable_input(text, MAX_INPUT_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: Some(stamp),
@@ -1697,10 +1690,8 @@ impl ToolState {
         self.input_mut()?.cancel_preedit()
     }
 
-    /// Choose what edits the inspector's string fields and every other
-    /// text draft but the inspector's number, boolean and reference fields
-    /// from the next such draft (or filter focus) on; those always use the
-    /// editor's own field.
+    /// Choose what edits every text draft from the next draft (or filter
+    /// focus) on.
     pub fn set_string_field(&mut self, implementation: FieldImplementation) {
         self.string_field = implementation;
     }
@@ -1722,20 +1713,11 @@ impl ToolState {
     /// A draft of at most `limit` bytes edited by the field the switch
     /// chose ([`Self::set_string_field`]).
     fn new_shareable_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
-        self.new_input_with(text, limit, self.string_field)
-    }
-
-    fn new_input_with(
-        &mut self,
-        text: String,
-        limit: usize,
-        implementation: FieldImplementation,
-    ) -> Result<FieldInput, ToolError> {
         let identity = self
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        let input = FieldInput::with_limit(text, identity, limit, implementation)?;
+        let input = FieldInput::with_limit(text, identity, limit, self.string_field)?;
         self.next_draft = identity;
         Ok(input)
     }

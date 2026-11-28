@@ -161,13 +161,11 @@ fn scalar_drafts_obey_world_types_without_json_fallback(
         ),
     ] {
         tools.begin_field(&view, field, false).unwrap();
-        // Only string fields (`choice` and `label`) follow the switch; the
-        // boolean, integer, number and reference fields keep the editor's
-        // own field with it on.
+        // Every type follows the switch: the boolean, integer, number and
+        // reference fields as well as the string fields.
         assert_eq!(
             tools.shared_draft().is_some(),
-            implementation == tilewright_editor_ui::field_input::FieldImplementation::Shared
-                && matches!(field, "choice" | "label"),
+            implementation == tilewright_editor_ui::field_input::FieldImplementation::Shared,
             "{field}"
         );
         replace(&mut tools, valid);

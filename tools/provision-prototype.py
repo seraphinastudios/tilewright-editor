@@ -432,8 +432,9 @@ def main():
                         help='a proposal file (proposal-<digest>.json) to open; copied into the session')
     parser.add_argument('--actor', help='human:<name>, the actor of the changes this session accepts')
     parser.add_argument('--shared-string-field', action='store_true',
-                        help="opt-in: the inspector's string fields, zone names, the palette filter, coordinates, "
-                             "anchor ids and portal locations use the shared tilewright-ui field")
+                        help="opt-in: every text draft (the inspector's fields of every type, zone names, the "
+                             "palette filter, coordinates, anchor ids and portal locations) uses the shared "
+                             "tilewright-ui field")
     parser.add_argument('--palettes', type=Path,
                         help="a person's favourites file; copied into the session and copied back when the editor ends")
     args = parser.parse_args()

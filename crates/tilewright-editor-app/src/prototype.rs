@@ -538,7 +538,7 @@ struct Application {
     favourites: Option<favourites_view::Personal>,
     /// The proposal panel's state, derived once for the layout being built.
     proposal_layout: Option<proposal_view::State>,
-    /// The shared string field's compiler, only with `--shared-string-field`.
+    /// The shared text field's compiler, only with `--shared-string-field`.
     shared_field: Option<crate::shared_field::SharedField>,
     /// The last accepted road, which Grade road flattens or smooths, and
     /// the road a pending change comes from ([`RoadMemory`]); settled by
@@ -797,11 +797,10 @@ pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
 }
 
 impl Application {
-    /// Switch the inspector's string fields and every other text draft but
-    /// the inspector's typed fields (the zone name drafts, the palette
-    /// filter, the Move coordinates, a new anchor's id and a portal's typed
-    /// location) to the shared field (`--shared-string-field`), from the
-    /// next such draft or filter focus on.
+    /// Switch every text draft (the inspector's fields of every type, the
+    /// zone name drafts, the palette filter, the Move coordinates, a new
+    /// anchor's id and a portal's typed location) to the shared field
+    /// (`--shared-string-field`), from the next draft or filter focus on.
     fn share_string_field(&mut self) -> Result<()> {
         self.shared_field = Some(crate::shared_field::SharedField::new()?);
         self.tools
