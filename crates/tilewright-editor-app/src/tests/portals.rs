@@ -470,44 +470,35 @@ fn badge_outlines_stay_one_to_about_two_pixels_wide_on_every_kind_of_cell() {
     }
 }
 
-/// `/` during a pick step ends the step, as any new draft does, with either
-/// field: its prompt goes, and the next tile click releases the filter and
+/// `/` during a pick step ends the step, as any new draft does: its prompt
+/// goes, and the next tile click releases the filter and
 /// places, as the Place prompt then says, instead of setting the portal the
 /// old prompt promised.
 #[test]
-fn focusing_the_filter_ends_the_pick_step_with_either_field() {
-    use tilewright_editor_ui::field_input::FieldImplementation;
-    for implementation in FieldImplementation::ALL {
-        let (_temporary, mut app) = zone_application(|_| {});
-        if implementation == FieldImplementation::Shared {
-            app.share_string_field().unwrap();
-        }
-        click_object(&mut app, "gate_west");
-        press(&mut app, &Control::Place);
-        press(&mut app, &Control::PortalPick);
-        assert!(app.tools.portal_picking(), "{implementation:?}");
-        acknowledge_ui(&mut app);
-        route(&mut app, &key(Keycode::Slash)).unwrap();
-        assert!(app.tools.filter_focused());
-        assert_eq!(
-            app.tools.shared_draft().is_some(),
-            implementation == FieldImplementation::Shared
-        );
-        assert!(!app.tools.portal_picking(), "{implementation:?}");
-        assert_eq!(app.tools.portal_step(), None);
-        assert!(!has(
-            &sidebar_texts(&mut app),
-            "Click a tile in the view (Esc ends)"
-        ));
-        assert!(
-            !app.status_label().starts_with("Click a tile in the view"),
-            "{}",
-            app.status_label()
-        );
-        click_tile(&mut app, 4, 3);
-        assert!(!app.tools.filter_focused());
-        let sealed = app.session.history().pending().unwrap().sealed().to_owned();
-        assert!(sealed.contains("object.insert"), "{sealed}");
-        assert!(!sealed.contains("portal"), "{sealed}");
-    }
+fn focusing_the_filter_ends_the_pick_step() {
+    let (_temporary, mut app) = zone_application(|_| {});
+    click_object(&mut app, "gate_west");
+    press(&mut app, &Control::Place);
+    press(&mut app, &Control::PortalPick);
+    assert!(app.tools.portal_picking());
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Slash)).unwrap();
+    assert!(app.tools.filter_focused());
+    assert!(app.tools.shared_draft().is_some());
+    assert!(!app.tools.portal_picking());
+    assert_eq!(app.tools.portal_step(), None);
+    assert!(!has(
+        &sidebar_texts(&mut app),
+        "Click a tile in the view (Esc ends)"
+    ));
+    assert!(
+        !app.status_label().starts_with("Click a tile in the view"),
+        "{}",
+        app.status_label()
+    );
+    click_tile(&mut app, 4, 3);
+    assert!(!app.tools.filter_focused());
+    let sealed = app.session.history().pending().unwrap().sealed().to_owned();
+    assert!(sealed.contains("object.insert"), "{sealed}");
+    assert!(!sealed.contains("portal"), "{sealed}");
 }

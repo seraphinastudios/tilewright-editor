@@ -3,7 +3,7 @@
 
 //! Local input only; every edit leaves this module as a Session action.
 use crate::brush::{Brush, Stroke, StrokeTarget};
-use crate::field_input::{FieldImplementation, FieldInput, SharedInput};
+use crate::field_input::{FieldInput, SharedInput};
 use crate::road::{MAXIMUM_ROAD_POINTS, Road};
 use crate::text_input::{TextInputSnapshot, TextRevision, TextSelection};
 use crate::{
@@ -445,13 +445,6 @@ pub struct ToolState {
     anchor: Option<String>,
     /// The open portal step of the selected object, if any.
     portal: Option<OpenPortalStep>,
-    /// What edits every text draft (the inspector's string, boolean,
-    /// integer, number and reference fields, the zone name drafts, the
-    /// Place palette filter, the Move coordinates, a new anchor's id and a
-    /// portal's typed location): the editor's own field unless the shared
-    /// field was chosen ([`Self::set_string_field`]; the application's
-    /// default).
-    string_field: FieldImplementation,
     /// Sculpt mode's tool and step, kept across modes.
     sculpt: SculptTool,
     sculpt_step: SculptStep,
@@ -703,7 +696,7 @@ impl ToolState {
             .and_then(|plane| plane.zones.get(&zone))
             .and_then(|zone| zone.name.clone())
             .unwrap_or_default();
-        let input = self.new_shareable_input(name, MAX_ZONE_NAME_BYTES)?;
+        let input = self.new_draft_input(name, MAX_ZONE_NAME_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: None,
@@ -738,7 +731,7 @@ impl ToolState {
             return Err(ToolError("The parent zone is not defined in this plane"));
         }
         let (plane, _, _) = catalog.view();
-        let input = self.new_shareable_input(String::new(), MAX_ZONE_CREATE_BYTES)?;
+        let input = self.new_draft_input(String::new(), MAX_ZONE_CREATE_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: None,
@@ -916,7 +909,7 @@ impl ToolState {
     ) -> Result<(), ToolError> {
         available(pending)?;
         let at = anchor_target(catalog, selection)?;
-        let input = self.new_shareable_input(String::new(), MAX_ANCHOR_ID_BYTES)?;
+        let input = self.new_draft_input(String::new(), MAX_ANCHOR_ID_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: None,
@@ -1223,7 +1216,7 @@ impl ToolState {
             .ok_or(ToolError("The object is no longer in the world"))?
             .plane
             .clone();
-        let input = self.new_shareable_input(String::new(), MAX_PORTAL_LOCATION_BYTES)?;
+        let input = self.new_draft_input(String::new(), MAX_PORTAL_LOCATION_BYTES)?;
         self.retire_draft();
         self.portal = None;
         self.draft = Some(Draft {
@@ -1599,9 +1592,8 @@ impl ToolState {
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        // The filter follows the switch, like every other text draft.
-        let input =
-            FieldInput::with_limit(text.clone(), identity, MAX_FILTER_BYTES, self.string_field);
+        // The shared field edits the filter, like every other text draft.
+        let input = FieldInput::with_limit(text.clone(), identity, MAX_FILTER_BYTES);
         let input = match input {
             Ok(input) => input,
             Err(error) => {
@@ -1713,10 +1705,10 @@ impl ToolState {
         if text.len() > MAX_INPUT_BYTES {
             return Err(ToolError("Input exceeds byte budget"));
         }
-        // Every field type follows the switch: a boolean, an integer, a
-        // number and a reference are typed text drafts like a string, and
-        // each keeps its own parsing and wording in `parse_scalar`.
-        let input = self.new_shareable_input(text, MAX_INPUT_BYTES)?;
+        // Every field type is edited by the shared field: a boolean, an
+        // integer, a number and a reference are typed text drafts like a
+        // string, and each keeps its own parsing and wording in `parse_scalar`.
+        let input = self.new_draft_input(text, MAX_INPUT_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: Some(stamp),
@@ -1743,7 +1735,7 @@ impl ToolState {
             .stamp
             .clone()
             .ok_or(ToolError("No valid selection"))?;
-        let input = self.new_shareable_input(format!("{x},{y}"), MAX_INPUT_BYTES)?;
+        let input = self.new_draft_input(format!("{x},{y}"), MAX_INPUT_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: Some(stamp),
@@ -1818,17 +1810,9 @@ impl ToolState {
         self.input_mut()?.cancel_preedit()
     }
 
-    /// Choose what edits every text draft from the next draft (or filter
-    /// focus) on.
-    pub fn set_string_field(&mut self, implementation: FieldImplementation) {
-        self.string_field = implementation;
-    }
-    pub fn string_field(&self) -> FieldImplementation {
-        self.string_field
-    }
     /// The shared field's state while it edits the open draft.
     pub fn shared_draft(&self) -> Option<&SharedInput> {
-        self.draft.as_ref().and_then(|draft| draft.input.shared())
+        self.draft.as_ref().map(|draft| draft.input.shared())
     }
 
     fn input_mut(&mut self) -> Result<&mut FieldInput, ToolError> {
@@ -1838,14 +1822,13 @@ impl ToolState {
             .ok_or(ToolError("No input draft"))
     }
 
-    /// A draft of at most `limit` bytes edited by the field the switch
-    /// chose ([`Self::set_string_field`]).
-    fn new_shareable_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
+    /// A draft of at most `limit` bytes, edited by the shared field.
+    fn new_draft_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
         let identity = self
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        let input = FieldInput::with_limit(text, identity, limit, self.string_field)?;
+        let input = FieldInput::with_limit(text, identity, limit)?;
         self.next_draft = identity;
         Ok(input)
     }

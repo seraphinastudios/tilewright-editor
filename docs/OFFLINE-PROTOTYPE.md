@@ -280,22 +280,20 @@ invalidate earlier masks.
 ### Shared text field
 
 Every text draft uses the shared text field of `tilewright-ui` 0.1.3, drawn
-by `tilewright-ui-render` with the editor's own text system and font pack.
-`tools/provision-prototype.py` records `"string_field": "tilewright-ui 0.1.3"`
-in the receipt, each frame record carries the same member, and the editor
-prints `string field: tilewright-ui 0.1.3 (default)` at start.
+by `tilewright-ui-render` with the editor's own text system and font pack. It
+is the editor's only text field: the editor's own field, which it replaced,
+has been removed. Neither the provision receipt nor the frame records name a
+text field (the `"string_field"` and `"editor_text_field"` members of earlier
+releases are gone; both were optional members of the same
+`tilewright.prototype-provision/1` and `tilewright.prototype-frame/1`
+formats), and the editor prints no `string field:` line at start.
 
-`--editor-text-field` (given to the helper, which records
-`"editor_text_field": true` in the receipt instead and passes the flag to the
-editor) opts out for a release or two: every draft uses the editor's own field
-as before the shared field was the default, the frame records carry no
-`string_field` member and the editor prints no such line, so a session's frame
-records and images are byte-identical to a session of an earlier release. The
-editor's own field and this opt-out are to be removed in a later release.
-`--shared-string-field`, the opt-in from before, is still accepted and does
-nothing extra: the helper says so once on stderr (its stdout carries its JSON
-lines) and does not pass it on. Given with `--editor-text-field` it is refused,
-by the helper before anything is created and by the editor at start.
+The flags that chose between the two fields, `--editor-text-field` (the
+opt-out) and `--shared-string-field` (the opt-in from before the shared field
+was the default), are still accepted so that scripts that pass them keep
+working, and do nothing. Given either or both, the helper says so once on
+stderr (its stdout carries its JSON lines) and does not pass them on; the
+editor, given one directly, ignores it.
 
 The drafts that change hands are the inspector's field drafts of every type
 (string, boolean, integer, number and reference); a zone's display
@@ -344,34 +342,27 @@ drawn (a road is only drawn in Terrain mode), and while editing is paused it is
 focused, edited, released and cleared as before. The arrows step the caret with
 the shared field's own `step_caret`, which steps over a marker's zero-width
 space in one press and counts two caret stops at the same place as one, so
-every press moves the caret. Its text is the editor's own size (18 px), so an
-arrow or a click lands on the same visual stop, with the same side, as in the
-editor's own field. The editor's own field steps its caret by the same rule, so
-neither field has a press that moves nothing on screen, including two caret
-stops at the same place at a change of direction, U+0600 before a stored break,
-some emoji sequences beside right-to-left text or breaks, and a value of breaks
-only.
+every press moves the caret, including two caret stops at the same place at a
+change of direction, U+0600 before a stored break, some emoji sequences beside
+right-to-left text or breaks, and a value of breaks only. Its text is the
+editor's text size (18 px).
 
-The field looks like the editor's own: it is laid out with the editor's own
-field row values (`workspace_render`'s `FIELD_ROW_HEIGHT`, `text_size`,
-`TEXT_INSET`, `FIELD_SCROLL_MARGIN` and colours), so it takes the same
-30 px row, the rows below stay where they are, and its text has the same
-origin, size and colour, its selection, caret and preedit underline the
-same accent, and long text scrolls at the same point. One difference
-remains: the editor draws the selection, caret and underline under the
-text, the shared field draws the caret and the underline over it, so the
-pixels where the caret or the underline crosses a glyph's edge differ (a
-few pixels, and only there). It has no
-button of its own: the shared field's Apply control is switched off, its
-text area takes the row's whole width, and Enter or the editor's Review
-control reviews, as with the editor's own field.
+The field is laid out with the editor's field row values
+(`workspace_render`'s `FIELD_ROW_HEIGHT`, `text_size`, `TEXT_INSET`,
+`FIELD_SCROLL_MARGIN` and colours): a 30 px row in the active row colour, its
+text at the editor's text origin, size and colour, its selection, caret and
+preedit underline in the field accent, and long text scrolling once the caret
+comes within the scroll margin of the row's end. The caret and the underline
+are drawn over the text. It has no button of its own: the shared field's
+Apply control is switched off, its text area takes the row's whole width, and
+Enter or the editor's Review control reviews.
 
 The shared field is composed into the editor's frame under the editor's own
 scene limits, quads and raster samples both. The field is compiled first
 and the editor fits its own frame to leave room for the field's quads and
 its raster samples (`tilewright-ui-render`'s `quad_count` and
 `raster_sample_count`), so near the budget the proposal highlight and the
-preview give way, as they do with the editor's own field. The composed frame is then
+preview give way. The composed frame is then
 checked against the editor's whole limits as a backstop. If the frame cannot
 be drawn (no room even for the editor's share, or a structural refusal from
 the shared renderer), editing pauses with the draft kept. Esc discards the
@@ -379,22 +370,18 @@ draft (or clears and releases the filter); a second Esc, a zoom or a pan
 then ends the pause (if the cause is the frame budget, zooming in avoids
 it next time).
 
-What only a person can check, in a real window. Start the session without a
-field flag; the terminal prints `string field: tilewright-ui 0.1.3 (default)`.
-Where a step compares with the editor's own field, start a second session with
-`--editor-text-field`. Select a marker and click its
+What only a person can check, in a real window. Select a marker and click its
 `label` row; then repeat 1, 2, 6, 9 and 12 in a zone draft (N, choose
 meadow, "Edit display name"; and "New zone under meadow"), 1, 2, 3, 6
 and 11 in the palette filter (P, then `/`), with step 14, 2, 6, 9 and 11
 in the coordinates, a new anchor's id and a typed location, with step 15,
 and 2, 6, 9, 11 and 12 in the inspector's typed fields, with step 16.
 
-1. **Looks.** Open the same field with and without `--editor-text-field`: the row has
-   the same height and blue fill, the hint and the Review and Discard
-   buttons below it do not move, and the text starts at the same place in
-   the same size and colour. The caret is the same thin blue line; where it
-   crosses a glyph it is drawn over the glyph instead of under it. There is
-   no button of the field's own: the text runs the width of the row. Every
+1. **Looks.** The row has the height of the rows around it and a blue fill,
+   the hint and the Review and Discard buttons sit below it, and the text
+   starts at the same inset as the other rows' text. The caret is a thin
+   blue line drawn over the glyphs. There is no button of the field's own:
+   the text runs the width of the row. Every
    row below stays reachable, in a 720×480 window too (scroll the sidebar
    with the mouse wheel).
 2. **Typing and paste.** Type, paste a short text and a long one. Pasting two
@@ -417,7 +404,7 @@ and 2, 6, 9, 11 and 12 in the inspector's typed fields, with step 16.
 7. **Dead keys.** `´` then `e` gives `é` once.
 8. **Right-to-left.** Hebrew or Arabic with digits: Left, Right, Home, End,
    Shift with the arrows, clicks and Shift-clicks. Some back-and-forth in
-   mixed text is known, in the editor's own field too.
+   mixed text is known.
 9. **Review.** Enter and Review each show the same pending change. A click
    at the right end of the field places the caret; it does not review.
    Accept, then Undo: the label returns exactly. In the other drafts Undo

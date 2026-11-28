@@ -11,7 +11,6 @@ use super::zones::{key, route, zone_application};
 use crate::prototype::{Application, BlockCause, Blocked};
 use crate::workspace_ui::Control;
 use sdl3::keyboard::Keycode;
-use tilewright_editor_ui::field_input::FieldImplementation;
 
 const PAUSED: &str = "rendering blocked editing: test";
 
@@ -21,32 +20,24 @@ fn pause(app: &mut Application) {
 }
 
 /// The Delete key on a selected object while paused, with nothing
-/// pending, with either field: refused with the pause's reason, the
+/// pending: refused with the pause's reason, the
 /// selection kept; once the pause ends the same key prepares the removal.
 #[test]
-fn the_delete_key_while_paused_says_why_with_either_field() {
-    let mut refusals = Vec::new();
-    for implementation in FieldImplementation::ALL {
-        let (_temporary, mut app) = zone_application(|_| {});
-        if implementation == FieldImplementation::Shared {
-            app.share_string_field().unwrap();
-        }
-        app.select_visible_object(crate::prototype::Capability::Delete)
-            .unwrap();
-        let selected = app.session.selection().cloned();
-        assert!(selected.is_some());
-        pause(&mut app);
-        let error = route(&mut app, &key(Keycode::Delete)).unwrap_err();
-        assert_eq!(error, PAUSED, "{implementation:?}");
-        assert_eq!(app.session.selection().cloned(), selected);
-        assert!(app.session.history().pending().is_none());
-        app.blocked = None;
-        acknowledge_ui(&mut app);
-        route(&mut app, &key(Keycode::Delete)).unwrap();
-        assert!(app.session.history().pending().is_some());
-        refusals.push(error);
-    }
-    assert_eq!(refusals[0], refusals[1]);
+fn the_delete_key_while_paused_says_why() {
+    let (_temporary, mut app) = zone_application(|_| {});
+    app.select_visible_object(crate::prototype::Capability::Delete)
+        .unwrap();
+    let selected = app.session.selection().cloned();
+    assert!(selected.is_some());
+    pause(&mut app);
+    let error = route(&mut app, &key(Keycode::Delete)).unwrap_err();
+    assert_eq!(error, PAUSED);
+    assert_eq!(app.session.selection().cloned(), selected);
+    assert!(app.session.history().pending().is_none());
+    app.blocked = None;
+    acknowledge_ui(&mut app);
+    route(&mut app, &key(Keycode::Delete)).unwrap();
+    assert!(app.session.history().pending().is_some());
 }
 
 /// A stroke released after editing paused mid-drag (a frame that could

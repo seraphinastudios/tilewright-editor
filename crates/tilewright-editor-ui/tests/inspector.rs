@@ -128,9 +128,8 @@ fn authoritative_rows_missing_fields_and_structured_read_only() {
     assert_eq!(field_choices(&view, "choice"), ["red", "青"]);
     assert!(field_choices(&view, "reference").contains(&"marker"));
 }
-fn scalar_drafts_obey_world_types_without_json_fallback(
-    implementation: tilewright_editor_ui::field_input::FieldImplementation,
-) {
+#[test]
+fn scalar_drafts_obey_world_types_without_json_fallback() {
     let (_dir, document, catalog) = fixture();
     let key = key();
     let view = inspect(
@@ -141,7 +140,6 @@ fn scalar_drafts_obey_world_types_without_json_fallback(
         document.revision(),
     );
     let mut tools = ToolState::default();
-    tools.set_string_field(implementation);
     for (field, valid, invalid, expected) in [
         ("flag", "true", "1", serde_json::json!(true)),
         ("count", "7", "8", serde_json::json!(7)),
@@ -161,13 +159,9 @@ fn scalar_drafts_obey_world_types_without_json_fallback(
         ),
     ] {
         tools.begin_field(&view, field, false).unwrap();
-        // Every type follows the switch: the boolean, integer, number and
-        // reference fields as well as the string fields.
-        assert_eq!(
-            tools.shared_draft().is_some(),
-            implementation == tilewright_editor_ui::field_input::FieldImplementation::Shared,
-            "{field}"
-        );
+        // The shared field edits every type: the boolean, integer, number
+        // and reference fields as well as the string fields.
+        assert!(tools.shared_draft().is_some(), "{field}");
         replace(&mut tools, valid);
         let Action::SetField {
             value,
@@ -220,9 +214,8 @@ fn scalar_drafts_obey_world_types_without_json_fallback(
         assert!(tools.build_action(&view, false).is_err());
     }
 }
-fn stale_uid_frame_revision_and_pending_drafts_cannot_authorize_actions(
-    implementation: tilewright_editor_ui::field_input::FieldImplementation,
-) {
+#[test]
+fn stale_uid_frame_revision_and_pending_drafts_cannot_authorize_actions() {
     let (_dir, document, catalog) = fixture();
     let key = key();
     let view = inspect(
@@ -233,7 +226,6 @@ fn stale_uid_frame_revision_and_pending_drafts_cannot_authorize_actions(
         document.revision(),
     );
     let mut tools = ToolState::default();
-    tools.set_string_field(implementation);
     tools.begin_field(&view, "label", false).unwrap();
     replace(&mut tools, "changed");
     assert!(tools.build_action(&view, true).is_err());
@@ -310,9 +302,8 @@ fn coordinates_and_explicit_terrain_palette_produce_only_semantic_actions() {
     );
     assert!(tools.paint_action(&cell_view, &cell, true).is_err());
 }
-fn utf8_input_boundaries_are_atomic_and_backspace_removes_a_character(
-    implementation: tilewright_editor_ui::field_input::FieldImplementation,
-) {
+#[test]
+fn utf8_input_boundaries_are_atomic_and_backspace_removes_a_character() {
     let (_dir, document, catalog) = fixture();
     let key = key();
     let view = inspect(
@@ -323,7 +314,6 @@ fn utf8_input_boundaries_are_atomic_and_backspace_removes_a_character(
         document.revision(),
     );
     let mut tools = ToolState::default();
-    tools.set_string_field(implementation);
     tools.begin_field(&view, "label", false).unwrap();
     replace(&mut tools, &"é".repeat(MAX_INPUT_BYTES / 2));
     assert!(tools.input("☃").is_err());
@@ -340,9 +330,8 @@ fn utf8_input_boundaries_are_atomic_and_backspace_removes_a_character(
     assert!(display.ends_with('…'));
 }
 
-fn composition_never_reaches_an_action_and_draft_identity_fences_old_frames(
-    implementation: tilewright_editor_ui::field_input::FieldImplementation,
-) {
+#[test]
+fn composition_never_reaches_an_action_and_draft_identity_fences_old_frames() {
     let (_dir, document, catalog) = fixture();
     let key = key();
     let view = inspect(
@@ -353,7 +342,6 @@ fn composition_never_reaches_an_action_and_draft_identity_fences_old_frames(
         document.revision(),
     );
     let mut tools = ToolState::default();
-    tools.set_string_field(implementation);
     tools.begin_field(&view, "label", false).unwrap();
     tools.select_all().unwrap();
     tools.input("e\u{301} العربية עברית क्ष 👨‍👩‍👧‍👦").unwrap();
@@ -529,11 +517,3 @@ fn deleting_a_stored_break_marker_reviews_the_value_minus_exactly_that_character
     };
     assert_eq!(value, serde_json::json!(format!("{stored}!")));
 }
-
-// Each case runs with the editor's own string field and the shared one.
-tilewright_editor_ui::both_fields!(
-    scalar_drafts_obey_world_types_without_json_fallback,
-    stale_uid_frame_revision_and_pending_drafts_cannot_authorize_actions,
-    utf8_input_boundaries_are_atomic_and_backspace_removes_a_character,
-    composition_never_reaches_an_action_and_draft_identity_fences_old_frames,
-);

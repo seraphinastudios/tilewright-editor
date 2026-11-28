@@ -124,8 +124,7 @@ class PalettesOptionTests(unittest.TestCase):
 
     def test_the_editor_is_given_the_directory_exactly_when_the_file_is(self):
         children = {'world': 3, 'recovery': 4, 'evidence': 5, 'palettes': 6}
-        args = argparse.Namespace(font_pack=Path('/fonts'), demo_script=False, reference=False,
-                                  editor_text_field=False, shared_string_field=False)
+        args = argparse.Namespace(font_pack=Path('/fonts'), demo_script=False, reference=False)
         without = provision.editor_command(Path('/editor'), children, args, None, None)
         self.assertNotIn('--palettes-fd', without)
         given = provision.editor_command(Path('/editor'), children, args, None, None, True)

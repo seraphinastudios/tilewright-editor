@@ -10,7 +10,7 @@ use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewLimits, loader};
 use tilewright_editor_recovery::{DurableRecovery, RecoveryLimits};
 use tilewright_editor_testkit::fixture_world;
-use tilewright_editor_ui::{Action, Session, field_input::FieldImplementation};
+use tilewright_editor_ui::{Action, Session};
 use tilewright_source::SourceRoot;
 
 fn copy_private(source: &Path, destination: &Path) {
@@ -30,22 +30,6 @@ fn copy_private(source: &Path, destination: &Path) {
 
 fn application() -> (tempfile::TempDir, Application) {
     application_with_source(|_| {})
-}
-
-/// [`application`] with the string field edited by `implementation`.
-fn application_using(implementation: FieldImplementation) -> (tempfile::TempDir, Application) {
-    application_with_source_using(implementation, |_| {})
-}
-
-fn application_with_source_using(
-    implementation: FieldImplementation,
-    prepare: impl FnOnce(&Path),
-) -> (tempfile::TempDir, Application) {
-    let (temporary, mut app) = application_with_source(prepare);
-    if implementation == FieldImplementation::Shared {
-        app.share_string_field().unwrap();
-    }
-    (temporary, app)
 }
 
 fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, Application) {
@@ -117,23 +101,16 @@ fn application_with_source(prepare: impl FnOnce(&Path)) -> (tempfile::TempDir, A
         proposal: None,
         favourites: None,
         proposal_layout: None,
-        shared_field: None,
+        shared_field: crate::shared_field::SharedField::new().unwrap(),
         roads: tilewright_editor_ui::road::RoadMemory::default(),
     };
     (temporary, app)
 }
 
 #[test]
-fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() {
-    // The shared field, the default, and the editor's own (the opt-out).
-    for implementation in FieldImplementation::ALL {
-        full_neutral_script(implementation);
-    }
-}
-
 #[allow(clippy::too_many_lines)]
-fn full_neutral_script(implementation: FieldImplementation) {
-    let (temporary, mut app) = application_using(implementation);
+fn full_neutral_script_reselects_after_commits_and_edits_field_and_empty_cell() {
+    let (temporary, mut app) = application();
     // The native demonstration installs the same deterministic uid source.
     app.session
         .set_uid_source(Box::new(tilewright_editor_ui::uid::SeededUidSource::new(
@@ -360,19 +337,12 @@ fn full_neutral_script(implementation: FieldImplementation) {
                 .join(format!("evidence/{phase}.png"))
                 .is_file()
         );
-        // Every frame record names the shared field exactly when it is used.
+        // No frame record names the text field: there is only the shared one.
         let record: serde_json::Value = serde_json::from_slice(
             &fs::read(temporary.path().join(format!("evidence/{phase}.json"))).unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            record
-                .get("string_field")
-                .and_then(serde_json::Value::as_str),
-            (implementation == FieldImplementation::Shared)
-                .then_some(FieldImplementation::SHARED_NAME),
-            "{phase}"
-        );
+        assert!(record.get("string_field").is_none(), "{phase}");
     }
     assert!(app.session.history().pending().is_none());
     assert_eq!(
@@ -412,12 +382,11 @@ fn background_click_cannot_paint_an_earlier_cell_selection() {
     assert_eq!(app.session.world().source_digest(), original);
 }
 
-fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn focused_text_consumes_global_shortcuts_without_invalidating_world_generation() {
     use crate::workspace_ui::Control;
     use sdl3::keyboard::Keycode;
-    let (_temporary, mut app) = application_using(implementation);
+    let (_temporary, mut app) = application();
     app.select_visible_object(super::Capability::Field).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     let generation = app.session.generation();
@@ -485,11 +454,10 @@ fn terrain_requires_explicit_palette_and_panel_controls_never_publish() {
     assert_eq!(app.session.history().document().revision(), revision);
 }
 
-fn combining_text_reaches_review_without_normalization_or_source_write(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn combining_text_reaches_review_without_normalization_or_source_write() {
     use crate::workspace_ui::Control;
-    let (_temporary, mut app) = application_using(implementation);
+    let (_temporary, mut app) = application();
     app.select_visible_object(super::Capability::Field).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     app.tools.select_all().unwrap();
@@ -747,12 +715,11 @@ fn blocked_render_reason_precedes_source_excerpt_and_ready_status_is_plain() {
     );
 }
 
-fn compact_chunk_review_shows_changed_label_before_accept_and_undo_restores_exact_bytes(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn compact_chunk_review_shows_changed_label_before_accept_and_undo_restores_exact_bytes() {
     use crate::workspace_ui::{Control, WorkspaceUi};
     let chunk_path = "planes/main/layers/0/0_0.jsonc";
-    let (temporary, mut app) = application_with_source_using(implementation, |world| {
+    let (temporary, mut app) = application_with_source(|world| {
         let path = world.join(chunk_path);
         let source: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         // Author a compact fixture retaining terrain before objects so label text
@@ -936,23 +903,13 @@ fn long_utf8_draft_shows_working_tail_and_caret_while_full_value_reaches_review(
     let full = format!("{prefix}NEW-éà");
     app.tools.input(&full).unwrap();
     app.refresh_ui();
-    let display = app
-        .ui
-        .widgets
-        .iter()
-        .find(|widget| widget.editable.is_some())
-        .unwrap();
-    assert_eq!(display.text, full);
+    let display = app.tools.draft_snapshot().unwrap().display_text;
+    assert_eq!(display, full);
     assert_eq!(app.tools.draft_text(), Some(full.as_str()));
     super::native_key(&mut app, sdl3::keyboard::Keycode::Backspace).unwrap();
     app.refresh_ui();
-    let display = app
-        .ui
-        .widgets
-        .iter()
-        .find(|widget| widget.editable.is_some())
-        .unwrap();
-    assert!(display.text.ends_with("NEW-é"), "{}", display.text);
+    let display = app.tools.draft_snapshot().unwrap().display_text;
+    assert!(display.ends_with("NEW-é"), "{display}");
     app.tools.input("à").unwrap();
     app.refresh_ui();
     assert_eq!(app.tools.draft_text(), Some(full.as_str()));
@@ -1019,15 +976,14 @@ fn input_key(window_id: u32, key: sdl3::keyboard::Keycode, up: bool) -> sdl3::ev
 }
 
 #[allow(clippy::too_many_lines)]
-fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order() {
     use crate::workspace_ui::Control;
     use sdl3::{
         event::{Event, WindowEvent},
         keyboard::Keycode,
     };
-    let (temporary, mut app) = application_using(implementation);
+    let (temporary, mut app) = application();
     app.select_visible_object(super::Capability::Field).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     app.tools.select_all().unwrap();
@@ -1140,11 +1096,10 @@ fn real_sdl_events_preserve_preedit_offsets_focus_and_submission_order(
     assert_eq!(app.tools.draft_text(), Some(prior.as_str()));
 }
 
-fn stale_displayed_geometry_blocks_pointer_but_keyboard_uses_current_draft(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn stale_displayed_geometry_blocks_pointer_but_keyboard_uses_current_draft() {
     use crate::workspace_ui::{Control, WorkspaceUi};
-    let (_temporary, mut app) = application_using(implementation);
+    let (_temporary, mut app) = application();
     app.select_visible_object(super::Capability::Field).unwrap();
     app.ui = WorkspaceUi::new((960, 640), (320, 240));
     app.control(Control::Field("label".into())).unwrap();
@@ -1166,14 +1121,13 @@ fn stale_displayed_geometry_blocks_pointer_but_keyboard_uses_current_draft(
     assert!(app.session.history().pending().is_none());
 }
 
-fn deletion_and_clipboard_paste_return_wait_for_displayed_draft(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn deletion_and_clipboard_paste_return_wait_for_displayed_draft() {
     use crate::workspace_ui::Control;
     use sdl3::keyboard::{Keycode, Mod};
     use tilewright_editor_ui::text_input::{TextCursor, TextSelection};
     for key in [Keycode::Backspace, Keycode::Delete, Keycode::V] {
-        let (_temporary, mut app) = application_using(implementation);
+        let (_temporary, mut app) = application();
         app.select_visible_object(super::Capability::Field).unwrap();
         app.control(Control::Field("label".into())).unwrap();
         app.tools.select_all().unwrap();
@@ -1233,16 +1187,15 @@ fn deletion_and_clipboard_paste_return_wait_for_displayed_draft(
     }
 }
 
-fn native_typing_ime_and_paste_reject_line_and_paragraph_separators(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn native_typing_ime_and_paste_reject_line_and_paragraph_separators() {
     use crate::workspace_ui::Control;
     use sdl3::{
         event::Event,
         keyboard::{Keycode, Mod},
     };
     for separator in ["\u{2028}", "\u{2029}"] {
-        let (_temporary, mut app) = application_using(implementation);
+        let (_temporary, mut app) = application();
         app.select_visible_object(super::Capability::Field).unwrap();
         app.control(Control::Field("label".into())).unwrap();
         acknowledge_ui(&mut app);
@@ -1294,12 +1247,11 @@ fn native_typing_ime_and_paste_reject_line_and_paragraph_separators(
     }
 }
 
-fn switched_or_refocused_draft_rejects_previously_drained_ime_events(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn switched_or_refocused_draft_rejects_previously_drained_ime_events() {
     use crate::workspace_ui::{Control, WorkspaceUi};
     use sdl3::{event::Event, mouse::MouseButton};
-    let (_temporary, mut app) = application_using(implementation);
+    let (_temporary, mut app) = application();
     app.select_visible_object(super::Capability::Field).unwrap();
     app.ui = WorkspaceUi::new((960, 640), (320, 240));
     app.control(Control::Field("label".into())).unwrap();
@@ -1383,12 +1335,11 @@ fn switched_or_refocused_draft_rejects_previously_drained_ime_events(
     assert!(app.session.history().pending().is_none());
 }
 
-fn escape_composition_cancel_fences_queued_text_and_allows_fresh_input(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn escape_composition_cancel_fences_queued_text_and_allows_fresh_input() {
     use crate::workspace_ui::Control;
     use sdl3::{event::Event, keyboard::Keycode};
-    let (temporary, mut app) = application_using(implementation);
+    let (temporary, mut app) = application();
     app.select_visible_object(super::Capability::Field).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     app.tools.select_all().unwrap();
@@ -1501,14 +1452,13 @@ fn modified_input_key(
     event
 }
 
-fn real_shift_and_repeated_arrows_use_current_draft_without_intermediate_frames(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn real_shift_and_repeated_arrows_use_current_draft_without_intermediate_frames() {
     use crate::workspace_ui::Control;
     use sdl3::keyboard::{Keycode, Mod};
     use tilewright_editor_ui::text_input::{TextCursor, TextSelection};
     for (shift, arrows) in [(true, 1), (true, 2), (false, 2)] {
-        let (_temporary, mut app) = application_using(implementation);
+        let (_temporary, mut app) = application();
         app.select_visible_object(super::Capability::Field).unwrap();
         app.control(Control::Field("label".into())).unwrap();
         app.tools.select_all().unwrap();
@@ -1573,12 +1523,11 @@ fn real_shift_and_repeated_arrows_use_current_draft_without_intermediate_frames(
     }
 }
 
-fn backspace_then_left_uses_current_shaped_text_and_return_stays_fenced(
-    implementation: FieldImplementation,
-) {
+#[test]
+fn backspace_then_left_uses_current_shaped_text_and_return_stays_fenced() {
     use crate::workspace_ui::Control;
     use sdl3::keyboard::Keycode;
-    let (_temporary, mut app) = application_using(implementation);
+    let (_temporary, mut app) = application();
     app.select_visible_object(super::Capability::Field).unwrap();
     app.control(Control::Field("label".into())).unwrap();
     app.tools.select_all().unwrap();
@@ -2254,8 +2203,6 @@ mod flatten_mode;
 #[path = "smooth_mode.rs"]
 mod smooth_mode;
 
-#[path = "own_field_caret.rs"]
-mod own_field_caret;
 #[path = "stored_breaks.rs"]
 mod stored_breaks;
 #[path = "zones.rs"]
@@ -2405,18 +2352,3 @@ fn label_project_art(root: &std::path::Path, ids: &[&str]) {
     )
     .unwrap();
 }
-
-// Each case runs with the editor's own string field and the shared one.
-tilewright_editor_ui::both_fields!(
-    focused_text_consumes_global_shortcuts_without_invalidating_world_generation,
-    combining_text_reaches_review_without_normalization_or_source_write,
-    compact_chunk_review_shows_changed_label_before_accept_and_undo_restores_exact_bytes,
-    real_sdl_events_preserve_preedit_offsets_focus_and_submission_order,
-    stale_displayed_geometry_blocks_pointer_but_keyboard_uses_current_draft,
-    deletion_and_clipboard_paste_return_wait_for_displayed_draft,
-    native_typing_ime_and_paste_reject_line_and_paragraph_separators,
-    switched_or_refocused_draft_rejects_previously_drained_ime_events,
-    escape_composition_cancel_fences_queued_text_and_allows_fresh_input,
-    real_shift_and_repeated_arrows_use_current_draft_without_intermediate_frames,
-    backspace_then_left_uses_current_shaped_text_and_return_stays_fenced,
-);

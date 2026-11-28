@@ -2,11 +2,12 @@
 
 All implementation, tests, documentation, and synthetic fixtures in this
 repository are MIT work by Seraphina Studios. No outside implementation, tests,
-configuration, or fixtures are copied or adapted. Two adaptations of Seraphina
-Studios' own MIT code from sibling projects are recorded: the MCP port under
-[MCP server](#mcp-server), and the own text field's caret stepping under
-[Shared UI field](#shared-ui-field). Dependency font data retains its own license as
-recorded below.
+configuration, or fixtures are copied or adapted. One adaptation of Seraphina
+Studios' own MIT code from a sibling project is recorded: the MCP port under
+[MCP server](#mcp-server). (The editor's own text field, whose caret stepping
+was adapted from `tilewright-ui-render`, has been removed with that code; see
+[Shared UI field](#shared-ui-field).) Dependency font data retains its own
+license as recorded below.
 
 Independent implementation remains the default. Before any outside source is
 inspected as implementation reference or reused, confirm that its license is
@@ -91,7 +92,7 @@ ports nothing further.
 
 ## Shared UI field
 
-The shared text field (the default for every text draft) uses `tilewright-ui` and
+The shared text field (which edits every text draft) uses `tilewright-ui` and
 `tilewright-ui-render` **0.1.3** from crates.io (MIT, Seraphina Studios),
 archive SHA-256
 `cc5e6ed975a8d051256781e38ec46753ce52a4ecff3278554a2adbf2b0d8f03e` and
@@ -101,46 +102,20 @@ match the crates.io index and the `SHA256SUMS` of the
 (the source release that carries crate version 0.1.3), source revision
 `2cb928ec3581777c2a64e633aa2b21764b53c999`. They are
 dependencies, not reused source: no file of them is copied into this
-repository; the two adaptations are recorded below. Their text editing was itself adapted from this repository's
-`text_input.rs` (their own `PROVENANCE.md` records it). They pin renderer
-0.7.2, the editor's own, so the lock holds one renderer.
+repository. Their text editing was itself adapted from this repository's
+`text_input.rs` (the editor's own text field, since removed; their own
+`PROVENANCE.md` records it). They pin renderer 0.7.2, the editor's own, so
+the lock holds one renderer.
 
-- **Adapted from tilewright-ui-render 0.1.1.** The editor's own text field
-  steps its caret with the rule of `tilewright-ui-render` 0.1.1 (source
-  release v0.2.0, source revision `9a7e2174ec8a25369bf8ffcb615a8a58a3f605ea`;
-  0.1.2 kept the same rule, and 0.1.3, the version above, adds the guard
-  fix of the next record): `src/lib.rs` `step_visual`, `same_position` and the
-  constants `SAME_CARET_POSITION` (1/64 px) and `MAXIMUM_STEPS` (4), into
-  `crates/tilewright-editor-app/src/workspace_render.rs` `step_caret`,
-  `SAME_CARET_POSITION` and `MAXIMUM_CARET_STEPS`. Transformation: the same
-  loop and conditions, on the editor's own `TextInputSnapshot` and
-  `UnicodeLayout`; it returns the display cursor, which `visual_move` maps to
-  committed text; it maps to committed text inside the loop only after a
-  visible step; no composition check, because `visual_move` is never reached
-  while composing; doc comments paraphrased. Same owner and licence: no
-  notice beyond this record is needed.
-- **Adapted from tilewright-ui-render 0.1.3.** The fix for a step beside a
-  marker's guard in mixed-direction text, from `tilewright-ui-render`
-  **0.1.3**, archive SHA-256
-  `ee883713e67356870315b87bbc855008924b57e98095b932355b745df4edd02b`
-  (`tilewright-ui` 0.1.3:
-  `cc5e6ed975a8d051256781e38ec46753ce52a4ecff3278554a2adbf2b0d8f03e`), source
-  release tag
-  [v0.4.0](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.4.0),
-  source revision `2cb928ec3581777c2a64e633aa2b21764b53c999`
-  (seraphinastudios/tilewright-ui pull request #18, merged). This port was
-  made from that pull request's head
-  `f53e9679acf5caa4258d6b231df455246ebbe752` (reachable as
-  `refs/pull/18/head`) before the release; its tree equals `2cb928e`, and
-  the released crate's `src/lib.rs` is byte-identical to it, so the port
-  matches the released source. Adapted: `src/lib.rs` `toward`,
-  `lands_behind`, and the guard-crossing comparison in `step_visual` with
-  the position the step left, into
-  `crates/tilewright-editor-app/src/workspace_render.rs` `lands_behind` and
-  `step_caret`. Transformation: the same conditions on the editor's
-  `TextInputSnapshot` markers and `UnicodeLayout` caret rectangles, comparing
-  committed bytes; the press's direction is computed inside `step_caret`
-  from its motion; doc comments paraphrased. Same owner and licence: no notice beyond this record is needed.
+The editor's own text field, its drawing and its caret stepping have been
+removed: the shared field edits every text draft. With them went the two
+adaptations this section recorded, of `tilewright-ui-render` 0.1.1's
+`step_visual` and `same_position` (source revision
+`9a7e2174ec8a25369bf8ffcb615a8a58a3f605ea`) and 0.1.3's `lands_behind` guard
+fix (source revision `2cb928ec3581777c2a64e633aa2b21764b53c999`), into
+`crates/tilewright-editor-app/src/workspace_render.rs` `step_caret` and
+`lands_behind`. No adapted code of `tilewright-ui-render` remains in this
+repository.
 
 ## Shared renderer UI font
 

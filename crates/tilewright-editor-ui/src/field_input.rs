@@ -1,13 +1,13 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! The text a field draft edits: the editor's own [`TextInput`], or, for
-//! every text draft (the inspector's string, boolean, integer, number
-//! and reference fields, the zone name drafts, the palette filter, the Move
-//! coordinates, a new anchor's id and a portal's typed location), the shared
-//! `tilewright-ui` field.
+//! The text a field draft edits: every text draft (the inspector's string,
+//! boolean, integer, number and reference fields, the zone name drafts, the
+//! palette filter, the Move coordinates, a new anchor's id and a portal's
+//! typed location) is edited by the shared `tilewright-ui` field.
 //!
-//! Both answer the same calls with the same results and the same
+//! It answers the editor's calls in the editor's terms (its
+//! [`TextInputSnapshot`], selections and revisions) and with the editor's
 //! [`ToolError`] wording, so every caller (native events, the clipboard,
 //! review) stays one path. The shared field is a `tilewright_ui::Ui` in its
 //! single-field composition, bound to the stored value and focused for its
@@ -19,32 +19,13 @@ use tilewright_ui::{
 
 use crate::{
     text_input::{
-        CompositionSnapshot, DisplayMarker, TextAffinity, TextCursor, TextInput, TextInputSnapshot,
+        CompositionSnapshot, DisplayMarker, TextAffinity, TextCursor, TextInputSnapshot,
         TextRevision, TextSelection, scalar_selection_bytes,
     },
     tools::ToolError,
 };
 
-/// Which implementation edits a draft. A bare [`ToolState`] keeps the
-/// editor's own; the editor application chooses the shared one for every
-/// text draft unless it is started with `--editor-text-field`.
-///
-/// [`ToolState`]: crate::tools::ToolState
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum FieldImplementation {
-    #[default]
-    Editor,
-    Shared,
-}
-
-impl FieldImplementation {
-    pub const ALL: [Self; 2] = [Self::Editor, Self::Shared];
-
-    /// The name evidence records carry for the shared field.
-    pub const SHARED_NAME: &'static str = "tilewright-ui 0.1.3";
-}
-
-/// The rejection wording of the editor's own field, for each shared refusal.
+/// The editor's rejection wording, for each shared refusal.
 const REFUSED: ToolError =
     ToolError("Input exceeds byte budget or contains control characters or line breaks");
 const COMPOSING: ToolError = ToolError("Finish or cancel composition first");
@@ -95,7 +76,7 @@ impl SharedInput {
     }
 
     /// Apply one composer input; a refusal changes nothing and is worded
-    /// as the editor's own field words it.
+    /// in the editor's words.
     fn apply(
         &mut self,
         input: Input,
@@ -123,103 +104,54 @@ fn shared_error(error: UiError) -> ToolError {
     }
 }
 
+/// One draft's text, edited by the shared field.
 #[derive(Clone, Debug)]
-enum Backend {
-    Editor(TextInput),
-    Shared(Box<SharedInput>),
-}
-
-/// One draft's text, edited by the implementation it was opened with.
-#[derive(Clone, Debug)]
-pub struct FieldInput(Backend);
+pub struct FieldInput(Box<SharedInput>);
 
 impl PartialEq for FieldInput {
     fn eq(&self, other: &Self) -> bool {
-        match (&self.0, &other.0) {
-            (Backend::Editor(a), Backend::Editor(b)) => a == b,
-            (Backend::Shared(a), Backend::Shared(b)) => {
-                a.draft == b.draft && a.ui.snapshot() == b.ui.snapshot()
-            }
-            _ => false,
-        }
+        self.0.draft == other.0.draft && self.0.ui.snapshot() == other.0.ui.snapshot()
     }
 }
 
 impl FieldInput {
-    pub fn new(text: String, implementation: FieldImplementation) -> Result<Self, ToolError> {
-        Self::with_limit(text, 0, crate::inspector::MAX_INPUT_BYTES, implementation)
+    pub fn new(text: String) -> Result<Self, ToolError> {
+        Self::with_limit(text, 0, crate::inspector::MAX_INPUT_BYTES)
     }
 
-    pub(crate) fn with_limit(
-        text: String,
-        draft: u64,
-        limit: usize,
-        implementation: FieldImplementation,
-    ) -> Result<Self, ToolError> {
-        Ok(Self(match implementation {
-            FieldImplementation::Editor => {
-                Backend::Editor(TextInput::with_limit(text, draft, limit)?)
-            }
-            FieldImplementation::Shared => {
-                let limit = limit.min(crate::inspector::MAX_INPUT_BYTES);
-                if text.len() > limit {
-                    return Err(ToolError("Input exceeds byte budget"));
-                }
-                Backend::Shared(Box::new(SharedInput::open(text, draft, limit)?))
-            }
-        }))
-    }
-
-    pub fn implementation(&self) -> FieldImplementation {
-        match self.0 {
-            Backend::Editor(_) => FieldImplementation::Editor,
-            Backend::Shared(_) => FieldImplementation::Shared,
+    pub(crate) fn with_limit(text: String, draft: u64, limit: usize) -> Result<Self, ToolError> {
+        let limit = limit.min(crate::inspector::MAX_INPUT_BYTES);
+        // Existing source can contain controls or line separators. Opening it
+        // stays lossless; only new input follows the single-line policy.
+        if text.len() > limit {
+            return Err(ToolError("Input exceeds byte budget"));
         }
+        Ok(Self(Box::new(SharedInput::open(text, draft, limit)?)))
     }
 
-    /// The shared field's state, while it edits this draft.
-    pub fn shared(&self) -> Option<&SharedInput> {
-        match &self.0 {
-            Backend::Shared(shared) => Some(shared),
-            Backend::Editor(_) => None,
-        }
+    /// The shared field's state, for the host's compiler.
+    pub fn shared(&self) -> &SharedInput {
+        &self.0
     }
 
     pub fn text(&self) -> &str {
-        match &self.0 {
-            Backend::Editor(input) => input.text(),
-            Backend::Shared(shared) => shared.ui.composer_text(),
-        }
+        self.0.ui.composer_text()
     }
 
     pub fn selection(&self) -> TextSelection {
-        match &self.0 {
-            Backend::Editor(input) => input.selection(),
-            Backend::Shared(shared) => selection(shared.ui.composer_selection()),
-        }
+        selection(self.0.ui.composer_selection())
     }
 
     pub fn revision(&self) -> TextRevision {
-        match &self.0 {
-            Backend::Editor(input) => input.revision(),
-            Backend::Shared(shared) => shared.revision(),
-        }
+        self.0.revision()
     }
 
     pub fn is_composing(&self) -> bool {
-        match &self.0 {
-            Backend::Editor(input) => input.is_composing(),
-            Backend::Shared(shared) => shared.ui.is_composing(),
-        }
+        self.0.ui.is_composing()
     }
 
     pub fn snapshot(&self) -> TextInputSnapshot {
-        match &self.0 {
-            Backend::Editor(input) => input.snapshot(),
-            Backend::Shared(shared) => {
-                editor_snapshot(&shared.ui.snapshot().composer, shared.draft)
-            }
-        }
+        editor_snapshot(&self.0.ui.snapshot().composer, self.0.draft)
     }
 
     pub fn set_selection(
@@ -227,101 +159,74 @@ impl FieldInput {
         selection: TextSelection,
         presented: TextRevision,
     ) -> Result<(), ToolError> {
-        match &mut self.0 {
-            Backend::Editor(input) => input.set_selection(selection, presented),
-            Backend::Shared(shared) => {
-                let mut target = shared.target()?;
-                if presented.draft != shared.draft {
-                    return Err(ToolError("Input presentation is stale"));
-                }
-                // The shared field checks the presented revision itself.
-                target.revision = tilewright_ui::TextRevision::new(presented.revision)
-                    .map_err(|_| ToolError("Input presentation is stale"))?;
-                shared.apply(
-                    Input::Selection {
-                        target,
-                        selection: shared_selection(selection),
-                    },
-                    |composing| {
-                        if composing {
-                            COMPOSING
-                        } else {
-                            ToolError("Cursor is not an extended grapheme boundary")
-                        }
-                    },
-                )
-            }
+        let shared = &mut self.0;
+        let mut target = shared.target()?;
+        if presented.draft != shared.draft {
+            return Err(ToolError("Input presentation is stale"));
         }
+        // The shared field checks the presented revision itself.
+        target.revision = tilewright_ui::TextRevision::new(presented.revision)
+            .map_err(|_| ToolError("Input presentation is stale"))?;
+        shared.apply(
+            Input::Selection {
+                target,
+                selection: shared_selection(selection),
+            },
+            |composing| {
+                if composing {
+                    COMPOSING
+                } else {
+                    ToolError("Cursor is not an extended grapheme boundary")
+                }
+            },
+        )
     }
 
     pub fn select_all(&mut self) -> Result<(), ToolError> {
-        match &mut self.0 {
-            Backend::Editor(input) => input.select_all(),
-            Backend::Shared(shared) => shared.edit(TextCommand::SelectAll),
-        }
+        self.0.edit(TextCommand::SelectAll)
     }
 
     pub fn input(&mut self, text: &str) -> Result<(), ToolError> {
-        match &mut self.0 {
-            Backend::Editor(input) => input.input(text),
-            Backend::Shared(shared) => {
-                let target = shared.target()?;
-                shared.apply(
-                    Input::TextCommit {
-                        target,
-                        text: text.into(),
-                    },
-                    |_| REFUSED,
-                )
-            }
-        }
+        let target = self.0.target()?;
+        self.0.apply(
+            Input::TextCommit {
+                target,
+                text: text.into(),
+            },
+            |_| REFUSED,
+        )
     }
 
     pub fn backspace(&mut self) -> Result<(), ToolError> {
-        match &mut self.0 {
-            Backend::Editor(input) => input.backspace(),
-            Backend::Shared(shared) => shared.edit(TextCommand::Backspace),
-        }
+        self.0.edit(TextCommand::Backspace)
     }
 
     pub fn delete(&mut self) -> Result<(), ToolError> {
-        match &mut self.0 {
-            Backend::Editor(input) => input.delete(),
-            Backend::Shared(shared) => shared.edit(TextCommand::Delete),
-        }
+        self.0.edit(TextCommand::Delete)
     }
 
     pub fn update_preedit(&mut self, text: &str, start: i32, length: i32) -> Result<(), ToolError> {
-        match &mut self.0 {
-            Backend::Editor(input) => input.update_preedit(text, start, length),
-            Backend::Shared(shared) => {
-                let target = shared.target()?;
-                shared.apply(
-                    Input::Preedit {
-                        target,
-                        text: text.into(),
-                        start,
-                        length,
-                    },
-                    // The offsets were refused: word it as the editor does.
-                    |_| {
-                        scalar_selection_bytes(text, start, length)
-                            .err()
-                            .unwrap_or(ToolError("Invalid composition selection"))
-                    },
-                )
-            }
-        }
+        let target = self.0.target()?;
+        self.0.apply(
+            Input::Preedit {
+                target,
+                text: text.into(),
+                start,
+                length,
+            },
+            // The offsets were refused: word it as the editor does.
+            |_| {
+                scalar_selection_bytes(text, start, length)
+                    .err()
+                    .unwrap_or(ToolError("Invalid composition selection"))
+            },
+        )
     }
 
     pub fn cancel_preedit(&mut self) -> Result<(), ToolError> {
-        match &mut self.0 {
-            Backend::Editor(input) => input.cancel_preedit(),
-            Backend::Shared(shared) => {
-                let target = shared.target()?;
-                shared.apply(Input::CancelComposition { target }, |_| COMPOSING)
-            }
-        }
+        let target = self.0.target()?;
+        self.0
+            .apply(Input::CancelComposition { target }, |_| COMPOSING)
     }
 }
 
@@ -363,7 +268,7 @@ fn shared_selection(value: TextSelection) -> tilewright_ui::TextSelection {
     }
 }
 
-/// The shared field's snapshot in the editor's own terms: the same
+/// The shared field's snapshot in the editor's terms: the same
 /// committed and display text, markers, selections and composition.
 pub fn editor_snapshot(
     snapshot: &tilewright_ui::TextInputSnapshot,
@@ -397,25 +302,4 @@ pub fn editor_snapshot(
             revision: snapshot.revision.get(),
         },
     }
-}
-
-/// Turn each named `fn case(implementation: FieldImplementation)` into two
-/// tests, `case::editor` and `case::shared`, so one test body checks both
-/// fields. The app crate's tests use it too.
-#[macro_export]
-macro_rules! both_fields {
-    ($($case:ident),* $(,)?) => {
-        $(
-            mod $case {
-                #[test]
-                fn editor() {
-                    super::$case($crate::field_input::FieldImplementation::Editor);
-                }
-                #[test]
-                fn shared() {
-                    super::$case($crate::field_input::FieldImplementation::Shared);
-                }
-            }
-        )*
-    };
 }
