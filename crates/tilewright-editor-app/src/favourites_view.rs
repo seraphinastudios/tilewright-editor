@@ -266,7 +266,7 @@ impl Application {
                         .scatter_choice()
                         .map(|name| Favourite::Scatter(name.to_owned()))
                 }),
-            ToolMode::Place if self.tools.stamp_choice().is_some() => None,
+            ToolMode::Place if self.tools.stamp_chosen() => None,
             ToolMode::Place => self
                 .tools
                 .placement_choice()
@@ -275,9 +275,10 @@ impl Application {
         }
     }
 
-    /// Whether Place mode's chosen prototype is hidden by a chosen stamp.
+    /// Whether Place mode's chosen prototype is hidden by a chosen stamp
+    /// or a copy captured from the map.
     fn stamp_hides_choice(&self) -> bool {
-        self.tools.mode() == ToolMode::Place && self.tools.stamp_choice().is_some()
+        self.tools.mode() == ToolMode::Place && self.tools.stamp_chosen()
     }
 
     /// Stars or unstars the chosen value, moves it up, or removes an

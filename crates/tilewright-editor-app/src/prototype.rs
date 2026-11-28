@@ -34,7 +34,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Stamp in Place: R turns, M mirrors | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | L flattens, E smooths the last road | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | R reopen (not while stamping) | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Stamp in Place: R turns, M mirrors | C copies an area in Place, Esc drops the copy | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | L flattens, E smooths the last road | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | R reopen (not while stamping) | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -62,6 +62,8 @@ const ROAD_OFF_VIEW: &str =
 
 type Result<T> = std::result::Result<T, String>;
 
+#[path = "capture_view.rs"]
+mod capture_view;
 #[path = "favourites_view.rs"]
 mod favourites_view;
 #[path = "proposal_view.rs"]
@@ -1508,10 +1510,33 @@ impl Application {
     /// where its objects would go.
     /// Not while a portal pick step is open: the click then picks the
     /// portal's target, so no stamp may be previewed or promised.
+    /// Nor while Copy area is armed or dragged: the press then starts a
+    /// rectangle.
     fn stamping(&self) -> bool {
         self.tools.mode() == ToolMode::Place
-            && self.tools.stamp_choice().is_some()
+            && self.tools.stamp_chosen()
             && !self.tools.portal_picking()
+            && self.tools.capture_gesture().is_none()
+    }
+
+    /// What the status line and the review call the chosen stamp: its
+    /// catalog name, or "the copy" for a copy captured from the map.
+    fn stamp_name(&self) -> Option<&str> {
+        if self.tools.copy_choice().is_some() {
+            return Some("the copy");
+        }
+        self.tools.stamp_choice()
+    }
+
+    /// How many objects the chosen stamp or copy puts down.
+    fn stamp_count(&self) -> usize {
+        if let Some(copy) = self.tools.copy_choice() {
+            return copy.objects().len();
+        }
+        self.tools
+            .stamp_choice()
+            .and_then(|name| self.session.catalog().editing().stamps.get(name))
+            .map_or(0, |stamp| stamp.objects.len())
     }
 
     /// Where the chosen stamp's objects would go if the hovered cell were
@@ -1578,7 +1603,7 @@ impl Application {
         let Action::PlaceObjects { x, y, objects, .. } = &preview.action else {
             return None;
         };
-        let name = self.tools.stamp_choice()?;
+        let name = self.stamp_name()?;
         let count = objects_words(objects.len());
         Some(if preview.outside == 0 {
             format!(
@@ -2714,7 +2739,8 @@ impl Application {
             || self.tools.heights_visible()
             || self.tools.stroke().is_some()
             || self.fill_changes().is_some()
-            || self.stamp_preview().is_some())
+            || self.stamp_preview().is_some()
+            || self.capture_dragging())
             && self.prepared.cell_slots().is_none()
     }
 
@@ -3225,7 +3251,7 @@ impl Application {
             ready,
             // While a stamp is chosen a click stamps: no prototype row, nor
             // its favourite copy, is marked.
-            self.tools.stamp_choice().is_none() && self.tools.placement_choice() == Some(proto),
+            !self.tools.stamp_chosen() && self.tools.placement_choice() == Some(proto),
         ));
     }
 
@@ -4052,7 +4078,8 @@ impl Application {
             ToolMode::Place if !tools::object_palette(self.session.catalog()).is_empty() => {
                 y = self.filter_field(ui, y);
                 y = self.placing_row(ui, y);
-                self.stamp_turn_row(ui, y)
+                y = self.stamp_turn_row(ui, y);
+                self.capture_row(ui, y)
             }
             ToolMode::Terrain => self.rule_row(ui, y),
             ToolMode::Sculpt => self.sculpt_tool_row(ui, y),
@@ -4125,6 +4152,10 @@ impl Application {
     fn placing_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
         let catalog = self.session.catalog();
         let (text, thumbnail) = match (self.tools.stamp_choice(), self.tools.placement_choice()) {
+            // A copy, like a stamp, has no one thumbnail.
+            _ if self.tools.copy_choice().is_some() => {
+                (self.copy_label().unwrap_or_default(), None)
+            }
             // A stamp has no one thumbnail: its row names it and its count.
             (Some(name), _) => {
                 let count = catalog
@@ -4172,7 +4203,7 @@ impl Application {
     /// World, so they stay enabled while a change is pending. Returns the
     /// next free row.
     fn stamp_turn_row(&self, ui: &mut WorkspaceUi, y: u32) -> u32 {
-        if self.tools.stamp_choice().is_none() {
+        if !self.tools.stamp_chosen() {
             return y;
         }
         let turn = self.tools.stamp_turn();
@@ -4391,6 +4422,9 @@ impl Application {
         if let Some(status) = self.fill_status() {
             return status;
         }
+        if let Some(status) = self.capture_status() {
+            return status;
+        }
         if let Some(status) = self.stamp_status() {
             return status;
         }
@@ -4422,7 +4456,8 @@ impl Application {
             let others = self.tools.zones_visible()
                 || self.tools.stroke().is_some()
                 || self.fill_changes().is_some()
-                || self.stamp_preview().is_some();
+                || self.stamp_preview().is_some()
+                || self.capture_dragging();
             return match (self.tools.heights_visible(), others) {
                 (true, true) => HEIGHTS_AND_OVERLAY_UNAVAILABLE,
                 (true, false) => HEIGHTS_UNAVAILABLE,
@@ -4444,17 +4479,15 @@ impl Application {
                 "Changes saved. Ready to edit."
             }
             SessionPhase::Ready if self.stamping() => {
-                let name = self.tools.stamp_choice().unwrap_or_default();
-                let count = self
-                    .session
-                    .catalog()
-                    .editing()
-                    .stamps
-                    .get(name)
-                    .map_or(0, |stamp| stamp.objects.len());
+                let name = self.stamp_name().unwrap_or_default();
                 return format!(
-                    "Ready. Click a tile to stamp {name} ({}); R turns, M mirrors.",
-                    objects_words(count)
+                    "Ready. Click a tile to stamp {name} ({}); R turns, M mirrors{}.",
+                    objects_words(self.stamp_count()),
+                    if self.tools.copy_choice().is_some() {
+                        ", Esc drops it"
+                    } else {
+                        ""
+                    }
                 );
             }
             SessionPhase::Ready if self.tools.mode() == ToolMode::Place => {
@@ -4684,6 +4717,7 @@ impl Application {
             Control::StampPalette(_) | Control::StampTurn | Control::StampMirror => {
                 self.stamp_control(&control)
             }
+            Control::CopyArea | Control::DropCopy => self.capture_control(&control),
             Control::Clear => self.action(Action::ClearSelection),
             Control::Delete => self.delete_selected(),
             Control::Accept => self.action(Action::Accept),
@@ -6685,6 +6719,11 @@ fn native_input_event(
         } if !minimized && app.tools.stroke().is_some() => {
             native_stroke_motion(app, [*x, *y], mousestate.left(), logical, physical)
         }
+        Event::MouseMotion {
+            mousestate, x, y, ..
+        } if !minimized && app.capture_dragging() => {
+            native_capture_motion(app, [*x, *y], mousestate.left(), logical, physical)
+        }
         // A pointer that left the window hovers nothing; focus loss is
         // handled with the text input (`native_text_event`).
         Event::Window {
@@ -6707,6 +6746,15 @@ fn native_input_event(
             ..
         } if app.tools.stroke().is_some() => {
             native_stroke_release(app, [*x, *y], logical, physical)
+        }
+        Event::MouseButtonUp {
+            mouse_btn: MouseButton::Left,
+            x,
+            y,
+            ..
+        } if app.capture_dragging() => {
+            capture_position(app, [*x, *y], logical, physical);
+            app.finish_capture()
         }
         Event::KeyDown {
             keycode: Some(key),
@@ -6768,6 +6816,11 @@ fn native_pointer_selection(
         app.interrupt_stroke();
         return Err(STROKE_INTERRUPTED.into());
     }
+    // A press while Copy area's rectangle is dragged means its release was
+    // missed: copy what it spans, as the release would have.
+    if app.capture_dragging() {
+        return app.finish_capture();
+    }
     if !app.displayed_input_ready() {
         return Err("input waits for the current displayed frame".into());
     }
@@ -6820,6 +6873,7 @@ fn native_pointer_selection(
                 .map_err(|error| error.to_string())
         }
         Hit::Control(control) => app.control(control),
+        Hit::World(x, y) if app.capturing() => app.begin_capture(x, y),
         Hit::World(x, y) if app.tools.portal_picking() => app.pick_portal_target(x, y),
         Hit::World(x, y) => {
             app.tools.cancel();
@@ -6869,6 +6923,37 @@ fn native_stroke_motion(
         return app.finish_stroke();
     }
     stroke_position(app, position, logical, physical)
+}
+
+/// A drag sample while Copy area's rectangle is dragged. Motion without
+/// the left button means the release was missed: copy there.
+fn native_capture_motion(
+    app: &mut Application,
+    position: [f32; 2],
+    held: bool,
+    logical: (u32, u32),
+    physical: (u32, u32),
+) -> Result<()> {
+    if !held {
+        return app.finish_capture();
+    }
+    capture_position(app, position, logical, physical);
+    Ok(())
+}
+
+/// The rectangle's far corner at a pointer position; panels and pixels
+/// outside the window leave it where it was.
+fn capture_position(
+    app: &mut Application,
+    position: [f32; 2],
+    logical: (u32, u32),
+    physical: (u32, u32),
+) {
+    if let Some(Hit::World(x, y)) =
+        crate::viewport::physical_pixel(position, logical, physical).map(|(x, y)| app.ui.hit(x, y))
+    {
+        app.capture_sample(x, y);
+    }
 }
 
 fn native_stroke_release(
@@ -6955,12 +7040,25 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
         app.presented_generation = None;
         return Ok(());
     }
+    // Esc ends Copy area, armed or dragged, copying nothing.
+    if key == Keycode::Escape && app.tools.stop_capture() {
+        app.forget_hover();
+        app.presented_generation = None;
+        return Ok(());
+    }
     if key == Keycode::Escape && app.tools.clear_filter() {
         app.presented_generation = None;
         return Ok(());
     }
     match key {
         Keycode::Return | Keycode::KpEnter => app.action(Action::Accept),
+        // With nothing pending, Esc drops a held copy; a pending change is
+        // cancelled first, and the copy stays for another stamp.
+        Keycode::Escape
+            if app.session.history().pending().is_none() && app.tools.copy_choice().is_some() =>
+        {
+            app.control(Control::DropCopy)
+        }
         Keycode::Escape => app.action(Action::Cancel),
         Keycode::Z => app.action(Action::Undo),
         Keycode::Y => app.action(Action::Redo),
@@ -7024,6 +7122,8 @@ fn stamp_key(app: &mut Application, key: Keycode) -> Result<()> {
     match key {
         Keycode::R if stamp_keys(app) => app.control(Control::StampTurn),
         Keycode::M if stamp_keys(app) => app.control(Control::StampMirror),
+        // Copy area: Place mode's own key, free everywhere else.
+        Keycode::C if app.tools.mode() == ToolMode::Place => app.control(Control::CopyArea),
         _ => grade_key(app, key),
     }
 }
@@ -7036,7 +7136,7 @@ fn stamp_key(app: &mut Application, key: Keycode) -> Result<()> {
 /// buttons, which are disabled then.
 fn stamp_keys(app: &Application) -> bool {
     app.tools.mode() == ToolMode::Place
-        && app.tools.stamp_choice().is_some()
+        && app.tools.stamp_chosen()
         && app.session.status().phase != SessionPhase::Blocked
 }
 
@@ -7430,6 +7530,9 @@ fn previewed_cells(app: &Application) -> std::collections::BTreeSet<[i64; 2]> {
     if let Some(preview) = app.stamp_preview() {
         return preview.tiles.into_iter().collect();
     }
+    if app.capture_dragging() {
+        return app.capture_tiles().into_iter().collect();
+    }
     match app.tools.stroke() {
         Some(_) => stroke_changes(app)
             .unwrap_or_default()
@@ -7666,6 +7769,8 @@ fn workspace_presentation(app: &mut Application) -> Result<crate::workspace_rend
     // A stamp's hover preview is the person's own preview too; it is only
     // in Place mode, where no stroke runs.
     stroke.extend(stamp_overlay(app));
+    // So is Copy area's rectangle, also only in Place mode.
+    stroke.extend(capture_view::capture_overlay(app));
     if matches!(
         app.tools
             .stroke()
