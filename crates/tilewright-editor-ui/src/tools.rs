@@ -1390,7 +1390,7 @@ impl ToolState {
         self.stamp_turn = self.stamp_turn.turned();
         Ok(())
     }
-    /// M: mirror the chosen stamp left to right, as it is shown.
+    /// M: mirror the chosen stamp across the anchor's column, as shown.
     pub fn mirror_stamp(&mut self) -> Result<(), ToolError> {
         self.stamp_ready()?;
         self.stamp_turn = self.stamp_turn.flipped();

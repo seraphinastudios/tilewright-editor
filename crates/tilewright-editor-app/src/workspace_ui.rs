@@ -105,7 +105,7 @@ pub enum Control {
     StampPalette(String),
     /// Turn the chosen stamp a quarter turn clockwise (R).
     StampTurn,
-    /// Mirror the chosen stamp left to right (M).
+    /// Mirror the chosen stamp across the anchor's column (M).
     StampMirror,
     EditDraft,
     ApplyDraft,

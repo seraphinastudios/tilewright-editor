@@ -9,8 +9,12 @@
 //!
 //! The convention, in plane tiles about the anchor tile (offset `[0, 0]`):
 //!
-//! - **Mirror** (M) flips the layout left to right across the anchor's
-//!   column: `[dx, dy]` becomes `[-dx, dy]`.
+//! - **Mirror** (M) flips the layout across the anchor's column, the
+//!   plane's `y` axis through the anchor: `[dx, dy]` becomes `[-dx, dy]`.
+//!   It is a grid rule, the same in both projections: top-down the column
+//!   is vertical on screen, so M is a left-right mirror; in an isometric
+//!   view the column runs down-left on screen, so M flips across that
+//!   diagonal, not across the screen's vertical.
 //! - **Turn** (R) turns it a quarter turn clockwise: `[dx, dy]` becomes
 //!   `[-dy, dx]`, so `+x` goes to `+y`. Both projections draw `+y` a quarter
 //!   turn clockwise from `+x` (top-down: right, then down; isometric:
@@ -48,7 +52,8 @@ impl StampTurn {
     pub const fn degrees(self) -> u16 {
         self.quarter_turns as u16 * 90
     }
-    /// Whether the layout is mirrored left to right (before turning).
+    /// Whether the layout is mirrored across the anchor's column (before
+    /// turning).
     pub const fn mirrored(self) -> bool {
         self.mirrored
     }
@@ -60,7 +65,7 @@ impl StampTurn {
             mirrored: self.mirrored,
         }
     }
-    /// M: the shown layout mirrored left to right.
+    /// M: the shown layout mirrored across the anchor's column.
     #[must_use]
     pub const fn flipped(self) -> Self {
         Self {
@@ -138,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn r_turns_clockwise_and_m_mirrors_left_to_right_what_is_shown() {
+    fn r_turns_clockwise_and_m_mirrors_across_the_column_what_is_shown() {
         let none = StampTurn::NONE;
         // The stated convention on an asymmetric layout: east, south-east.
         assert_eq!(none.apply([2, 1]), [2, 1]);

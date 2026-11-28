@@ -1555,9 +1555,11 @@ tile, as the engine allows. A catalog holds at most 32 stamps. A catalog
 that breaks any of these rules does not load, and its message names the
 stamp and the object ("stamp camp object 2: stamp prototype is not
 granted by editing.objects"); `lint` reports it as `catalog.invalid` with
-that message, and warns (`catalog.stamp_unplaceable`) about a stamp whose
-objects span more tiles than the view in both orientations, which can
-never be put down whole ([lint findings](CLI.md#lint-findings)). The
+that message, and warns (`catalog.stamp_unplaceable`) about a stamp that
+no tile of the view can anchor with every object inside the view, in any
+turn, which can never be put down whole ([lint findings](CLI.md#lint-findings)).
+That is a stamp too wide or too tall for the view, or one whose objects lie
+too far from the anchor: one crate at `[8, 0]` never fits an 8-wide view. The
 member is the same in catalog formats 1 and 2: optional members may be
 added within a version ([ADR 0004](../decisions/0004-project-art-in-the-preview.md)).
 A catalog without it loads and behaves exactly as before, and an editor
@@ -1571,12 +1573,12 @@ choices behind the form and the keys are in
 
 In Place mode the sidebar lists the stamps after the prototypes, under
 "Stamps: R turns, M mirrors", one row per stamp in name order with its
-count ("camp: 3 objects"). The palette filter keeps the stamps whose name
+count first ("3 objects: camp"), so a long name is cut, never the count. The palette filter keeps the stamps whose name
 matches, by the prototypes' rule, and the header then counts them
 ("Stamps: 1 of 3 match"). Choosing a stamp makes a tile click put the
 whole stamp down instead of one prototype; choosing a prototype row goes
 back to single objects. The pinned row under the filter then reads
-"Stamping: camp, 3 objects", and under it two buttons show and change the
+"Stamping 3 objects: camp", and under it two buttons show and change the
 layout: "Turn: 90°  R" and "Mirror: on  M". Choosing another stamp starts
 it in its catalog layout; the chosen stamp and its layout stay chosen
 across modes, as the prototype does.
@@ -1584,8 +1586,12 @@ across modes, as the prototype does.
 **R and M** move the offsets, never an object's art, by one convention in
 plane tiles about the anchor:
 
-- **M mirrors** the layout left to right across the anchor's column:
-  `[dx, dy]` becomes `[-dx, dy]`.
+- **M mirrors** the layout across the anchor's column, the plane's `y`
+  axis through the anchor: `[dx, dy]` becomes `[-dx, dy]`. The rule is on
+  the grid, the same in both projections. Top-down the column is vertical
+  on screen, so M is a left-right mirror; in an isometric view the column
+  runs down-left on screen, so M flips across that diagonal, not across
+  the screen's vertical.
 - **R turns** it a quarter turn clockwise: `[dx, dy]` becomes `[-dy, dx]`,
   so `+x` goes to `+y`. Both projections draw `+y` a quarter turn clockwise
   from `+x` (top-down: right, then down; isometric: down-right, then
@@ -1596,13 +1602,18 @@ plane tiles about the anchor:
   mirror, so R then M reads "Turn: 270°" and "Mirror: on".
 
 R and M turn and mirror only with a stamp chosen in Place mode; otherwise
-R is Reopen and M does nothing, as before. In a blocked session (an
-uncertain publication) R stays Reopen even with a stamp chosen, since it
-is the only way out, and M does nothing. A focused text draft or palette
+R is Reopen and M does nothing, as before. To reach Reopen while
+stamping, choose a prototype row or switch mode. In a blocked session (an
+uncertain publication) nothing can be placed, so R keeps its old meaning,
+Reopen, even with a stamp chosen; Reopen re-inspects the source but does
+not unblock the session. M does nothing there, and the Turn and Mirror
+buttons are disabled. A focused text draft or palette
 filter takes R and M as text. A road is drawn only in Terrain mode, so a
 stamp control is never laid out while one is drawn; its fence refuses them
 all the same. R and M touch no World, so they work while a change is
-pending.
+pending or editing is paused. While a portal tile pick is open the next
+click picks the portal's target, so no stamp is previewed or promised
+then.
 
 Over the map the stamp's preview follows the pointer: the tile of every
 object a click would put down is marked in the brush preview's white, the
@@ -1629,7 +1640,7 @@ To try it by hand on a temporary copy of the neutral sample (the sample
 itself has no stamps): copy `crates/tilewright-editor-testkit/fixtures/prototype-neutral`
 somewhere outside the checkout, add the `stamps` member above to the copy's
 `preview.jsonc` `editing` section (its `objects` already grant crate and
-lamp), and provision the copy. In Place mode choose "camp: 3 objects",
+lamp), and provision the copy. In Place mode choose "3 objects: camp",
 hover the map and press R and M to watch the marked tiles turn and flip,
 click a tile, read the review, Accept, then Undo.
 

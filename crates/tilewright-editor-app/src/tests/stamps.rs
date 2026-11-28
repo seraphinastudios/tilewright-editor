@@ -238,9 +238,9 @@ fn a_stamp_row_r_m_and_a_click_review_exactly_a_direct_place_objects() {
     assert_eq!(
         stamp_rows(&mut app),
         [
-            ("camp: 4 objects".to_owned(), true, false),
-            ("line: 3 objects".to_owned(), true, false),
-            ("post: 1 object".to_owned(), true, false),
+            ("4 objects: camp".to_owned(), true, false),
+            ("3 objects: line".to_owned(), true, false),
+            ("1 object: post".to_owned(), true, false),
         ]
     );
     // Without a stamp R and M neither turn nor mirror anything.
@@ -254,7 +254,7 @@ fn a_stamp_row_r_m_and_a_click_review_exactly_a_direct_place_objects() {
     assert!(app.session.history().pending().is_none());
     let texts = sidebar_texts(&mut app);
     assert!(
-        texts.contains(&"Stamping: camp, 4 objects".to_owned()),
+        texts.contains(&"Stamping 4 objects: camp".to_owned()),
         "{texts:?}"
     );
     assert_eq!(
@@ -522,7 +522,7 @@ fn while_a_change_is_pending_or_editing_is_paused_the_place_rules_hold() {
         .ui
         .widgets
         .iter()
-        .find(|widget| widget.text.starts_with("Stamping: line"))
+        .find(|widget| widget.text.starts_with("Stamping 3 objects: line"))
         .unwrap();
     assert!(!placing.enabled);
     // R and M touch no World: they still turn the layout, and the pending
@@ -600,7 +600,7 @@ fn r_and_m_turn_and_mirror_only_a_chosen_stamp_in_place_mode() {
     scroll_stamps_into_view(&mut app);
     assert_eq!(
         stamp_rows(&mut app),
-        [("line: 3 objects".to_owned(), true, false)]
+        [("3 objects: line".to_owned(), true, false)]
     );
     assert!(sidebar_texts(&mut app).contains(&"Stamps: 1 of 3 match".to_owned()));
     // The chosen stamp stays chosen while the filter hides it.
@@ -716,7 +716,7 @@ fn the_stamp_rows_fit_at_1280_by_800_720_by_480_and_double_scale() {
                 .map(|(text, _)| text.as_str())
                 .collect::<Vec<_>>(),
             [
-                "Stamping: camp, 4 objects",
+                "Stamping 4 objects: camp",
                 "Turn: 90\u{b0}  R",
                 "Mirror: on  M"
             ],
@@ -749,7 +749,7 @@ fn the_stamp_rows_fit_at_1280_by_800_720_by_480_and_double_scale() {
             rows.iter()
                 .map(|(text, _)| text.as_str())
                 .collect::<Vec<_>>(),
-            ["camp: 4 objects", "line: 3 objects", "post: 1 object"],
+            ["4 objects: camp", "3 objects: line", "1 object: post"],
             "{case}"
         );
         assert!(rows.iter().all(|(_, bounds)| inside(*bounds)), "{case}");
@@ -839,7 +839,184 @@ fn in_a_blocked_session_r_stays_reopen_with_a_stamp_chosen() {
         refused.contains("catalog") || refused.contains("eopen"),
         "{refused} / {message}"
     );
-    // Nothing can be placed there, so M does nothing either.
+    // Nothing can be placed there, so M does nothing either, and the
+    // Turn and Mirror buttons are disabled and refuse.
     press(&mut app, Keycode::M).unwrap();
     assert_eq!(app.tools.stamp_turn(), StampTurn::NONE);
+    let row = turn_row(&mut app);
+    assert_eq!(row.len(), 2);
+    assert!(row.iter().all(|(_, enabled, _)| !enabled), "{row:?}");
+    for control in [Control::StampTurn, Control::StampMirror] {
+        // A press on a disabled button is a panel press.
+        press_widget(&mut app, &control).unwrap();
+        assert_eq!(
+            app.control(control).unwrap_err(),
+            crate::prototype::STAMP_BLOCKED
+        );
+    }
+    assert_eq!(app.tools.stamp_turn(), StampTurn::NONE);
+}
+
+#[test]
+fn an_open_portal_pick_step_shows_no_stamp_preview_and_the_click_picks() {
+    let (_temporary, mut app) = stamp_application();
+    app.control(Control::StampPalette("camp".into())).unwrap();
+    // The gate's portal tile pick, open in Place mode.
+    app.action(Action::Select {
+        generation: app.session.generation(),
+        key: SelectionKey::Object {
+            uid: "gate_west".into(),
+        },
+    })
+    .unwrap();
+    app.control(Control::PortalPick).unwrap();
+    assert!(app.tools.portal_picking());
+    assert_eq!(app.tools.mode(), ToolMode::Place);
+    acknowledge_ui(&mut app);
+    hover(&mut app, [3, 2]);
+    assert!(app.stamp_preview().is_none());
+    assert!(marked(&mut app).is_empty());
+    let status = app.status_label();
+    assert!(
+        !status.contains("stamp") && !status.contains("Stamp"),
+        "{status}"
+    );
+    // The click picks the portal's target: no object is inserted.
+    click(&mut app, [3, 2]).unwrap();
+    let pending = app.session.history().pending().unwrap();
+    assert!(!pending.sealed().contains("object.insert"));
+    route(&mut app, &key(Keycode::Escape)).unwrap();
+    assert!(app.session.history().pending().is_none());
+    // With the step over the stamp previews again.
+    assert!(!app.tools.portal_picking());
+    acknowledge_ui(&mut app);
+    hover(&mut app, [3, 3]);
+    assert!(app.stamp_preview().is_some());
+}
+
+#[test]
+fn a_text_draft_takes_r_and_m_as_text_with_a_stamp_chosen() {
+    let (_temporary, mut app) = stamp_application();
+    app.control(Control::StampPalette("camp".into())).unwrap();
+    app.action(Action::Select {
+        generation: app.session.generation(),
+        key: SelectionKey::Object {
+            uid: "marker_1".into(),
+        },
+    })
+    .unwrap();
+    app.control(Control::Field("label".into())).unwrap();
+    assert!(app.tools.draft_text().is_some());
+    assert_eq!(app.tools.mode(), ToolMode::Place);
+    acknowledge_ui(&mut app);
+    let mut input = crate::native_input::NativeInput::new(7);
+    for keycode in [Keycode::R, Keycode::M] {
+        input.begin_batch(false, app.tools.input_revision().map(|r| r.draft));
+        crate::prototype::native_text_event(&mut app, &input_key(7, keycode, false), &mut input)
+            .unwrap()
+            .unwrap();
+    }
+    // The key itself never reaches the world keys, even when routed there.
+    crate::prototype::native_key(&mut app, Keycode::R).unwrap();
+    crate::prototype::native_key(&mut app, Keycode::M).unwrap();
+    assert_eq!(app.tools.stamp_turn(), StampTurn::NONE);
+    assert_ne!(app.session.status().message, REOPENED);
+    // The text arrives as text.
+    let before = app.tools.draft_text().unwrap().to_owned();
+    input.begin_batch(true, app.tools.input_revision().map(|r| r.draft));
+    crate::prototype::native_text_event(
+        &mut app,
+        &Event::TextInput {
+            timestamp: 1,
+            window_id: 7,
+            text: "rm".into(),
+        },
+        &mut input,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(app.tools.draft_text().unwrap(), format!("{before}rm"));
+    assert_eq!(app.tools.stamp_turn(), StampTurn::NONE);
+    assert!(app.session.history().pending().is_none());
+}
+
+/// A proposal whose one step paints `[3, 2]`, `[4, 2]` and `[5, 2]`, open in
+/// the person's application; both worlds have the stamps.
+fn stamp_proposal() -> super::proposal::Twin {
+    use super::proposal::{AGENT, RECEIPT, Twin, accept, open, open_session, person_application};
+    let agent_root = tempfile::tempdir_in(super::proposal::scratch()).unwrap();
+    let world = agent_root.path().join("world");
+    super::copy_private(
+        &tilewright_editor_testkit::fixture_world("prototype-neutral"),
+        &world,
+    );
+    with_stamps(&world);
+    let mut session = open_session(&world, AGENT);
+    let expected = session.history().document().revision();
+    accept(
+        &mut session,
+        Action::PaintStroke {
+            plane: "main".into(),
+            layer: 0,
+            grid: "floor".into(),
+            cells: vec![[3, 2], [4, 2], [5, 2]],
+            proto: "sand".into(),
+            expected,
+        },
+    );
+    let proposal = tilewright_editor_proposal::Proposal::from_session(
+        &session,
+        crate::build_version::EDITOR_VERSION,
+        RECEIPT,
+        None,
+    )
+    .unwrap();
+    let (person, app) = person_application(with_stamps);
+    let mut twin = Twin {
+        person,
+        agent: agent_root,
+        app,
+        proposal,
+    };
+    open(&mut twin);
+    twin
+}
+
+/// The tiles the proposal highlight draws now, read back through the
+/// prepared cell picks.
+fn highlighted(app: &Application) -> BTreeSet<[i64; 2]> {
+    crate::prototype::proposal_overlay(app)
+        .iter()
+        .map(
+            |quad| match app.prepared.cell_picks.get(&quad.semantic_id) {
+                Some(SelectionKey::Cell { x, y, .. }) => [*x, *y],
+                _ => panic!("a highlight copy of no cell"),
+            },
+        )
+        .collect()
+}
+
+#[test]
+fn the_stamp_preview_wins_over_the_proposal_highlight_on_a_shared_tile() {
+    let mut twin = stamp_proposal();
+    let app = &mut twin.app;
+    let all = BTreeSet::from([[3, 2], [4, 2], [5, 2]]);
+    assert_eq!(highlighted(app), all);
+    press(app, Keycode::P).unwrap();
+    app.control(Control::StampPalette("post".into())).unwrap();
+    // One lamp on (4, 2): its tile is left to the preview.
+    acknowledge_ui(app);
+    hover(app, [4, 2]);
+    assert_eq!(marked(app), BTreeSet::from([[4, 2]]));
+    assert_eq!(highlighted(app), BTreeSet::from([[3, 2], [5, 2]]));
+    // The line covers all three: the highlight draws none of them.
+    app.control(Control::StampPalette("line".into())).unwrap();
+    acknowledge_ui(app);
+    hover(app, [4, 3]);
+    hover(app, [4, 2]);
+    assert_eq!(marked(app), all);
+    assert!(highlighted(app).is_empty());
+    // Off the map again, the highlight takes its tiles back.
+    app.forget_hover();
+    assert_eq!(highlighted(app), all);
 }

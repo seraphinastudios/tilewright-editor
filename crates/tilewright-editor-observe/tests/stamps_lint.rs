@@ -3,8 +3,8 @@
 
 //! Lint and the catalog's stamps (`editing.stamps`): a malformed section
 //! refuses the catalog, which lint reports as `catalog.invalid` with the
-//! loader's words, and a stamp that can never fit the view whole is a
-//! `catalog.stamp_unplaceable` warning. Each test edits a temporary copy of
+//! loader's words, and a stamp no tile of the view can anchor with every
+//! object inside is a `catalog.stamp_unplaceable` warning. Each test edits a temporary copy of
 //! the MIT neutral sample (view 8 x 6); the committed sample has no stamps
 //! and stays unchanged.
 use serde_json::{Value, json};
@@ -66,38 +66,52 @@ fn stamp(name: &str, offsets: &[[i64; 2]]) -> Value {
 }
 
 #[test]
-fn a_stamp_that_never_fits_the_view_whole_is_a_warning_and_one_that_fits_turned_is_not() {
+fn a_stamp_no_tile_of_the_view_can_anchor_whole_is_a_warning() {
     let (_directory, root) = sample(json!([
-        // 8 x 1 fits the 8 x 6 view as it is.
+        // 8 x 1 fits the 8 x 6 view as it is, anchored at (0, y).
         stamp("fence", &[[0, 0], [7, 0]]),
-        // 6 x 8 fits once turned (8 x 6); a mirror keeps the span.
+        // Exactly the view, from either end.
+        stamp("exact", &[[0, 0], [7, 5]]),
+        stamp("backward", &[[-7, -5], [0, 0]]),
+        // 6 x 8 fits once turned (8 x 6); a mirror keeps the condition.
         stamp("tall", &[[0, -4], [5, 3]]),
+        // Six rows south: turned, six columns west, which fits from x = 6.
+        stamp("south", &[[0, 6]]),
         // 9 x 1, turned 1 x 9: too wide and too tall.
         stamp("long", &[[-4, 0], [4, 0]]),
         // 7 x 7 either way.
         stamp("square", &[[0, 0], [6, 6], [3, 3]]),
-        // One object always fits.
-        stamp("post", &[[4000, -4000]]),
+        // One object eight tiles away: no tile of an 8 x 6 view reaches it.
+        stamp("east", &[[8, 0]]),
+        stamp("down", &[[0, 8]]),
+        stamp("far", &[[4000, -4000]]),
+        // Two objects that fit in span but not in reach.
+        stamp("reach", &[[1, 0], [8, 0]]),
     ]));
     let (code, report) = lint(&root);
     assert_eq!(code, EXIT_SUCCESS, "only errors change the exit code");
     let found = findings(&report, CODE);
-    assert_eq!(found.len(), 2, "{found:?}");
-    assert_eq!(found[0]["severity"], "warning");
+    let names: Vec<&str> = found
+        .iter()
+        .map(|finding| finding["location"]["stamp"].as_str().unwrap())
+        .collect();
+    // In name order, the catalog's.
+    assert_eq!(names, ["down", "east", "far", "long", "reach", "square"]);
+    assert!(found.iter().all(|finding| finding["severity"] == "warning"));
+    let long = found[3];
     assert_eq!(
-        found[0]["location"],
+        long["location"],
         json!({"path": "preview.jsonc", "stamp": "long"})
     );
     assert_eq!(
-        found[0]["message"],
-        "The stamp spans 9 x 1 tiles, more than the view's 8 x 6 in either orientation, so it can never be placed whole: every object must land in the view."
+        long["message"],
+        "No tile of the 8 x 6 view can anchor the stamp with every object inside the view, in any turn: its offsets run from -4 to 4 across and from 0 to 0 down, so it can never be placed whole."
     );
-    assert_eq!(found[1]["location"]["stamp"], "square");
     assert!(
-        found[1]["message"]
+        found[0]["message"]
             .as_str()
             .unwrap()
-            .starts_with("The stamp spans 7 x 7 tiles")
+            .contains("from 0 to 0 across and from 8 to 8 down")
     );
     // Nothing else is reported about the stamps: the catalog loads.
     assert!(findings(&report, "catalog.invalid").is_empty());

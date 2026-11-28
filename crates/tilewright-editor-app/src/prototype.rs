@@ -34,7 +34,7 @@ use tilewright_render_wgpu::WgpuRenderer;
 use tilewright_scene::SemanticId;
 use tilewright_source::SourceRoot;
 
-const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | L flattens, E smooths the last road | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | WASD pan | +/- zoom | Q quit";
+const HELP: &str = "Select / Move / Terrain / Place (P) / Zone (N) / Anchor (K) / Sculpt (U) | / filters the palette | click a tile places | Stamp in Place: R turns, M mirrors | Delete removes selection | drag paints | [ ] brush size | B brush shape | F brush, fill, replace or road | Road: click points, Enter review, Backspace removes a point, Esc drops it | L flattens, E smooths the last road | O shows zones and badges | H shows heights | Sculpt: F raise, lower, flatten or smooth, 1 or 8 step (raise and lower) | Zone list: name, parent, new, delete | Anchors: new, move, delete | Object portal: anchor, tile, typed, clear | Enter accept | Esc cancel | Z undo | Y redo | R reopen (not while stamping) | WASD pan | +/- zoom | Q quit";
 /// Status when an overlay is wanted but the cells' places in the World's
 /// draw order could not be computed for this view.
 const OVERLAY_UNAVAILABLE: &str = "Zone overlay and stroke preview unavailable for this view.";
@@ -76,6 +76,9 @@ use tilewright_editor_ui::review::{REVIEW_LIMIT_MESSAGE, Review};
 /// helper's `--actor human:<name>` names the person.
 const ACTOR: &str = "editor:prototype";
 const PERSON_PREFIX: &str = "human:";
+/// The refusal of the Turn and Mirror controls in a blocked session.
+const STAMP_BLOCKED: &str =
+    "Editing is blocked: nothing can be placed, so the stamp stays as it is.";
 const NOTHING_TO_PLACE: &str = "Place is unavailable: the catalog grants no prototype to place.";
 /// The refusal of Sculpt mode (U) under a catalog without
 /// `editing.heights`; its sidebar row is then not shown.
@@ -1465,8 +1468,12 @@ impl Application {
 
     /// Whether Place mode puts a stamp down: the hovered cell then shows
     /// where its objects would go.
+    /// Not while a portal pick step is open: the click then picks the
+    /// portal's target, so no stamp may be previewed or promised.
     fn stamping(&self) -> bool {
-        self.tools.mode() == ToolMode::Place && self.tools.stamp_choice().is_some()
+        self.tools.mode() == ToolMode::Place
+            && self.tools.stamp_choice().is_some()
+            && !self.tools.portal_picking()
     }
 
     /// Where the chosen stamp's objects would go if the hovered cell were
@@ -3151,7 +3158,8 @@ impl Application {
         for name in shown {
             let count = catalog.editing().stamps[name].objects.len();
             rows.push((
-                format!("{name}: {}", objects_words(count)),
+                // The count first, so a long name is cut, never the count.
+                format!("{}: {name}", objects_words(count)),
                 Some(Control::StampPalette(name.to_owned())),
                 ready,
                 self.tools.stamp_choice() == Some(name),
@@ -4053,7 +4061,7 @@ impl Application {
                     .stamps
                     .get(name)
                     .map_or(0, |stamp| stamp.objects.len());
-                (format!("Stamping: {name}, {}", objects_words(count)), None)
+                (format!("Stamping {}: {name}", objects_words(count)), None)
             }
             (None, Some(proto)) => (
                 format!("Placing: {proto}"),
@@ -4097,6 +4105,9 @@ impl Application {
             return y;
         }
         let turn = self.tools.stamp_turn();
+        // Like R and M, inert in a blocked session, where nothing can be
+        // placed.
+        let enabled = self.session.status().phase != SessionPhase::Blocked;
         let x = ui.sidebar_x();
         let half = ui.sidebar_width().saturating_sub(ROW_GAP) / 2;
         ui.widget(
@@ -4108,7 +4119,7 @@ impl Application {
             },
             format!("Turn: {}\u{b0}  R", turn.degrees()),
             Some(Control::StampTurn),
-            true,
+            enabled,
             turn.degrees() != 0,
         );
         ui.widget(
@@ -4124,7 +4135,7 @@ impl Application {
                 "Mirror: off  M"
             },
             Some(Control::StampMirror),
-            true,
+            enabled,
             turn.mirrored(),
         );
         y + TEXT_ROW_HEIGHT + ROW_GAP
@@ -4603,6 +4614,11 @@ impl Application {
                 .tools
                 .choose_stamp(self.session.catalog(), &name)
                 .map_err(|error| error.to_string()),
+            Control::StampTurn | Control::StampMirror
+                if self.session.status().phase == SessionPhase::Blocked =>
+            {
+                Err(STAMP_BLOCKED.into())
+            }
             Control::StampTurn => self.tools.turn_stamp().map_err(|error| error.to_string()),
             Control::StampMirror => self.tools.mirror_stamp().map_err(|error| error.to_string()),
             Control::Clear => self.action(Action::ClearSelection),
@@ -6916,7 +6932,7 @@ fn native_key(app: &mut Application, key: Keycode) -> Result<()> {
 }
 
 /// R and M with a stamp chosen in Place mode ([`stamp_keys`]): turn it a
-/// quarter turn clockwise, mirror it left to right. Every other key goes
+/// quarter turn clockwise, mirror it across the anchor's column. Every other key goes
 /// on to [`grade_key`].
 fn stamp_key(app: &mut Application, key: Keycode) -> Result<()> {
     match key {
@@ -6928,8 +6944,10 @@ fn stamp_key(app: &mut Application, key: Keycode) -> Result<()> {
 
 /// Whether R and M turn and mirror the chosen stamp: in Place mode with a
 /// stamp chosen. Elsewhere R is Reopen and M does nothing. In a blocked
-/// session (an uncertain publication) R stays Reopen even then, since it
-/// is the only way out, and M does nothing: nothing can be placed.
+/// session (an uncertain publication) nothing can be placed, so R keeps
+/// its old meaning there, Reopen (which re-inspects the source; it does not
+/// unblock the session), and M does nothing, like the Turn and Mirror
+/// buttons, which are disabled then.
 fn stamp_keys(app: &Application) -> bool {
     app.tools.mode() == ToolMode::Place
         && app.tools.stamp_choice().is_some()

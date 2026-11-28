@@ -33,9 +33,10 @@ them.
   a catalog mistake, and refusing it at load is how the other grant-backed
   members (`editing.palettes`, `editing.terrain`) behave. Warning instead
   would leave a row that can never work.
-- **A stamp wider than the view is a lint warning, not a refusal**
-  (`catalog.stamp_unplaceable`, when it does not fit the view in either
-  orientation a quarter turn gives it). The view is the catalog's own
+- **A stamp that cannot fit the view is a lint warning, not a refusal**
+  (`catalog.stamp_unplaceable`, when no tile of the view can anchor it with
+  every object inside, as listed or turned: too wide or tall, or reaching
+  too far from its anchor). The view is the catalog's own
   choice and may change independently of the stamps, and such a catalog is
   otherwise sound.
 - **Versioning (ADR 0004).** `editing.stamps` is an optional member in both
@@ -51,7 +52,9 @@ them.
   under a catalog that no longer has the stamp, or has another stamp of that
   name.
 - **The turn and mirror convention**, in plane tiles about the anchor: M is
-  `[dx, dy] → [-dx, dy]` (left to right across the anchor's column), R is
+  `[dx, dy] → [-dx, dy]` (across the anchor's column, the plane's `y` axis:
+  a grid rule, the same in both projections, so a left-right mirror
+  top-down and a flip across the down-left diagonal in an isometric view), R is
   `[dx, dy] → [-dy, dx]` (a quarter turn clockwise: `+x` goes to `+y`, which
   both projections draw a quarter turn clockwise from `+x`). Each key acts
   on the layout as shown; the state is a mirror flag applied first and then
@@ -61,7 +64,9 @@ them.
   nothing in the engine or the proposal format depends on it.
 - **Keys.** R and M act only with a stamp chosen in Place mode. R is Reopen
   everywhere else, and stays Reopen in a blocked session even with a stamp
-  chosen, since Reopen is the only way out there; M was free. Text drafts
+  chosen: nothing can be placed there, so R keeps its old meaning (Reopen
+  re-inspects the source; it does not unblock the session), and M and the
+  Turn and Mirror buttons are inert. M was free. Text drafts
   and the palette filter take both as text, and the road fence refuses the
   stamp controls. R and M are view state: they work while a change is
   pending, like the palette filter.
@@ -77,6 +82,8 @@ them.
 
 ## Not decided here
 
-Rectangle capture (the next pull request), stamps of terrain, a preview of
+Whether M should flip across the screen's vertical in an isometric view
+(`[dx, dy] → [dy, dx]` there) rather than across the anchor's column,
+rectangle capture (the next pull request), stamps of terrain, a preview of
 the objects' art rather than their tiles, and a stamp list in the catalog
 report or MCP.
