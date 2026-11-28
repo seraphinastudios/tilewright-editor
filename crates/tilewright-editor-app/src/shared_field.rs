@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! Drawing the opt-in shared text field (`--shared-string-field`).
+//! Drawing the shared text field (the default; `--editor-text-field` opts out).
 //!
 //! Every text draft (the inspector's string, boolean, integer, number and
 //! reference fields, the zone name drafts, the palette filter, the Move

@@ -449,7 +449,8 @@ pub struct ToolState {
     /// integer, number and reference fields, the zone name drafts, the
     /// Place palette filter, the Move coordinates, a new anchor's id and a
     /// portal's typed location): the editor's own field unless the shared
-    /// field was switched on.
+    /// field was chosen ([`Self::set_string_field`]; the application's
+    /// default).
     string_field: FieldImplementation,
     /// Sculpt mode's tool and step, kept across modes.
     sculpt: SculptTool,

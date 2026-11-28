@@ -388,6 +388,8 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let receipt: Value =
         serde_json::from_slice(&std::fs::read(desktop.join("provision.json")).unwrap()).unwrap();
     assert_eq!(receipt["actor"], PERSON);
+    // No field flag: the shared text field, recorded as the frames record it.
+    assert_eq!(receipt["string_field"], "tilewright-ui 0.1.3");
     assert_eq!(receipt["proposal"]["name"], name.as_str());
     assert_eq!(
         receipt["proposal"]["sha256"],
@@ -412,10 +414,9 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
                 .as_str()
         );
         assert!(record["recovery"]["name"].is_string(), "{record}");
-        assert_eq!(
-            evidence(&format!("proposal-step-{step}-pending.json"))["proposal"]["state"],
-            "pending"
-        );
+        let pending = evidence(&format!("proposal-step-{step}-pending.json"));
+        assert_eq!(pending["proposal"]["state"], "pending");
+        assert_eq!(pending["string_field"], "tilewright-ui 0.1.3");
         assert_eq!(
             evidence(&format!("proposal-step-{step}-applied.json"))["pending"],
             false

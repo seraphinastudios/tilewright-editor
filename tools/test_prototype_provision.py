@@ -159,38 +159,70 @@ class ProposalOptionTests(unittest.TestCase):
             printed = json.loads(result.stdout)
             self.assertEqual(printed['provision'], receipt)
 
-    def test_without_the_options_the_session_and_receipt_are_unchanged(self):
+    def test_without_the_options_the_session_is_unchanged_and_the_receipt_names_the_shared_field(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
             root = self.persistent_root(temporary)
             result = self.run_helper(root)
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, b'')
             session = root / 'session'
             self.assertEqual(sorted(path.name for path in session.iterdir()),
                              ['evidence', 'provision.json', 'recovery', 'world'])
             receipt = json.loads((session / 'provision.json').read_text())
-            self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope'])
-            self.assertEqual(sorted(receipt['roots']), ['evidence', 'recovery', 'session', 'world'])
-
-    def test_the_shared_string_field_switch_is_recorded_only_when_given(self):
-        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
-            root = self.persistent_root(temporary)
-            result = self.run_helper(root, '--shared-string-field')
-            self.assertEqual(result.returncode, 0, result.stderr)
-            receipt = json.loads((root / 'session' / 'provision.json').read_text())
-            # Named as the editor's frame records name it.
+            # The shared field is the default, named as the editor's frame
+            # records name it.
             self.assertEqual(receipt['string_field'], 'tilewright-ui 0.1.3')
             self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope',
                                                'string_field'])
+            self.assertEqual(sorted(receipt['roots']), ['evidence', 'recovery', 'session', 'world'])
 
-    def test_the_editor_is_given_the_switch_exactly_when_it_is_asked_for(self):
+    def test_the_opt_out_is_recorded_and_the_old_switch_only_adds_a_note(self):
+        cases = [
+            ((), {'string_field': 'tilewright-ui 0.1.3'}, b''),
+            (('--editor-text-field',), {'editor_text_field': True}, b''),
+            (('--shared-string-field',), {'string_field': 'tilewright-ui 0.1.3'},
+             provision.SHARED_FLAG_NOTE.encode() + b'\n'),
+        ]
+        for extra, members, stderr in cases:
+            with self.subTest(extra=extra), \
+                    tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
+                root = self.persistent_root(temporary)
+                result = self.run_helper(root, *extra)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                # The note is on stderr once; stdout keeps only the JSON line.
+                self.assertEqual(result.stderr, stderr)
+                receipt = json.loads((root / 'session' / 'provision.json').read_text())
+                self.assertEqual(json.loads(result.stdout)['provision'], receipt)
+                self.assertEqual({key: receipt[key] for key in receipt
+                                  if key in ('string_field', 'editor_text_field')}, members)
+
+    def test_both_field_flags_are_refused_before_anything_is_created(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
+            root = self.persistent_root(temporary)
+            for extra in (('--editor-text-field', '--shared-string-field'),
+                          ('--shared-string-field', '--editor-text-field')):
+                with self.subTest(extra=extra):
+                    result = self.run_helper(root, *extra)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(b'not allowed with argument', result.stderr)
+                    # Refused before the note, and before anything exists.
+                    self.assertNotIn(provision.SHARED_FLAG_NOTE.encode(), result.stderr)
+                    self.assertEqual(result.stdout, b'')
+                    self.assertFalse((root / 'session').exists())
+
+    def test_the_editor_is_given_the_opt_out_exactly_when_it_is_asked_for(self):
         children = {'world': 3, 'recovery': 4, 'evidence': 5}
-        for given in (False, True):
-            args = argparse.Namespace(font_pack=Path('/fonts'), demo_script=False, reference=False,
-                                      shared_string_field=given)
-            command = provision.editor_command(Path('/editor'), children, args, None, None)
-            self.assertEqual(command[:2], ['/editor', 'prototype'])
-            self.assertEqual('--shared-string-field' in command, given)
-            self.assertEqual(command.count('--shared-string-field'), int(given))
+        for opt_out in (False, True):
+            for old in (False, True):
+                if opt_out and old:
+                    continue
+                args = argparse.Namespace(font_pack=Path('/fonts'), demo_script=False, reference=False,
+                                          editor_text_field=opt_out, shared_string_field=old)
+                command = provision.editor_command(Path('/editor'), children, args, None, None)
+                self.assertEqual(command[:2], ['/editor', 'prototype'])
+                self.assertEqual(command.count('--editor-text-field'), int(opt_out))
+                # The old switch is the default now; the editor never needs it.
+                self.assertNotIn('--shared-string-field', command)
 
     def test_the_receipt_and_the_frame_records_name_the_pinned_shared_field(self):
         root = Path(__file__).resolve().parents[1]

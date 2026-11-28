@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! The opt-in shared field on the coordinates, a new anchor's id and a
+//! The shared field (the default) on the coordinates, a new anchor's id and a
 //! portal's typed location: differential runs of real SDL events against
 //! the editor's own field, the frames each draws, the frame budget, the
 //! road fence, the pause and the portal pick step.

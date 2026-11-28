@@ -91,7 +91,7 @@ ports nothing further.
 
 ## Shared UI field
 
-The opt-in shared text field uses `tilewright-ui` and
+The shared text field (the default for every text draft) uses `tilewright-ui` and
 `tilewright-ui-render` **0.1.3** from crates.io (MIT, Seraphina Studios),
 archive SHA-256
 `cc5e6ed975a8d051256781e38ec46753ce52a4ecff3278554a2adbf2b0d8f03e` and

@@ -394,8 +394,13 @@ def copy_tree(source, destination):
     return {'files': files, 'bytes': total}
 
 
-# What the receipt and the editor's frame records call the shared field.
+# What the receipt and the editor's frame records call the shared field,
+# which every text draft uses unless --editor-text-field opts out.
 SHARED_STRING_FIELD = 'tilewright-ui 0.1.3'
+# The note --shared-string-field prints on stderr: stdout carries the
+# helper's JSON lines, and this is about the command line, not the session.
+SHARED_FLAG_NOTE = ('--shared-string-field: the shared text field is now the default, '
+                    'so this flag does nothing extra (--editor-text-field opts out)')
 
 
 def editor_command(executable, children, args, proposal_name, actor, palettes=False):
@@ -413,8 +418,8 @@ def editor_command(executable, children, args, proposal_name, actor, palettes=Fa
         command += ['--proposal-fd', str(children['proposal']), '--proposal-name', proposal_name]
     if actor is not None:
         command += ['--actor', actor]
-    if args.shared_string_field:
-        command.append('--shared-string-field')
+    if args.editor_text_field:
+        command.append('--editor-text-field')
     if palettes:
         command += ['--palettes-fd', str(children['palettes'])]
     return command
@@ -431,13 +436,20 @@ def main():
     parser.add_argument('--proposal', type=Path,
                         help='a proposal file (proposal-<digest>.json) to open; copied into the session')
     parser.add_argument('--actor', help='human:<name>, the actor of the changes this session accepts')
-    parser.add_argument('--shared-string-field', action='store_true',
-                        help="opt-in: every text draft (the inspector's string, boolean, integer, number and "
-                             "reference fields, zone names, the palette filter, coordinates, anchor ids and portal "
-                             "locations) uses the shared tilewright-ui field")
+    # Every text draft (the inspector's string, boolean, integer, number and
+    # reference fields, zone names, the palette filter, coordinates, anchor
+    # ids and portal locations) uses the shared tilewright-ui field.
+    field = parser.add_mutually_exclusive_group()
+    field.add_argument('--editor-text-field', action='store_true',
+                       help="opt-out: every text draft uses the editor's own text field instead of the shared "
+                            "tilewright-ui field (the default)")
+    field.add_argument('--shared-string-field', action='store_true',
+                       help='still accepted: the shared field is now the default, so it does nothing extra')
     parser.add_argument('--palettes', type=Path,
                         help="a person's favourites file; copied into the session and copied back when the editor ends")
     args = parser.parse_args()
+    if args.shared_string_field:
+        print(SHARED_FLAG_NOTE, file=sys.stderr, flush=True)
     # Checked, and the proposal read, before anything is created.
     actor = None if args.actor is None else person_actor(args.actor)
     proposal = None
@@ -511,7 +523,10 @@ def main():
             receipt['palettes'] = {'given': True, 'bytes': len(palettes['data'])}
         if actor is not None:
             receipt['actor'] = actor
-        if args.shared_string_field:
+        # The shared field unless the opt-out was given, which is recorded.
+        if args.editor_text_field:
+            receipt['editor_text_field'] = True
+        else:
             receipt['string_field'] = SHARED_STRING_FIELD
         receipt_fd = os.open('provision.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=task_fd)

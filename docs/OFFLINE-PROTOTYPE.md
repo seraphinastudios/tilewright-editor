@@ -279,14 +279,23 @@ invalidate earlier masks.
 
 ### Shared text field
 
-`--shared-string-field` (given to `tools/provision-prototype.py`, which
-records `"string_field": "tilewright-ui 0.1.3"` in the receipt and passes the
-flag to the editor) switches every text draft to the shared text field of
-`tilewright-ui` 0.1.3, drawn by `tilewright-ui-render` with the editor's own
-text system and font pack. It is off by default; without it nothing changes,
-and the frame records and images of a session are byte-identical. With it,
-each frame record carries the same `"string_field": "tilewright-ui 0.1.3"`
-member and the editor prints it at start.
+Every text draft uses the shared text field of `tilewright-ui` 0.1.3, drawn
+by `tilewright-ui-render` with the editor's own text system and font pack.
+`tools/provision-prototype.py` records `"string_field": "tilewright-ui 0.1.3"`
+in the receipt, each frame record carries the same member, and the editor
+prints `string field: tilewright-ui 0.1.3 (default)` at start.
+
+`--editor-text-field` (given to the helper, which records
+`"editor_text_field": true` in the receipt instead and passes the flag to the
+editor) opts out for a release or two: every draft uses the editor's own field
+as before the shared field was the default, the frame records carry no
+`string_field` member and the editor prints no such line, so a session's frame
+records and images are byte-identical to a session of an earlier release. The
+editor's own field and this opt-out are to be removed in a later release.
+`--shared-string-field`, the opt-in from before, is still accepted and does
+nothing extra: the helper says so once on stderr (its stdout carries its JSON
+lines) and does not pass it on. Given with `--editor-text-field` it is refused,
+by the helper before anything is created and by the editor at start.
 
 The drafts that change hands are the inspector's field drafts of every type
 (string, boolean, integer, number and reference); a zone's display
@@ -362,7 +371,7 @@ scene limits, quads and raster samples both. The field is compiled first
 and the editor fits its own frame to leave room for the field's quads and
 its raster samples (`tilewright-ui-render`'s `quad_count` and
 `raster_sample_count`), so near the budget the proposal highlight and the
-preview give way, as they do without the switch. The composed frame is then
+preview give way, as they do with the editor's own field. The composed frame is then
 checked against the editor's whole limits as a backstop. If the frame cannot
 be drawn (no room even for the editor's share, or a structural refusal from
 the shared renderer), editing pauses with the draft kept. Esc discards the
@@ -370,16 +379,17 @@ draft (or clears and releases the filter); a second Esc, a zoom or a pan
 then ends the pause (if the cause is the frame budget, zooming in avoids
 it next time).
 
-What only a person can check, in a real window with the switch on. Start the
-session with `--shared-string-field`; the terminal prints
-`string field: tilewright-ui 0.1.3 (opt-in)`. Select a marker and click its
+What only a person can check, in a real window. Start the session without a
+field flag; the terminal prints `string field: tilewright-ui 0.1.3 (default)`.
+Where a step compares with the editor's own field, start a second session with
+`--editor-text-field`. Select a marker and click its
 `label` row; then repeat 1, 2, 6, 9 and 12 in a zone draft (N, choose
 meadow, "Edit display name"; and "New zone under meadow"), 1, 2, 3, 6
 and 11 in the palette filter (P, then `/`), with step 14, 2, 6, 9 and 11
 in the coordinates, a new anchor's id and a typed location, with step 15,
 and 2, 6, 9, 11 and 12 in the inspector's typed fields, with step 16.
 
-1. **Looks.** Open the same field with and without the switch: the row has
+1. **Looks.** Open the same field with and without `--editor-text-field`: the row has
    the same height and blue fill, the hint and the Review and Discard
    buttons below it do not move, and the text starts at the same place in
    the same size and colour. The caret is the same thin blue line; where it
@@ -474,8 +484,8 @@ and 2, 6, 9, 11 and 12 in the inspector's typed fields, with step 16.
     {"uid": "marker_1", "field": "kind"},
     ```
 
-    Provision the copy with `tools/provision-prototype.py --world <copy>
-    --shared-string-field` as above and select marker_1. The inspector shows
+    Provision the copy with `tools/provision-prototype.py --world <copy>`
+    as above and select marker_1. The inspector shows
     "flag = <absent>", "count = <absent>", "weight = <absent>" and "kind =
     <absent>", each with "Optional: enter a value to add" below, "Choices:
     true, false" under flag and "Choices: bush, crate, gate, grass,..."
@@ -1535,8 +1545,7 @@ again whatever the window offered, and World's validation stands behind it.
   selected tile and the view's spatial layer: an absent `test` of
   `["anchors", {"id": new}]` and an `insert` at the end of the `anchors`
   array, or `document.create` of `anchors.jsonc` when the plane has none
-  (Undo deletes that document again). Two anchors may share a tile. With
-  `--shared-string-field` the shared text field edits the id, by the same
+  (Undo deletes that document again). Two anchors may share a tile. The shared text field edits the id, by the same
   rules (see [Shared text field](#shared-text-field)).
 - **Move.** Choose an anchor that is on a tile of the view, select its new
   tile and press "Move here: (x, y)": one `set` of its `at`, expecting the old
@@ -1598,8 +1607,7 @@ byte-exact Undo and Redo:
   own plane, or `plane layer x y`; spaces or commas separate the values. The
   plane must exist, the layer is a 32-bit integer and x and y are integers
   within plus or minus 2^53 - 1, as World accepts. An error (and a target
-  where the portal already leads) keeps the draft open with its text. With
-  `--shared-string-field` the shared text field edits the draft, by the same
+  where the portal already leads) keeps the draft open with its text. The shared text field edits the draft, by the same
   rules (see [Shared text field](#shared-text-field)).
 - **Clear portal** prepares its removal; disabled when there is none.
 
@@ -1701,8 +1709,8 @@ palette row is marked only while shown. When nothing matches, one neutral
 "No prototype matches the filter." row stands in for the list. The filter
 stays editable while a change is pending, when the rows are disabled as
 before. Re-entering Place keeps the filter; switching to another tool clears
-it, so Place opens with the whole palette. With `--shared-string-field` the
-shared text field edits the filter, by the same rules (see [Shared text
+it, so Place opens with the whole palette. The shared
+text field edits the filter, by the same rules (see [Shared text
 field](#shared-text-field)).
 
 Each palette row is 40 logical pixels tall, and starts with a thumbnail of
