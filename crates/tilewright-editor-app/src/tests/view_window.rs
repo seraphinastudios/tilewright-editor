@@ -4,6 +4,8 @@
 //! The moving view window: a pan that takes the camera's centre past the
 //! view's edge moves the view with it, and what is drawn, picked and
 //! edited follows; a pending change keeps the view where it is.
+// Camera centres move in whole tiles, so they compare exactly.
+#![allow(clippy::float_cmp)]
 use super::zones::{key, route, zone_application};
 use crate::prototype::Application;
 use sdl3::keyboard::Keycode;
