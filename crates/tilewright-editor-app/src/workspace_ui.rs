@@ -100,6 +100,13 @@ pub enum Control {
     PlacePalette(String),
     /// The Place palette filter field, unfocused: focus it.
     PaletteFilter,
+    /// A row of Place mode's stamps: put this catalog stamp
+    /// (`editing.stamps`) down instead of one prototype.
+    StampPalette(String),
+    /// Turn the chosen stamp a quarter turn clockwise (R).
+    StampTurn,
+    /// Mirror the chosen stamp left to right (M).
+    StampMirror,
     EditDraft,
     ApplyDraft,
     CancelDraft,

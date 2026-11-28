@@ -133,6 +133,40 @@ fn undrawable_heights(observed: &Observed) -> Option<Finding> {
     })
 }
 
+/// The findings for catalog stamps (`editing.stamps`) that can never be
+/// put down whole: the whole stamp is refused when any object would land
+/// outside the view, so a stamp whose objects span more columns or rows
+/// than the view, in either orientation a quarter turn gives it, never
+/// fits. A mirror keeps the span. Their text is all this editor's: the
+/// stamp's name, a catalog identifier, is in the location.
+fn unplaceable_stamps(
+    catalog: &tilewright_editor_preview::PreviewCatalog,
+) -> impl Iterator<Item = Finding> + '_ {
+    let (_, _, [_, _, width, height]) = catalog.view();
+    catalog
+        .editing()
+        .stamps
+        .iter()
+        .filter_map(move |(name, stamp)| {
+            let span = |axis: usize| {
+                let values = stamp.objects.iter().map(|object| object.offset[axis]);
+                let (low, high) = (values.clone().min()?, values.max()?);
+                Some(high - low + 1)
+            };
+            let (across, down) = (span(0)?, span(1)?);
+            let fits = (across <= width && down <= height) || (down <= width && across <= height);
+            (!fits).then(|| Finding {
+                code: "catalog.stamp_unplaceable",
+                severity: Severity::Warning,
+                location: Map::new().text("path", "preview.jsonc").text("stamp", name),
+                message: format!(
+                    "The stamp spans {across} x {down} tiles, more than the view's {width} x {height} in either orientation, so it can never be placed whole: every object must land in the view."
+                ),
+                detail: None,
+            })
+        })
+}
+
 /// The message, at most 256 characters with any numbers the catalog can
 /// hold, so that it is never clipped.
 fn undrawable_message(grant: HeightGrant, difference: u32, limit: &BendLimit) -> String {
@@ -219,6 +253,7 @@ pub fn findings(observed: &Observed) -> Vec<Finding> {
             let (catalog, resources) = &**loaded;
             found.extend(project_art(catalog.project_art_resources()));
             found.extend(undrawable_heights(observed));
+            found.extend(unplaceable_stamps(catalog));
             let (plane, layer, _) = catalog.view();
             let view = || Map::new().text("plane", plane).with("layer", layer);
             // The view the desktop editor opens, prepared as it prepares it.

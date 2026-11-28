@@ -28,6 +28,9 @@ pub struct EditingCapabilities {
     /// Optional `editing.heights`: the range of tile heights the editor may
     /// write in the active view. Absent, heights cannot be edited.
     pub heights: Option<HeightGrant>,
+    /// Optional `editing.stamps`: named groups of objects that Place mode
+    /// puts down as one edit, keyed by name. Absent, there are none.
+    pub stamps: BTreeMap<String, Stamp>,
 }
 
 /// The editor's hard bound on a granted height: `editing.heights` must lie
@@ -81,6 +84,38 @@ impl Palette {
     pub fn total_weight(&self) -> u32 {
         self.entries.values().sum()
     }
+}
+
+/// Most stamps one catalog may name.
+pub const MAXIMUM_STAMPS: usize = 32;
+/// Most bytes of a stamp name.
+pub const MAXIMUM_STAMP_NAME_BYTES: usize = 64;
+/// Most objects one stamp holds: the engine's limit for one
+/// `place_objects` edit (ADR 0009).
+pub const MAXIMUM_STAMP_MEMBERS: usize = 64;
+/// The largest offset of a stamp object from the stamp's anchor tile, on
+/// either axis and either way: the engine's bound for `place_objects`
+/// (ADR 0009). A quarter turn or a mirror keeps an offset inside it.
+pub const MAXIMUM_STAMP_MEMBER_OFFSET: i64 = 4_095;
+
+/// One `editing.stamps` entry: objects placed together, each a prototype
+/// `editing.objects` grants at an offset from the tile the stamp is put
+/// down on.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Stamp {
+    /// The objects in catalog order, which is the order they are placed
+    /// and stacked in. From 1 to [`MAXIMUM_STAMP_MEMBERS`]; two may share
+    /// a tile, and the same prototype and offset may repeat.
+    pub objects: Vec<StampMember>,
+}
+
+/// One object of a [`Stamp`]: a prototype and its offset `[dx, dy]` in
+/// plane tiles from the anchor tile, as the catalog lists it (before any
+/// turn or mirror the desktop applies).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StampMember {
+    pub proto: String,
+    pub offset: [i64; 2],
 }
 
 /// `editing.anchors`: a capability flag, never a list of anchor ids, so the
@@ -596,7 +631,9 @@ fn editing_specs(
     closed_optional(
         e,
         &["movable_uids", "terrain", "fields"],
-        &["objects", "zones", "anchors", "palettes", "heights"],
+        &[
+            "objects", "zones", "anchors", "palettes", "heights", "stamps",
+        ],
     )?;
     let mut editing = EditingCapabilities::default();
     for uid in array(member(e, "movable_uids")?)? {
@@ -665,6 +702,9 @@ fn editing_specs(
     }
     if let Some(heights) = e.get("heights") {
         editing.heights = Some(height_grant(heights)?);
+    }
+    if let Some(stamps) = e.get("stamps") {
+        editing.stamps = stamp_specs(stamps, &editing.objects)?;
     }
     Ok(editing)
 }
@@ -749,6 +789,71 @@ fn palette_specs(
         palettes.insert(name, Palette { grid, entries });
     }
     Ok(palettes)
+}
+
+/// `editing.stamps`: `[{name, objects: [{proto, offset: [dx, dy]}]}]`. Every
+/// prototype must be granted by `editing.objects`, so a catalog stamp can
+/// always be placed wherever it fits in the view.
+fn stamp_specs(
+    value: &Value,
+    objects: &BTreeMap<String, ObjectGrant>,
+) -> Result<BTreeMap<String, Stamp>, PreviewError> {
+    let list = array(value)?;
+    if list.len() > MAXIMUM_STAMPS {
+        return Err(failure("too many stamps"));
+    }
+    let mut stamps = BTreeMap::new();
+    for (index, s) in list.iter().enumerate() {
+        // As for palettes: named by its place in the list until its name is
+        // known to be a short identifier, then by its name.
+        let place = |error: PreviewError| failure(format!("stamp {}: {}", index + 1, error.0));
+        closed(s, &["name", "objects"]).map_err(place)?;
+        let name = identifier(member(s, "name").map_err(place)?).map_err(place)?;
+        if name.len() > MAXIMUM_STAMP_NAME_BYTES {
+            return Err(place(failure("stamp name too long")));
+        }
+        let named = |error: PreviewError| failure(format!("stamp {name}: {}", error.0));
+        let items = array(member(s, "objects").map_err(named)?).map_err(named)?;
+        if items.is_empty() || items.len() > MAXIMUM_STAMP_MEMBERS {
+            return Err(named(failure("a stamp holds 1 to 64 objects")));
+        }
+        let mut members = Vec::with_capacity(items.len());
+        for (number, item) in items.iter().enumerate() {
+            let object = |error: PreviewError| {
+                failure(format!("stamp {name} object {}: {}", number + 1, error.0))
+            };
+            closed(item, &["proto", "offset"]).map_err(object)?;
+            let proto = identifier(member(item, "proto").map_err(object)?).map_err(object)?;
+            if !objects.contains_key(&proto) {
+                return Err(object(failure(
+                    "stamp prototype is not granted by editing.objects",
+                )));
+            }
+            let offset = stamp_offset(member(item, "offset").map_err(object)?).map_err(object)?;
+            members.push(StampMember { proto, offset });
+        }
+        if stamps.contains_key(&name) {
+            return Err(named(failure("duplicate stamp name")));
+        }
+        stamps.insert(name, Stamp { objects: members });
+    }
+    Ok(stamps)
+}
+
+/// A stamp object's `offset`: exactly two integers, each within
+/// [`MAXIMUM_STAMP_MEMBER_OFFSET`] either way.
+fn stamp_offset(value: &Value) -> Result<[i64; 2], PreviewError> {
+    let refused = || failure("stamp offset must be two integers from -4095 to 4095");
+    let [dx, dy] = value.as_array().ok_or_else(refused)? else {
+        return Err(refused());
+    };
+    let bounded = |value: &Value| {
+        value
+            .as_i64()
+            .filter(|delta| delta.unsigned_abs() <= MAXIMUM_STAMP_MEMBER_OFFSET.unsigned_abs())
+            .ok_or_else(refused)
+    };
+    Ok([bounded(dx)?, bounded(dy)?])
 }
 
 /// `editing.objects`: `[{proto, layer, fields?, defaults?, portal?}]`, one
