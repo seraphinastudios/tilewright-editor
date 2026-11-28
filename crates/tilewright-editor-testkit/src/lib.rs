@@ -85,6 +85,86 @@ pub fn generated_resource(
     (bytes, catalog)
 }
 
+/// The prototypes a generated large world places, in turn: the neutral
+/// sample's standing objects.
+const LARGE_WORLD_OBJECTS: [&str; 4] = ["stone", "bush", "crate", "lamp"];
+
+/// The files that grow a copy of `fixture_world("prototype-neutral")` into a
+/// large world: `side` × `side` chunks of plane `main`, layer 0, chunk
+/// coordinates `0..side` on both axes, each 32 × 32 floor tiles of the
+/// sample's `grass` and `sand` in a fixed diagonal pattern and holding
+/// `objects_per_chunk` (at most 32) of the sample's standing objects on
+/// distinct tiles. The sample's own chunk `[0, 0]` is kept, so it is not
+/// among the files; its other chunks stay as they are. Deterministic: the
+/// same arguments always give the same paths and bytes. Pure: the caller
+/// copies the sample and writes each `(path, text)` under it, and sets the
+/// view with [`large_world_catalog`]. The art is the sample's MIT art.
+///
+/// # Panics
+/// When `objects_per_chunk` is over 32.
+#[must_use]
+pub fn large_world_chunks(side: u32, objects_per_chunk: u32) -> Vec<(String, String)> {
+    assert!(objects_per_chunk <= 32, "at most one object per row");
+    let mut files = Vec::new();
+    for cy in 0..side {
+        for cx in 0..side {
+            if (cx, cy) == (0, 0) {
+                continue;
+            }
+            let rows: Vec<String> = (0..32)
+                .map(|y| {
+                    (0..32)
+                        .map(|x| {
+                            if (x / 4 + y / 4 + cx + cy) % 5 == 0 {
+                                's'
+                            } else {
+                                'g'
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+            // 7 and 13 are odd, so the tiles of one chunk's objects differ.
+            let objects: Vec<serde_json::Value> = (0..objects_per_chunk)
+                .map(|n| {
+                    serde_json::json!({
+                        "uid": format!("o_{cx}_{cy}_{n}"),
+                        "at": [(n * 7 + cx) % 32, (n * 13 + cy) % 32],
+                        "proto": LARGE_WORLD_OBJECTS[n as usize % LARGE_WORLD_OBJECTS.len()],
+                        "layer": "item",
+                    })
+                })
+                .collect();
+            let chunk = serde_json::json!({
+                "format": "tilewright.chunk/1",
+                "plane": "main",
+                "layer": 0,
+                "chunk": [cx, cy],
+                "terrain": {"floor": {"palette": {"g": "grass", "s": "sand"}, "rows": rows}},
+                "objects": objects,
+            });
+            files.push((
+                format!("planes/main/layers/0/{cx}_{cy}.jsonc"),
+                serde_json::to_string(&chunk).unwrap(),
+            ));
+        }
+    }
+    files
+}
+
+/// The sample's editor catalog text `catalog` with its view's bounds set to
+/// `bounds` (`[x, y, width, height]`), for a world grown by
+/// [`large_world_chunks`]. Pure.
+///
+/// # Panics
+/// When `catalog` is not JSON.
+#[must_use]
+pub fn large_world_catalog(catalog: &str, bounds: [i64; 4]) -> String {
+    edited(catalog, |catalog| {
+        catalog["view"]["bounds"] = bounds.into();
+    })
+}
+
 fn edited(catalog: &str, change: impl FnOnce(&mut serde_json::Value)) -> String {
     let mut catalog: serde_json::Value = serde_json::from_str(catalog).unwrap();
     change(&mut catalog);
