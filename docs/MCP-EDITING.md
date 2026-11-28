@@ -205,8 +205,12 @@ to agree (more than 300 cases). To make them agree, the server rewrites a
 number with no fraction (`3.0`, `1e3`), which JSON Schema's `integer`
 admits, to the integer it is, in `x`, `y`, `layer`, `seed`, `amount`, `kernel`, a flatten's `target`, the cells, a
 stamp object's `offset` and a location's `layer` and `at`, before decoding; a field `value` is never
-rewritten. What JSON Schema cannot say, the server still refuses, and a
-test holds each:
+rewritten to an integer: `1.0` stays a number. A `set_field` value's member
+order, number spelling within its kind and string escapes are not kept:
+the new value is written as `serde_json` encodes it, object keys sorted,
+so `{"b": 1, "a": 2.50}` is written `{"a":2.5,"b":1}` and `"é\/"` as
+`"é/"` ([ENGINE.md, Field values](ENGINE.md#field-values)). What JSON
+Schema cannot say, the server still refuses, and a test holds each:
 
 - the order of a stroke's cells (increasing, as the engine requires);
 - a string's size in UTF-8 bytes: the bound is 4,096 bytes, and
@@ -214,11 +218,6 @@ test holds each:
   ASCII is refused with `proposal.budget`;
 - a field value's budgets: 8 levels deep, 4,096 values, 256 members in an
   object, 64 KiB encoded, integers within the World range.
-
-A `set_field` value's member order and number spelling within its kind
-are not kept: the new value is written as serde_json encodes it, object
-keys sorted, so `{"b": 1, "a": 2.50}` is written `{"a":2.5,"b":1}`
-([ENGINE.md, Field values](ENGINE.md#field-values)).
 
 A NUL, an integer past 2^53 − 1 or more than 4,096 items anywhere in the
 message is refused by the parser before any tool runs (-32700), as in the

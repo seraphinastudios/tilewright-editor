@@ -179,7 +179,8 @@ pub fn action_schema() -> String {
 /// integers in every action are rewritten: `x`, `y`, `layer`, `seed`,
 /// `amount`, `kernel`, a flatten's `target`, the cells of `cells`, a stamp
 /// object's `offset`, and a portal target's `layer` and `at`; a field `value`
-/// is never touched, so it is recorded as written.
+/// is never touched, so it keeps its kind; the decoder then gives it
+/// `serde_json`'s form (docs/ENGINE.md, Field values).
 pub fn normalized(action: &Value) -> Value {
     let mut action = action.clone();
     if let Value::Object { members, .. } = &mut action {
