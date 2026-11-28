@@ -50,7 +50,7 @@ The editor opens world source trees with tilewright-world's `tilewright-source`
 and carries out edits as its `tilewright-edit` transactions; it builds scenes
 with tilewright-renderer 0.7.2, including its shared UI/text compiler.
 An opt-in switch edits the inspector's string field, the zone name drafts and
-the Place palette filter with tilewright-ui 0.1.2's shared text field ([Offline editing prototype](docs/OFFLINE-PROTOTYPE.md#shared-string-field)).
+the Place palette filter with tilewright-ui 0.1.3's shared text field ([Offline editing prototype](docs/OFFLINE-PROTOTYPE.md#shared-string-field)).
 The production manifests target exact crates.io
 versions, recorded with their repositories in `policy/released-dependencies.json`.
 The registry lockfile records their actual archive checksums; producer path/Git

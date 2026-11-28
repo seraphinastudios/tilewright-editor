@@ -624,6 +624,40 @@ fn every_arrow_press_moves_the_shared_caret_where_two_stops_are_a_float_apart() 
     }
 }
 
+/// A marker's guard beside right-to-left text. In
+/// `RLM กำ b U+0600 U+2028 U+0300 가` End then Left cycled 12, 10, 9, 12 for
+/// ever in the shared field before tilewright-ui-render 0.1.3. Both fields
+/// now walk the stops of the editor's own caret test
+/// (`a_guard_beside_right_to_left_text_does_not_cycle`), each press moving
+/// the drawn caret the pressed way, until the caret stays at the end.
+#[test]
+fn the_shared_field_does_not_cycle_beside_a_guard_in_right_to_left_text() {
+    let stored = "\u{200f}\u{e01}\u{e33}b\u{600}\u{2028}\u{300}\u{ac00}";
+    for (from, arrow, walk) in [
+        (Keycode::End, Keycode::Left, &[12, 10, 9, 20, 17][..]),
+        (Keycode::Home, Keycode::Right, &[17, 15, 3, 9, 10, 0]),
+    ] {
+        for implementation in FieldImplementation::ALL {
+            let (_temporary, mut app) = labelled(implementation, stored, (960, 640));
+            app.control(Control::Field("label".into())).unwrap();
+            // One press more than the walk: it stays where the walk ends.
+            let stops = visual_presses(&mut app, from, arrow, walk.len());
+            let context = format!("{implementation:?} {arrow:?}: {stops:?}");
+            let bytes: Vec<_> = stops.iter().map(|stop| stop.0).collect();
+            assert_eq!(bytes[..walk.len()], walk[..], "{context}");
+            assert_eq!(stops[walk.len()], stops[walk.len() - 1], "{context}");
+            let pressed_way = |pair: &[(usize, f32)]| {
+                if arrow == Keycode::Left {
+                    pair[1].1 < pair[0].1
+                } else {
+                    pair[1].1 > pair[0].1
+                }
+            };
+            assert!(stops[..walk.len()].windows(2).all(pressed_way), "{context}");
+        }
+    }
+}
+
 /// The proposal twin with the shared field open on a marker's label, its
 /// highlight on screen.
 fn highlighted() -> super::proposal::Twin {
