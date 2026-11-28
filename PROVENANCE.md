@@ -129,9 +129,11 @@ repository; the two adaptations are recorded below. Their text editing was itsel
   [v0.4.0](https://github.com/seraphinastudios/tilewright-ui/releases/tag/v0.4.0),
   source revision `2cb928ec3581777c2a64e633aa2b21764b53c999`
   (seraphinastudios/tilewright-ui pull request #18, merged). This port was
-  made from that pull request's head before the release; the released
-  crate's `src/lib.rs` is byte-identical to it, so the port matches the
-  released source. Adapted: `src/lib.rs` `toward`,
+  made from that pull request's head
+  `f53e9679acf5caa4258d6b231df455246ebbe752` (reachable as
+  `refs/pull/18/head`) before the release; its tree equals `2cb928e`, and
+  the released crate's `src/lib.rs` is byte-identical to it, so the port
+  matches the released source. Adapted: `src/lib.rs` `toward`,
   `lands_behind`, and the guard-crossing comparison in `step_visual` with
   the position the step left, into
   `crates/tilewright-editor-app/src/workspace_render.rs` `lands_behind` and
