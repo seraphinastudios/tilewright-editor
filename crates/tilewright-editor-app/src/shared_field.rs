@@ -3,8 +3,10 @@
 
 //! Drawing the opt-in shared string field (`--shared-string-field`).
 //!
-//! The inspector's string field, the zone name drafts and the palette
-//! filter are edited by `tilewright-ui`'s field (see
+//! The inspector's string fields and every other text draft but the
+//! inspector's typed fields (the zone name drafts, the palette filter, the
+//! Move coordinates, a new anchor's id and a portal's typed location) are
+//! edited by `tilewright-ui`'s field (see
 //! `tilewright_editor_ui::field_input`); here its state is laid out in the
 //! sidebar row (or, for the filter, the row at the top of the sidebar),
 //! compiled by `tilewright-ui-render`'s `UiCompiler` with the editor's own

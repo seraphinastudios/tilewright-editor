@@ -2221,6 +2221,8 @@ mod height_steps;
 
 #[path = "sculpt_mode.rs"]
 mod sculpt_mode;
+#[path = "shared_drafts.rs"]
+mod shared_drafts;
 #[path = "shared_field.rs"]
 mod shared_string_field;
 

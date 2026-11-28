@@ -438,10 +438,12 @@ pub struct ToolState {
     anchor: Option<String>,
     /// The open portal step of the selected object, if any.
     portal: Option<OpenPortalStep>,
-    /// What edits the inspector's string fields, the zone name drafts (a
-    /// zone's display name and a new zone's id and name) and the Place
-    /// palette filter: the editor's own field unless the shared field was
-    /// switched on.
+    /// What edits the inspector's string fields and every other text
+    /// draft (the zone name drafts, the Place palette filter, the Move
+    /// coordinates, a new anchor's id and a portal's typed location): the
+    /// editor's own field unless the shared field was switched on. The
+    /// inspector's number, boolean and reference fields always keep the
+    /// editor's own.
     string_field: FieldImplementation,
     /// Sculpt mode's tool and step, kept across modes.
     sculpt: SculptTool,
@@ -904,7 +906,7 @@ impl ToolState {
     ) -> Result<(), ToolError> {
         available(pending)?;
         let at = anchor_target(catalog, selection)?;
-        let input = self.new_limited_input(String::new(), MAX_ANCHOR_ID_BYTES)?;
+        let input = self.new_shareable_input(String::new(), MAX_ANCHOR_ID_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: None,
@@ -1209,7 +1211,7 @@ impl ToolState {
             .ok_or(ToolError("The object is no longer in the world"))?
             .plane
             .clone();
-        let input = self.new_limited_input(String::new(), MAX_PORTAL_LOCATION_BYTES)?;
+        let input = self.new_shareable_input(String::new(), MAX_PORTAL_LOCATION_BYTES)?;
         self.retire_draft();
         self.portal = None;
         self.draft = Some(Draft {
@@ -1471,8 +1473,8 @@ impl ToolState {
             .next_draft
             .checked_add(1)
             .ok_or(ToolError("Draft identity exhausted"))?;
-        // The filter follows the switch, like the string fields and the
-        // zone name drafts.
+        // The filter follows the switch, like every other text draft but
+        // the inspector's typed fields.
         let input =
             FieldInput::with_limit(text.clone(), identity, MAX_FILTER_BYTES, self.string_field);
         let input = match input {
@@ -1620,7 +1622,7 @@ impl ToolState {
             .stamp
             .clone()
             .ok_or(ToolError("No valid selection"))?;
-        let input = self.new_input(format!("{x},{y}"))?;
+        let input = self.new_shareable_input(format!("{x},{y}"), MAX_INPUT_BYTES)?;
         self.retire_draft();
         self.draft = Some(Draft {
             stamp: Some(stamp),
@@ -1695,9 +1697,10 @@ impl ToolState {
         self.input_mut()?.cancel_preedit()
     }
 
-    /// Choose what edits the inspector's string fields, the zone name
-    /// drafts and the palette filter from the next such draft (or filter
-    /// focus) on. Other draft kinds always use the editor's own field.
+    /// Choose what edits the inspector's string fields and every other
+    /// text draft but the inspector's number, boolean and reference fields
+    /// from the next such draft (or filter focus) on; those always use the
+    /// editor's own field.
     pub fn set_string_field(&mut self, implementation: FieldImplementation) {
         self.string_field = implementation;
     }
@@ -1716,18 +1719,10 @@ impl ToolState {
             .ok_or(ToolError("No input draft"))
     }
 
-    fn new_limited_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
-        self.new_input_with(text, limit, FieldImplementation::Editor)
-    }
-
     /// A draft of at most `limit` bytes edited by the field the switch
     /// chose ([`Self::set_string_field`]).
     fn new_shareable_input(&mut self, text: String, limit: usize) -> Result<FieldInput, ToolError> {
         self.new_input_with(text, limit, self.string_field)
-    }
-
-    fn new_input(&mut self, text: String) -> Result<FieldInput, ToolError> {
-        self.new_input_with(text, MAX_INPUT_BYTES, FieldImplementation::Editor)
     }
 
     fn new_input_with(

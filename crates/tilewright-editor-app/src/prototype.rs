@@ -797,9 +797,11 @@ pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
 }
 
 impl Application {
-    /// Switch the inspector's string fields, the zone name drafts and the
-    /// palette filter to the shared field (`--shared-string-field`), from
-    /// the next such draft or filter focus on.
+    /// Switch the inspector's string fields and every other text draft but
+    /// the inspector's typed fields (the zone name drafts, the palette
+    /// filter, the Move coordinates, a new anchor's id and a portal's typed
+    /// location) to the shared field (`--shared-string-field`), from the
+    /// next such draft or filter focus on.
     fn share_string_field(&mut self) -> Result<()> {
         self.shared_field = Some(crate::shared_field::SharedField::new()?);
         self.tools
