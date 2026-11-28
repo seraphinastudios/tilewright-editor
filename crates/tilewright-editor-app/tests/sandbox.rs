@@ -349,11 +349,9 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let proposal_bytes = std::fs::read(&proposal_file).unwrap();
     let output = desktop_pass(&source, &desktop, &proposal_file, &[]);
     assert_eq!(tree(&desktop.join("world")), tree(&sandbox.join("world")));
-    // The shared field, the default, is named at start.
+    // There is one text field, the shared one; nothing names it at start.
     assert!(
-        output
-            .lines()
-            .any(|line| line == "string field: tilewright-ui 0.1.3 (default)"),
+        !output.lines().any(|line| line.starts_with("string field:")),
         "{}",
         &output[..output.len().min(2000)]
     );
@@ -366,8 +364,8 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     let receipt: Value =
         serde_json::from_slice(&std::fs::read(desktop.join("provision.json")).unwrap()).unwrap();
     assert_eq!(receipt["actor"], PERSON);
-    // No field flag: the shared text field, recorded as the frames record it.
-    assert_eq!(receipt["string_field"], "tilewright-ui 0.1.3");
+    // Nor does the receipt.
+    assert!(receipt.get("string_field").is_none(), "{receipt}");
     assert_eq!(receipt["proposal"]["name"], name.as_str());
     assert_eq!(
         receipt["proposal"]["sha256"],
@@ -394,7 +392,7 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
         assert!(record["recovery"]["name"].is_string(), "{record}");
         let pending = evidence(&format!("proposal-step-{step}-pending.json"));
         assert_eq!(pending["proposal"]["state"], "pending");
-        assert_eq!(pending["string_field"], "tilewright-ui 0.1.3");
+        assert!(pending.get("string_field").is_none(), "{pending}");
         assert_eq!(
             evidence(&format!("proposal-step-{step}-applied.json"))["pending"],
             false
@@ -425,11 +423,16 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
             .len(),
         9
     );
-    // The opt-out, through the real start-up: a fourth copy with
-    // `--editor-text-field` applies the same proposal with the editor's own
-    // field; it is recorded in the receipt, and no frame names the shared one.
+    // The removed opt-out and the old opt-in, through the real start-up: a
+    // fourth copy given both still applies the same proposal, with the
+    // shared field; neither is recorded, and no frame names a field.
     let own = root.join("desktop-own");
-    let output = desktop_pass(&source, &own, &proposal_file, &["--editor-text-field"]);
+    let output = desktop_pass(
+        &source,
+        &own,
+        &proposal_file,
+        &["--editor-text-field", "--shared-string-field"],
+    );
     assert_eq!(tree(&own.join("world")), tree(&sandbox.join("world")));
     assert!(
         !output.lines().any(|line| line.starts_with("string field:")),
@@ -438,7 +441,7 @@ fn a_sandbox_proposal_applies_step_by_step_to_a_persons_copy() {
     );
     let receipt: Value =
         serde_json::from_slice(&std::fs::read(own.join("provision.json")).unwrap()).unwrap();
-    assert_eq!(receipt["editor_text_field"], true);
+    assert!(receipt.get("editor_text_field").is_none(), "{receipt}");
     assert!(receipt.get("string_field").is_none(), "{receipt}");
     let records = tree(&own.join("evidence"));
     let mut frames = 0;

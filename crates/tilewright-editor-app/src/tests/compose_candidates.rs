@@ -313,7 +313,6 @@ fn highlighted_with_shared_field() -> Twin {
     let mut twin = twin(1, |_| {}, |_| {}, None);
     open(&mut twin);
     let app = &mut twin.app;
-    app.share_string_field().unwrap();
     app.select_visible_object(crate::prototype::Capability::Field)
         .unwrap();
     app.control(Control::Field("label".into())).unwrap();

@@ -10,7 +10,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 
 SCRIPT = Path(__file__).with_name('provision-prototype.py')
@@ -159,7 +158,7 @@ class ProposalOptionTests(unittest.TestCase):
             printed = json.loads(result.stdout)
             self.assertEqual(printed['provision'], receipt)
 
-    def test_without_the_options_the_session_is_unchanged_and_the_receipt_names_the_shared_field(self):
+    def test_without_the_options_the_session_and_the_receipt_are_unchanged(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
             root = self.persistent_root(temporary)
             result = self.run_helper(root)
@@ -169,70 +168,44 @@ class ProposalOptionTests(unittest.TestCase):
             self.assertEqual(sorted(path.name for path in session.iterdir()),
                              ['evidence', 'provision.json', 'recovery', 'world'])
             receipt = json.loads((session / 'provision.json').read_text())
-            # The shared field is the default, named as the editor's frame
-            # records name it.
-            self.assertEqual(receipt['string_field'], 'tilewright-ui 0.1.3')
-            self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope',
-                                               'string_field'])
+            # There is one text field, so the receipt names none.
+            self.assertEqual(sorted(receipt), ['copy', 'font_pack', 'format', 'platform', 'roots', 'scope'])
             self.assertEqual(sorted(receipt['roots']), ['evidence', 'recovery', 'session', 'world'])
 
-    def test_the_opt_out_is_recorded_and_the_old_switch_only_adds_a_note(self):
-        cases = [
-            ((), {'string_field': 'tilewright-ui 0.1.3'}, b''),
-            (('--editor-text-field',), {'editor_text_field': True}, b''),
-            (('--shared-string-field',), {'string_field': 'tilewright-ui 0.1.3'},
-             provision.SHARED_FLAG_NOTE.encode() + b'\n'),
-        ]
-        for extra, members, stderr in cases:
+    def test_the_retired_field_flags_are_accepted_do_nothing_and_say_so_once(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
+            plain = self.persistent_root(temporary) / 'plain'
+            plain.mkdir()
+            self.assertEqual(self.run_helper(plain).returncode, 0)
+            expected = json.loads((plain / 'session' / 'provision.json').read_text())
+        cases = [('--editor-text-field',), ('--shared-string-field',),
+                 ('--editor-text-field', '--shared-string-field'),
+                 ('--shared-string-field', '--editor-text-field')]
+        for extra in cases:
             with self.subTest(extra=extra), \
                     tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
                 root = self.persistent_root(temporary)
                 result = self.run_helper(root, *extra)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 # The note is on stderr once; stdout keeps only the JSON line.
-                self.assertEqual(result.stderr, stderr)
+                self.assertEqual(result.stderr, provision.FIELD_FLAGS_NOTE.encode() + b'\n')
                 receipt = json.loads((root / 'session' / 'provision.json').read_text())
                 self.assertEqual(json.loads(result.stdout)['provision'], receipt)
-                self.assertEqual({key: receipt[key] for key in receipt
-                                  if key in ('string_field', 'editor_text_field')}, members)
+                # The receipt is the one a session without the flags gets.
+                self.assertEqual(sorted(receipt), sorted(expected))
+                self.assertNotIn('string_field', receipt)
+                self.assertNotIn('editor_text_field', receipt)
 
-    def test_both_field_flags_are_refused_before_anything_is_created(self):
-        with tempfile.TemporaryDirectory(dir=os.environ.get('TILEWRIGHT_PERSISTENT_TEST_ROOT')) as temporary:
-            root = self.persistent_root(temporary)
-            for extra in (('--editor-text-field', '--shared-string-field'),
-                          ('--shared-string-field', '--editor-text-field')):
-                with self.subTest(extra=extra):
-                    result = self.run_helper(root, *extra)
-                    self.assertEqual(result.returncode, 2)
-                    self.assertIn(b'not allowed with argument', result.stderr)
-                    # Refused before the note, and before anything exists.
-                    self.assertNotIn(provision.SHARED_FLAG_NOTE.encode(), result.stderr)
-                    self.assertEqual(result.stdout, b'')
-                    self.assertFalse((root / 'session').exists())
-
-    def test_the_editor_is_given_the_opt_out_exactly_when_it_is_asked_for(self):
+    def test_the_editor_is_never_given_a_field_flag(self):
         children = {'world': 3, 'recovery': 4, 'evidence': 5}
         for opt_out in (False, True):
             for old in (False, True):
-                if opt_out and old:
-                    continue
                 args = argparse.Namespace(font_pack=Path('/fonts'), demo_script=False, reference=False,
                                           editor_text_field=opt_out, shared_string_field=old)
                 command = provision.editor_command(Path('/editor'), children, args, None, None)
                 self.assertEqual(command[:2], ['/editor', 'prototype'])
-                self.assertEqual(command.count('--editor-text-field'), int(opt_out))
-                # The old switch is the default now; the editor never needs it.
+                self.assertNotIn('--editor-text-field', command)
                 self.assertNotIn('--shared-string-field', command)
-
-    def test_the_receipt_and_the_frame_records_name_the_pinned_shared_field(self):
-        root = Path(__file__).resolve().parents[1]
-        pin = tomllib.loads((root / 'Cargo.toml').read_text())['workspace']['dependencies']['tilewright-ui']
-        self.assertTrue(pin.startswith('='), pin)
-        name = f'tilewright-ui {pin[1:]}'
-        self.assertEqual(provision.SHARED_STRING_FIELD, name)
-        # The editor's frame records use `FieldImplementation::SHARED_NAME`.
-        source = (root / 'crates/tilewright-editor-ui/src/field_input.rs').read_text()
-        self.assertIn(f'pub const SHARED_NAME: &\'static str = "{name}";', source)
 
     def test_bad_proposals_and_actors_are_refused_before_anything_is_created(self):
         with tempfile.TemporaryDirectory() as temporary:

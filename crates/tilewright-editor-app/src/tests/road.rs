@@ -647,11 +647,8 @@ pub(super) fn off_tile_pixel(app: &mut Application) -> [f32; 2] {
 /// The Road rule's application with `gate_east`, whose portal the sample
 /// lets the person edit, selected before Terrain mode: its inspector rows
 /// stay laid out in Terrain mode.
-fn gate_application(shared: bool) -> (tempfile::TempDir, Application) {
+fn gate_application() -> (tempfile::TempDir, Application) {
     let (temporary, mut app) = road_application(1, |_| {});
-    if shared {
-        app.share_string_field().unwrap();
-    }
     app.select_object("gate_east").unwrap();
     route(&mut app, &key(Keycode::T)).unwrap();
     assert_eq!(app.tools.terrain_rule(), TerrainRule::Road);
@@ -671,111 +668,104 @@ pub(super) fn enabled(app: &mut Application, control: &Control) -> Option<bool> 
 
 #[test]
 fn nothing_else_is_prepared_or_opened_while_a_road_is_drawn() {
-    for shared in [false, true] {
-        let (_temporary, mut app) = gate_application(shared);
-        let edits = [
-            Control::PortalClear,
-            Control::PortalAnchors,
-            Control::PortalAnchor {
-                plane: "main".into(),
-                anchor: "lookout".into(),
-            },
-            Control::PortalPick,
-            Control::PortalLocation,
-            Control::Coordinates,
-            Control::Field("label".into()),
-            Control::Nudge([1, 0]),
-            Control::Undo,
-            Control::Redo,
-            Control::Delete,
-            Control::ApplyDraft,
-            Control::ProposalPrepare,
-            Control::GradeRoad(tilewright_editor_ui::road::RoadGrade::Flatten),
-            Control::GradeRoad(tilewright_editor_ui::road::RoadGrade::Smooth),
-        ];
-        // Without a road the portal rows are live.
-        assert_eq!(enabled(&mut app, &Control::PortalClear), Some(true));
-        click(&mut app, [0, 0]).unwrap();
-        click(&mut app, [3, 0]).unwrap();
-        // The rows of these are laid out for the selected gate; they are
-        // disabled while the road is drawn. The others have no row here.
-        for control in [
-            Control::PortalClear,
-            Control::PortalAnchors,
-            Control::PortalPick,
-            Control::PortalLocation,
-            Control::Coordinates,
-            Control::Undo,
-            Control::Redo,
-            Control::Delete,
-        ] {
-            assert_eq!(enabled(&mut app, &control), Some(false), "{control:?}");
-        }
-        for control in &edits {
-            let refused = app.control(control.clone()).unwrap_err();
-            assert_eq!(refused, ROAD_IN_PROGRESS, "{control:?}");
-            assert_eq!(points(&app), [[0, 0], [3, 0]], "{control:?}");
-            assert!(app.session.history().pending().is_none(), "{control:?}");
-            assert!(app.tools.draft_text().is_none(), "{control:?}");
-            assert!(!app.tools.portal_picking(), "{control:?}");
-        }
-        // A press on a disabled row does nothing at all.
-        for control in [Control::PortalClear, Control::Undo] {
-            app.refresh_ui();
-            let widget = app
-                .ui
-                .widgets
-                .iter()
-                .find(|widget| widget.control.as_ref() == Some(&control))
-                .cloned()
-                .unwrap();
-            #[allow(clippy::cast_precision_loss)]
-            let at = [
-                (widget.bounds.x + widget.bounds.width / 2) as f32,
-                (widget.bounds.y + widget.bounds.height / 2) as f32,
-            ];
-            acknowledge_ui(&mut app);
-            route(&mut app, &button(true, at)).unwrap();
-            assert_eq!(points(&app), [[0, 0], [3, 0]]);
-            assert!(app.session.history().pending().is_none());
-        }
-        // The road's own controls stay live; Enter still finishes it.
-        assert_eq!(enabled(&mut app, &Control::BrushSize(1)), Some(true));
-        assert!(app.status_label().starts_with("Road of sand: 2 points"));
-        press(&mut app, Keycode::Return).unwrap();
-        assert!(app.session.history().pending().is_some());
-        assert!(app.tools.road().is_none());
+    let (_temporary, mut app) = gate_application();
+    let edits = [
+        Control::PortalClear,
+        Control::PortalAnchors,
+        Control::PortalAnchor {
+            plane: "main".into(),
+            anchor: "lookout".into(),
+        },
+        Control::PortalPick,
+        Control::PortalLocation,
+        Control::Coordinates,
+        Control::Field("label".into()),
+        Control::Nudge([1, 0]),
+        Control::Undo,
+        Control::Redo,
+        Control::Delete,
+        Control::ApplyDraft,
+        Control::ProposalPrepare,
+        Control::GradeRoad(tilewright_editor_ui::road::RoadGrade::Flatten),
+        Control::GradeRoad(tilewright_editor_ui::road::RoadGrade::Smooth),
+    ];
+    // Without a road the portal rows are live.
+    assert_eq!(enabled(&mut app, &Control::PortalClear), Some(true));
+    click(&mut app, [0, 0]).unwrap();
+    click(&mut app, [3, 0]).unwrap();
+    // The rows of these are laid out for the selected gate; they are
+    // disabled while the road is drawn. The others have no row here.
+    for control in [
+        Control::PortalClear,
+        Control::PortalAnchors,
+        Control::PortalPick,
+        Control::PortalLocation,
+        Control::Coordinates,
+        Control::Undo,
+        Control::Redo,
+        Control::Delete,
+    ] {
+        assert_eq!(enabled(&mut app, &control), Some(false), "{control:?}");
     }
+    for control in &edits {
+        let refused = app.control(control.clone()).unwrap_err();
+        assert_eq!(refused, ROAD_IN_PROGRESS, "{control:?}");
+        assert_eq!(points(&app), [[0, 0], [3, 0]], "{control:?}");
+        assert!(app.session.history().pending().is_none(), "{control:?}");
+        assert!(app.tools.draft_text().is_none(), "{control:?}");
+        assert!(!app.tools.portal_picking(), "{control:?}");
+    }
+    // A press on a disabled row does nothing at all.
+    for control in [Control::PortalClear, Control::Undo] {
+        app.refresh_ui();
+        let widget = app
+            .ui
+            .widgets
+            .iter()
+            .find(|widget| widget.control.as_ref() == Some(&control))
+            .cloned()
+            .unwrap();
+        #[allow(clippy::cast_precision_loss)]
+        let at = [
+            (widget.bounds.x + widget.bounds.width / 2) as f32,
+            (widget.bounds.y + widget.bounds.height / 2) as f32,
+        ];
+        acknowledge_ui(&mut app);
+        route(&mut app, &button(true, at)).unwrap();
+        assert_eq!(points(&app), [[0, 0], [3, 0]]);
+        assert!(app.session.history().pending().is_none());
+    }
+    // The road's own controls stay live; Enter still finishes it.
+    assert_eq!(enabled(&mut app, &Control::BrushSize(1)), Some(true));
+    assert!(app.status_label().starts_with("Road of sand: 2 points"));
+    press(&mut app, Keycode::Return).unwrap();
+    assert!(app.session.history().pending().is_some());
+    assert!(app.tools.road().is_none());
 }
 
 #[test]
 fn the_first_road_point_discards_a_half_typed_string_draft() {
-    for shared in [false, true] {
-        let (_temporary, mut app) = road_application(1, |_| {});
-        if shared {
-            app.share_string_field().unwrap();
-        }
-        app.select_visible_object(crate::prototype::Capability::Field)
-            .unwrap();
-        route(&mut app, &key(Keycode::T)).unwrap();
-        let field = Control::Field("label".into());
-        assert_eq!(enabled(&mut app, &field), Some(true));
-        app.control(field.clone()).unwrap();
-        app.tools.input("XYZ").unwrap();
-        assert!(app.tools.draft_text().unwrap().ends_with("XYZ"));
-        click(&mut app, [0, 0]).unwrap();
-        assert!(app.tools.draft_text().is_none(), "shared {shared}");
-        assert!(app.session.history().pending().is_none());
-        assert_eq!(points(&app), [[0, 0]]);
-        assert_eq!(enabled(&mut app, &field), Some(false));
-        assert_eq!(app.control(field).unwrap_err(), ROAD_IN_PROGRESS);
-        assert!(app.tools.draft_text().is_none());
-    }
+    let (_temporary, mut app) = road_application(1, |_| {});
+    app.select_visible_object(crate::prototype::Capability::Field)
+        .unwrap();
+    route(&mut app, &key(Keycode::T)).unwrap();
+    let field = Control::Field("label".into());
+    assert_eq!(enabled(&mut app, &field), Some(true));
+    app.control(field.clone()).unwrap();
+    app.tools.input("XYZ").unwrap();
+    assert!(app.tools.draft_text().unwrap().ends_with("XYZ"));
+    click(&mut app, [0, 0]).unwrap();
+    assert!(app.tools.draft_text().is_none());
+    assert!(app.session.history().pending().is_none());
+    assert_eq!(points(&app), [[0, 0]]);
+    assert_eq!(enabled(&mut app, &field), Some(false));
+    assert_eq!(app.control(field).unwrap_err(), ROAD_IN_PROGRESS);
+    assert!(app.tools.draft_text().is_none());
 }
 
 #[test]
 fn the_admitted_controls_leave_a_road_alone() {
-    let (_temporary, mut app) = gate_application(false);
+    let (_temporary, mut app) = gate_application();
     click(&mut app, [0, 0]).unwrap();
     click(&mut app, [3, 0]).unwrap();
     for control in [
@@ -821,7 +811,7 @@ fn a_terrain_of_another_grid_drops_the_road_and_says_the_grid() {
 
 #[test]
 fn a_road_and_a_draft_or_a_pick_step_never_coexist() {
-    let (_temporary, mut app) = gate_application(false);
+    let (_temporary, mut app) = gate_application();
     // An open draft ends at the first road point, so it can never be
     // applied beside a road (nor a change be pending with one).
     app.control(Control::Coordinates).unwrap();

@@ -1595,7 +1595,7 @@ fn the_panel_fits_the_smallest_window() {
         .ui
         .widgets
         .iter()
-        .filter(|widget| widget.editable.is_some())
+        .filter(|widget| widget.shared)
         .cloned()
         .collect();
     assert_eq!(editable.len(), 1);
@@ -1637,7 +1637,7 @@ fn the_panel_fits_the_smallest_window() {
         .iter()
         .find(|widget| widget.control == Some(Control::ProposalPrepare))
         .unwrap();
-    assert!(prepare.editable.is_none());
+    assert!(!prepare.shared);
 }
 
 /// The block's lines as laid out, above its control (or all of it).
