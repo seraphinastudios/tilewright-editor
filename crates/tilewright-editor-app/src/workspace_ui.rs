@@ -98,6 +98,12 @@ pub enum Control {
     ScatterPalette(String),
     /// A row of the Place palette: choose this prototype.
     PlacePalette(String),
+    /// Star or unstar the mode's chosen value in the person's favourites.
+    FavouriteStar,
+    /// Move the mode's chosen value one place up its favourites.
+    FavouriteRaise,
+    /// Remove this favourite, which the catalog does not grant.
+    FavouriteRemove(tilewright_editor_ui::favourites::Favourite),
     /// The Place palette filter field, unfocused: focus it.
     PaletteFilter,
     /// A row of Place mode's stamps: put this catalog stamp

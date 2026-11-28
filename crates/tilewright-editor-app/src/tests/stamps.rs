@@ -41,7 +41,7 @@ const CAMP: [(&str, [i64; 2]); 4] = [
 
 /// The sample with `editing.stamps`: `camp`, a three-marker `line` and a
 /// one-object `post`, listed out of name order.
-fn with_stamps(root: &Path) {
+pub(super) fn with_stamps(root: &Path) {
     edit_json(root, "preview.jsonc", |catalog| {
         let camp: Vec<_> = CAMP
             .iter()
