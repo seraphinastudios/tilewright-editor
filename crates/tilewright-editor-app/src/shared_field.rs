@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-//! Drawing the shared text field (the default; `--editor-text-field` opts out).
+//! Drawing the shared text field, which edits every text draft.
 //!
 //! Every text draft (the inspector's string, boolean, integer, number and
 //! reference fields, the zone name drafts, the palette filter, the Move
@@ -11,11 +11,12 @@
 //! compiled by `tilewright-ui-render`'s `UiCompiler` with the editor's own
 //! text system lent for each call, and composed into the
 //! editor's frame under the editor's own scene limits. Its geometry then
-//! serves pointer selection, caret steps and the input method area in place
-//! of the editor's own. The field is laid out without the shared crate's
-//! submit control: the editor's own Review control and Enter review. It is
-//! styled with the editor's own field row's values, so it sits in the same
-//! row, the same size, with its text at the same origin and size.
+//! serves pointer selection, caret steps and the input method area. The
+//! field is laid out without the shared crate's submit control: the
+//! editor's own Review control and Enter review. It is styled with the
+//! editor's field row values (`workspace_render::FIELD_ROW_HEIGHT` and its
+//! neighbours), so it sits in its row with its text at the editor's text
+//! origin and size.
 use crate::workspace_render::{self, EditableGeometry, Presentation};
 use crate::workspace_ui::{Rect, WorkspaceUi};
 use tilewright_editor_ui::field_input::{SharedInput, editor_snapshot};
@@ -49,12 +50,11 @@ pub struct SharedGeometry {
 }
 
 /// The shared layout's options: the single field without its own submit
-/// control, so the composer takes the row's whole width, styled as the
-/// editor's own field row (`workspace_render::display_list`): flat, the
-/// row's own height and active fill, the editor's text size, inset and
-/// colours, and the same scroll. The editor keeps the caret's left edge
+/// control, so the composer takes the row's whole width, styled with the
+/// editor's field row values: flat, the row's own height and active fill,
+/// the editor's text size, inset and colours. The caret's left edge stays
 /// `FIELD_SCROLL_MARGIN` from the row's right edge, counted from the text
-/// inset; the shared field keeps its right edge `padding_right` from it.
+/// inset: the shared field keeps its right edge `padding_right` from it.
 pub fn layout_options() -> tilewright_ui::LayoutOptions {
     use workspace_render::{
         ACTIVE_ROW_COLOR, CARET_WIDTH, FIELD_ACCENT, FIELD_ROW_HEIGHT, FIELD_SCROLL_MARGIN,
@@ -235,9 +235,9 @@ fn geometry_for(
             height: geometry.clip.height,
         },
         snapshot,
-        shared: Some(SharedGeometry {
+        shared: SharedGeometry {
             text: geometry.clone(),
-        }),
+        },
     })
 }
 

@@ -56,8 +56,8 @@ pub struct EditableGeometry {
     pub origin: [f32; 2],
     pub clip: UiRect,
     pub snapshot: TextInputSnapshot,
-    /// The shared field's own geometry, when it drew the draft.
-    pub shared: Option<crate::shared_field::SharedGeometry>,
+    /// The shared field's own geometry.
+    pub shared: crate::shared_field::SharedGeometry,
 }
 pub struct Presentation {
     pub scene: SceneBundle,
@@ -782,9 +782,9 @@ pub fn text_size(height: u32) -> f32 {
     if height <= 22 { 14.0 } else { 18.0 }
 }
 
-/// The look of the editor's own text field row, in logical pixels. The
-/// shared text field is styled from these same values
-/// (`shared_field::layout_options`), so the two rows match.
+/// The look of the text field row, in logical pixels: the shared text field
+/// is styled from these values (`shared_field::layout_options`), so it
+/// matches the editor's other rows.
 ///
 /// The open draft's field row height; its text is `text_size` of it.
 pub const FIELD_ROW_HEIGHT: u32 = 30;
@@ -799,8 +799,7 @@ pub const CARET_WIDTH: f32 = 1.0;
 pub const TEXT_COLOR: [f32; 4] = [0.91, 0.94, 0.98, 1.0];
 /// The fill of an active row: the open field's row, a chosen tool.
 pub const ACTIVE_ROW_COLOR: [f32; 4] = [0.12, 0.32, 0.47, 1.0];
-/// The field's selection, caret and input method underline, drawn under
-/// its text.
+/// The field's selection, caret and input method underline.
 pub const FIELD_ACCENT: [f32; 4] = [0.28, 0.48, 0.66, 1.0];
 
 /// Elision uses shared shaped measurements and original grapheme boundaries.
@@ -911,125 +910,6 @@ pub fn model_cursor(cursor: TextCursor) -> tilewright_editor_ui::text_input::Tex
     }
 }
 
-/// How far apart, in logical pixels on each axis, two caret positions may be
-/// and still be the same drawn place: 1/64 px, the rule of the shared field's
-/// `TextGeometry::step_caret` (`tilewright-ui-render` 0.1.1). The layout can
-/// give one place two caret stops a few float ULPs apart (4.6800003 against
-/// 4.68); a real direction boundary puts its stops a glyph advance apart.
-const SAME_CARET_POSITION: f32 = 1.0 / 64.0;
-
-/// Layout steps one press may take: a committed position has at most two
-/// display positions (beside a marker's guard), each with two affinities. A
-/// press can also step past stops beside a guard on other committed
-/// positions ([`lands_behind`]); on the measured values it passes at most
-/// two, and no press needed more than four steps. A press cut off by the bound would end on such a stop.
-const MAXIMUM_CARET_STEPS: usize = 4;
-
-/// One arrow, Home or End press in the editor's own field: the new focus in
-/// `display_text`, from `snapshot`'s display focus, over `layout` of that
-/// text (map it with `snapshot.committed_cursor`). It follows the shared
-/// field's `step_caret` rule (`tilewright-ui-render` 0.1.3). A layout step
-/// that changes the affinity alone and leaves the caret where it was drawn
-/// (within [`SAME_CARET_POSITION`]), or that crosses a marker's guard without
-/// moving the committed position, is not a stop and is repeated, so a press
-/// that can move the caret moves it. Nor is a step to the inner side of a
-/// guard whose committed position is drawn elsewhere and not beyond where the
-/// press began in the pressed direction ([`lands_behind`]); in mixed-direction
-/// text stopping there moved the caret against the press, or not at all, and
-/// could make presses cycle. Any other step is the
-/// press's result, as with a single layout step; a step that does not move
-/// ends it.
-pub fn step_caret(
-    snapshot: &TextInputSnapshot,
-    layout: &UnicodeLayout,
-    motion: tilewright_render_ui::VisualMotion,
-) -> std::result::Result<TextCursor, String> {
-    let same = |a: Option<UiRect>, b: Option<UiRect>| {
-        a.zip(b).is_some_and(|(a, b)| {
-            (a.x - b.x).abs() <= SAME_CARET_POSITION && (a.y - b.y).abs() <= SAME_CARET_POSITION
-        })
-    };
-    let mut display = renderer_cursor(snapshot.display_selection.focus);
-    let from = layout.caret(display);
-    let toward = match motion {
-        tilewright_render_ui::VisualMotion::Left | tilewright_render_ui::VisualMotion::Home => -1.0,
-        tilewright_render_ui::VisualMotion::Right | tilewright_render_ui::VisualMotion::End => 1.0,
-    };
-    let mut committed = snapshot.selection.focus.byte;
-    for _ in 0..MAXIMUM_CARET_STEPS {
-        let next = layout.move_visual(display, motion);
-        if next == display {
-            break;
-        }
-        let moved = next.byte != display.byte;
-        let unseen = !moved && same(layout.caret(display), layout.caret(next));
-        display = next;
-        if unseen {
-            continue;
-        }
-        let previous = committed;
-        committed = snapshot
-            .committed_cursor(model_cursor(display))
-            .map_err(|error| error.to_string())?
-            .byte;
-        if lands_behind(snapshot, layout, from, display, toward) {
-            continue;
-        }
-        // The display byte moved but the committed byte did not: the step
-        // only crossed a guard. Compared with the position the step left,
-        // which is the press's start unless a stop beside a guard was
-        // passed over.
-        if committed != previous || !moved {
-            break;
-        }
-    }
-    Ok(display)
-}
-
-/// Whether a press toward `toward` (-1 left, 1 right) that began with the
-/// caret drawn at `from` and whose layout steps reached `cursor` would, by
-/// stopping there, draw the caret back at `from` or behind it; the rule of
-/// the shared field's `lands_behind` (`tilewright-ui-render` 0.1.3).
-///
-/// Only a display position strictly inside a marker unit (beside its guard)
-/// can: `committed_cursor` maps it to the stored character's edge on the same
-/// side of the glyph, which is drawn at the unit's edge on that side, not at
-/// `cursor`. When the edge is drawn at `cursor`'s place, or a position has no
-/// caret, this is false. Otherwise it is true unless the edge lies more than
-/// [`SAME_CARET_POSITION`] beyond `from` in x, the pressed way; where
-/// `cursor` itself is drawn does not matter.
-fn lands_behind(
-    snapshot: &TextInputSnapshot,
-    layout: &UnicodeLayout,
-    from: Option<UiRect>,
-    cursor: TextCursor,
-    toward: f32,
-) -> bool {
-    let Some(marker) = snapshot
-        .markers
-        .iter()
-        .find(|marker| marker.display.start < cursor.byte && cursor.byte < marker.display.end)
-    else {
-        return false;
-    };
-    let edge = TextCursor {
-        byte: if cursor.byte <= marker.glyph.start {
-            marker.display.start
-        } else {
-            marker.display.end
-        },
-        ..cursor
-    };
-    let (Some(from), Some(stop), Some(edge)) = (from, layout.caret(cursor), layout.caret(edge))
-    else {
-        return false;
-    };
-    let same = |a: UiRect, b: UiRect| {
-        (a.x - b.x).abs() <= SAME_CARET_POSITION && (a.y - b.y).abs() <= SAME_CARET_POSITION
-    };
-    !same(stop, edge) && (edge.x - from.x) * toward <= SAME_CARET_POSITION
-}
-
 #[allow(clippy::cast_precision_loss)]
 fn rect(rect: Rect) -> UiRect {
     // SDL dimensions are constrained by SceneLimits before scene construction.
@@ -1051,33 +931,6 @@ fn paint(next: &mut u32, order: u32, color: [f32; 4]) -> Result<UiPaint> {
         painter_order: order,
         color,
     })
-}
-
-/// The raw IME splice may join adjacent graphemes (e.g. a combining mark).
-/// Underline the complete displayed graphemes touched by that exact splice.
-fn composition_rects(layout: &UnicodeLayout, range: std::ops::Range<usize>) -> Vec<UiRect> {
-    let boundaries = layout.grapheme_boundaries();
-    let start = boundaries
-        .iter()
-        .copied()
-        .take_while(|byte| *byte <= range.start)
-        .last()
-        .unwrap_or(0);
-    let end = boundaries
-        .iter()
-        .copied()
-        .find(|byte| *byte >= range.end)
-        .unwrap_or(layout.text().len());
-    layout.selection_rects(
-        TextCursor {
-            byte: start,
-            affinity: TextAffinity::After,
-        },
-        TextCursor {
-            byte: end,
-            affinity: TextAffinity::Before,
-        },
-    )
 }
 
 /// The background of a control or active row.
@@ -1139,12 +992,7 @@ fn swatch<'a>(widget: &Widget, identity: &mut u32, order: u32) -> Result<Vec<UiP
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn display_list<'a>(
-    ui: &'a WorkspaceUi,
-    mut identity: u32,
-    system: &mut TextSystem,
-) -> Result<(Vec<UiPrimitive<'a>>, Option<EditableGeometry>)> {
-    let mut editable = None;
+fn display_list(ui: &WorkspaceUi, mut identity: u32) -> Result<Vec<UiPrimitive<'_>>> {
     let mut primitives = Vec::new();
     for bounds in [
         Rect {
@@ -1188,45 +1036,6 @@ fn display_list<'a>(
             origin[0] += thumbnail_indent(widget.layout.height) as f32;
             origin[1] += (widget.layout.height.saturating_sub(26) / 2) as f32;
         }
-        if let Some(snapshot) = &widget.editable {
-            let layout = system
-                .layout(&widget.text, text_size(widget.layout.height), None)
-                .map_err(CompositionError::Text)?;
-            let cursor = renderer_cursor(snapshot.display_selection.focus);
-            if let Some(caret) = layout.caret(cursor) {
-                origin[0] -= (caret.x - (bounds.width - FIELD_SCROLL_MARGIN).max(0.0)).max(0.0);
-            }
-            let mut selection =
-                layout.selection_rects(renderer_cursor(snapshot.display_selection.anchor), cursor);
-            if let Some(composition) = &snapshot.composition {
-                for mut underline in composition_rects(&layout, composition.display_range.clone()) {
-                    underline.y += underline.height - 2.0;
-                    underline.height = 1.0;
-                    selection.push(underline);
-                }
-            }
-            if let Some(caret) = layout.caret(cursor) {
-                selection.push(caret);
-            }
-            for mut selected in selection {
-                selected.x += origin[0];
-                selected.y += origin[1];
-                primitives.push(UiPrimitive::Solid {
-                    bounds: selected,
-                    clip: bounds,
-                    paint: paint(&mut identity, order, FIELD_ACCENT)?,
-                    pickable: false,
-                });
-            }
-            editable = Some(EditableGeometry {
-                revision: snapshot.revision,
-                layout,
-                origin,
-                clip: bounds,
-                snapshot: snapshot.clone(),
-                shared: None,
-            });
-        }
         primitives.push(UiPrimitive::Text {
             origin,
             clip: bounds,
@@ -1236,7 +1045,7 @@ fn display_list<'a>(
             text: &widget.text,
         });
     }
-    Ok((primitives, editable))
+    Ok(primitives)
 }
 
 /// [`compose_with_overlay`] with no overlay and the renderer's scene limits.
@@ -1313,7 +1122,7 @@ pub fn compose_with_overlay(
     let identity = thumbnails
         .last()
         .map_or(identity, |quad| quad.semantic_id.0);
-    let (primitives, editable) = display_list(ui, identity, system)?;
+    let primitives = display_list(ui, identity)?;
     let logical = ui.logical_size();
     let compiled = system
         .compile(
@@ -1363,7 +1172,8 @@ pub fn compose_with_overlay(
             solid,
         }),
         unsupported_runs: compiled.unsupported.len(),
-        editable,
+        // The shared field's geometry, once it is drawn (`PreparedField::attach`).
+        editable: None,
     })
 }
 
@@ -1582,13 +1392,6 @@ mod tests {
                 .count(),
             1
         );
-    }
-    #[test]
-    fn combining_preedit_underline_uses_display_grapheme_bounds() {
-        let mut system = crate::font_pack::test_system();
-        let layout = system.layout("e\u{301}", 18.0, None).unwrap();
-        assert_eq!(layout.grapheme_boundaries(), &[0, 3]);
-        assert!(!composition_rects(&layout, 1..3).is_empty());
     }
     #[test]
     fn elision_preserves_original_grapheme_and_shaping_cluster_boundaries() {

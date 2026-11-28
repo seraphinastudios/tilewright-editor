@@ -134,7 +134,6 @@ pub struct Widget {
     /// Logical layout rectangle consumed by the shared UI compiler.
     pub layout: Rect,
     pub text: String,
-    pub editable: Option<tilewright_editor_ui::text_input::TextInputSnapshot>,
     pub control: Option<Control>,
     pub enabled: bool,
     pub active: bool,
@@ -292,7 +291,6 @@ impl WorkspaceUi {
                 bounds,
                 layout,
                 text: text.into(),
-                editable: None,
                 control,
                 enabled,
                 active,
@@ -304,33 +302,13 @@ impl WorkspaceUi {
         }
     }
 
-    pub fn editable(
-        &mut self,
-        bounds: Rect,
-        snapshot: tilewright_editor_ui::text_input::TextInputSnapshot,
-    ) {
-        let before = self.widgets.len();
-        self.widget(
-            bounds,
-            snapshot.display_text.clone(),
-            Some(Control::EditDraft),
-            true,
-            true,
-        );
-        // A field outside the window is not laid out: its snapshot (caret,
-        // input-method geometry) must never land on another widget.
-        if self.widgets.len() > before
-            && let Some(widget) = self.widgets.last_mut()
-        {
-            widget.editable = Some(snapshot);
-        }
-    }
-
     /// Reserve `bounds` for the shared text field: a click there edits
-    /// the draft, as on the editor's own field; the shared field draws it.
+    /// the draft; the shared field draws it.
     pub fn shared_editable(&mut self, bounds: Rect) {
         let before = self.widgets.len();
         self.widget(bounds, String::new(), Some(Control::EditDraft), true, false);
+        // A field outside the window is not laid out: its row (caret,
+        // input-method geometry) must never land on another widget.
         if self.widgets.len() > before
             && let Some(widget) = self.widgets.last_mut()
         {
@@ -380,7 +358,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_field_outside_the_window_attaches_its_snapshot_to_no_widget() {
+    fn a_field_outside_the_window_reserves_no_row() {
         let mut ui = WorkspaceUi::new((720, 480), (720, 480));
         let button = Rect {
             x: 410,
@@ -395,33 +373,27 @@ mod tests {
             true,
             false,
         );
-        let snapshot = tilewright_editor_ui::text_input::TextInput::new("draft".into())
-            .unwrap()
-            .snapshot();
-        ui.editable(
-            Rect {
-                x: 410,
-                y: 490,
-                width: 300,
-                height: 30,
-            },
-            snapshot.clone(),
-        );
+        ui.shared_editable(Rect {
+            x: 410,
+            y: 490,
+            width: 300,
+            height: 30,
+        });
         assert_eq!(ui.widgets.len(), 1);
-        assert!(ui.widgets[0].editable.is_none());
+        assert!(!ui.widgets[0].shared);
+        assert_eq!(ui.shared_field, None);
         assert_eq!(ui.hit(500, 460), Hit::Control(Control::ProposalPrepare));
-        // A field inside the window is laid out with its snapshot, as before.
-        ui.editable(
-            Rect {
-                x: 410,
-                y: 400,
-                width: 300,
-                height: 30,
-            },
-            snapshot.clone(),
-        );
+        // A field inside the window reserves its row.
+        let inside = Rect {
+            x: 410,
+            y: 400,
+            width: 300,
+            height: 30,
+        };
+        ui.shared_editable(inside);
         assert_eq!(ui.widgets.len(), 2);
-        assert_eq!(ui.widgets[1].editable, Some(snapshot));
+        assert!(ui.widgets[1].shared);
+        assert_eq!(ui.shared_field, Some(inside));
         assert_eq!(ui.widgets[1].control, Some(Control::EditDraft));
     }
 
