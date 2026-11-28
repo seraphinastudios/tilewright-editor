@@ -661,7 +661,69 @@ fn a_frame_with_no_room_pauses_with_the_draft_kept() {
     assert!(field_drawn(&again.scene));
 }
 
-/// `stored` in the label field, opened in a window of `logical` size at `scale`, then `edit` applied to the draft.
+/// While editing is paused, Review and Enter in an open string field are
+/// refused in the pause's own words, not as if an edit were pending; the
+/// draft keeps its text and nothing is prepared.
+#[test]
+fn a_paused_string_field_review_says_why() {
+    let (_temporary, mut app) = labelled("Trail marker", (960, 640));
+    app.control(Control::Field("label".into())).unwrap();
+    app.tools.select_all().unwrap();
+    app.tools.input("Open trail").unwrap();
+    app.blocked = Some(crate::prototype::Blocked::new(
+        crate::prototype::BlockCause::Present,
+        "test",
+    ));
+    acknowledge_ui(&mut app);
+    let review = app.control(Control::ApplyDraft).unwrap_err();
+    assert_eq!(review, "rendering blocked editing: test");
+    let mut input = crate::native_input::NativeInput::new(7);
+    acknowledge_ui(&mut app);
+    let enter = route(
+        &mut app,
+        &mut input,
+        &input_key(7, Keycode::Return, false),
+        &mut String::new(),
+    );
+    assert_eq!(enter, Err(review.clone()));
+    assert_eq!(app.tools.draft_text(), Some("Open trail"));
+    assert!(app.tools.shared_draft().is_some());
+    assert!(app.session.history().pending().is_none());
+}
+
+/// The palette filter is never reviewed, paused or not: Enter keeps its
+/// text and releases its focus.
+#[test]
+fn a_paused_palette_filter_enter_keeps_its_text() {
+    for review in [true, false] {
+        let (_temporary, mut app) = filtering((960, 640), 1, |app| {
+            app.tools.input("la").unwrap();
+        });
+        app.blocked = Some(crate::prototype::Blocked::new(
+            crate::prototype::BlockCause::Present,
+            "test",
+        ));
+        acknowledge_ui(&mut app);
+        if review {
+            app.control(Control::ApplyDraft).unwrap();
+        } else {
+            let mut input = crate::native_input::NativeInput::new(7);
+            route(
+                &mut app,
+                &mut input,
+                &input_key(7, Keycode::Return, false),
+                &mut String::new(),
+            )
+            .unwrap();
+        }
+        assert!(!app.tools.filter_focused());
+        assert_eq!(app.tools.palette_filter(), "la");
+        assert!(app.session.history().pending().is_none());
+    }
+}
+
+/// `stored` in the label field, opened in a window of `logical` size at
+/// `scale`, then `edit` applied to the draft.
 fn opened(
     stored: &str,
     logical: (u32, u32),
@@ -944,20 +1006,41 @@ fn the_road_fence_and_the_pause_refuse_zone_drafts() {
         assert!(app.tools.draft_text().is_none(), "{control:?}");
         assert_eq!(super::road::points(&app), [[0, 0]]);
     }
-    // Paused: no zone draft opens, and an open one cannot be reviewed.
-    let (_temporary, mut app) = zoned(Some("Quiet meadow"), (960, 640), 1, ZoneDraft::Name);
-    app.tools.select_all().unwrap();
-    app.tools.input("Open meadow").unwrap();
-    app.blocked = Some(crate::prototype::Blocked::new(
-        crate::prototype::BlockCause::Present,
-        "test",
-    ));
-    app.control(Control::ApplyDraft).unwrap_err();
-    assert_eq!(app.tools.draft_text(), Some("Open meadow"));
-    assert!(app.session.history().pending().is_none());
-    for draft in [ZoneDraft::Name, ZoneDraft::Create] {
-        open_zone(&mut app, draft).unwrap_err();
+    // Paused: no zone draft opens, and an open one (a name or a new
+    // zone) cannot be reviewed: Review and Enter are refused in the
+    // pause's own words, as no edit is pending, and the text is kept.
+    let mut last = None;
+    for draft in [ZoneDraft::Create, ZoneDraft::Name] {
+        let (temporary, mut zoned_app) = zoned(Some("Quiet meadow"), (960, 640), 1, draft);
+        zoned_app.tools.select_all().unwrap();
+        zoned_app.tools.input("Open meadow").unwrap();
+        zoned_app.blocked = Some(crate::prototype::Blocked::new(
+            crate::prototype::BlockCause::Present,
+            "test",
+        ));
+        acknowledge_ui(&mut zoned_app);
+        let review = zoned_app.control(Control::ApplyDraft).unwrap_err();
+        assert_eq!(review, "rendering blocked editing: test", "{draft:?}");
+        let mut input = crate::native_input::NativeInput::new(7);
+        acknowledge_ui(&mut zoned_app);
+        let enter = route(
+            &mut zoned_app,
+            &mut input,
+            &input_key(7, Keycode::Return, false),
+            &mut String::new(),
+        );
+        assert_eq!(enter, Err(review.clone()), "{draft:?}");
+        assert_eq!(zoned_app.tools.zone_draft(), Some(draft));
+        assert_eq!(zoned_app.tools.draft_text(), Some("Open meadow"));
+        assert!(zoned_app.session.history().pending().is_none());
+        last = Some((temporary, zoned_app, review));
     }
+    let (_temporary, mut app, review) = last.unwrap();
+    let refusals: Vec<_> = [ZoneDraft::Name, ZoneDraft::Create]
+        .into_iter()
+        .map(|draft| open_zone(&mut app, draft).unwrap_err())
+        .collect();
+    assert_eq!(refusals, [review.clone(), review.clone()]);
     assert_eq!(app.tools.draft_text(), Some("Open meadow"), "kept");
 }
 

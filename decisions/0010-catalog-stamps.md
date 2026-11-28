@@ -53,13 +53,15 @@ them.
   under a catalog that no longer has the stamp, or has another stamp of that
   name.
 - **The turn and mirror convention**, in plane tiles about the anchor: M is
-  `[dx, dy] → [-dx, dy]` (across the anchor's column, the plane's `y` axis:
-  a grid rule, the same in both projections, so a left-right mirror
-  top-down and a flip across the down-left diagonal in an isometric view), R is
+  `[dx, dy] → [-dx, dy]` top-down (across the anchor's column, the plane's
+  `y` axis, a left-right mirror on screen; an isometric view flips left to
+  right on screen instead, under
+  [Mirror in an isometric view](#mirror-in-an-isometric-view)), R is
   `[dx, dy] → [-dy, dx]` (a quarter turn clockwise: `+x` goes to `+y`, which
   both projections draw a quarter turn clockwise from `+x`). Each key acts
   on the layout as shown; the state is a mirror flag applied first and then
-  0 to 3 quarter turns, so M after `t` turns sets `4 - t`. Turning and
+  0 to 3 quarter turns, so a top-down M after `t` turns sets `4 - t` (an
+  isometric M sets `3 - t`, under the same section). Turning and
   mirroring keep each axis's magnitude, so a stamp inside the engine's
   offset bound stays inside it. It is the desktop's convention only:
   nothing in the engine or the proposal format depends on it.
@@ -137,11 +139,40 @@ revisit any of them):
 - **Discoverability.** `HELP` (the window title and the start-up line)
   names C and Esc for the copy, as it names R and M.
 
+## Mirror in an isometric view
+
+Added 2026-11-28, settling the item this record first left open.
+
+**Owner decision, 2026-11-28:** in an isometric view M flips the shown
+stamp left to right on screen, across the screen's vertical through the
+anchor, instead of across the anchor's column (which runs down-left there).
+Top-down nothing changes: the column is the screen's vertical.
+
+Implementation decisions (the implementing agent's; the owner can revisit
+any of them):
+
+- **The rule.** An isometric view draws `+x` down-right and `+y`
+  down-left, so offset `[dx, dy]` sits `dx - dy` half-diamonds right of the
+  anchor and `dx + dy` down. Flipping left to right negates the first and
+  keeps the second, so M is `[dx, dy] → [dy, dx]` there. R is unchanged.
+- **One state, read in the view.** The state stays a column-mirror flag and
+  0 to 3 quarter turns on the grid. The screen flip is the column mirror
+  followed by three quarter turns, so an isometric M after `t` turns sets
+  `3 - t` (mod 4) as it flips the flag. M reads the projection when it is
+  pressed (`StampView`, from the World's profile). The keys reach the same
+  eight layouts in both projections, and two M or four R give the shown
+  layout back.
+- **The buttons show what the view shows.** Turn and Mirror read the state
+  as a turn applied after the view's own mirror, so the same keys read the
+  same in both projections: M alone is "Turn: 0°" and "Mirror: on", R then
+  M "Turn: 270°" and "Mirror: on".
+- **No format change.** A click still records `place_objects` with the
+  final offsets, so the engine, the proposal format and replays do not see
+  the rule; the preview remains the click's own action.
+
 ## Not decided here
 
-Whether M should flip across the screen's vertical in an isometric view
-(`[dx, dy] → [dy, dx]` there) rather than across the anchor's column,
-stamps of terrain, a preview of the objects' art rather than their tiles,
+Stamps of terrain, a preview of the objects' art rather than their tiles,
 a stamp list in the catalog report or MCP, copying field values, render
 layers, `sub_layer`, `z` or portals of captured objects (decided against
 for now by the owner), keeping a copy across sessions or saving it as a

@@ -111,7 +111,7 @@ pub enum Control {
     StampPalette(String),
     /// Turn the chosen stamp a quarter turn clockwise (R).
     StampTurn,
-    /// Mirror the chosen stamp across the anchor's column (M).
+    /// Flip the chosen stamp left to right on screen (M).
     StampMirror,
     /// Copy area (C): arm it, so a drag over the map copies the objects in
     /// a rectangle, or disarm it.

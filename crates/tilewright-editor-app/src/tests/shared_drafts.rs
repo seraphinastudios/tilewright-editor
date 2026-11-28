@@ -286,17 +286,22 @@ fn the_road_fence_and_the_pause_refuse_typed_drafts() {
         acknowledge_ui(&mut app);
         let mut input = crate::native_input::NativeInput::new(7);
         let mut clipboard = String::new();
-        app.control(Control::ApplyDraft).unwrap_err();
-        route(
+        // Review and Enter are refused in the pause's own words: no
+        // edit is pending.
+        let review = app.control(Control::ApplyDraft).unwrap_err();
+        assert_eq!(review, "rendering blocked editing: test", "{typed:?}");
+        acknowledge_ui(&mut app);
+        let enter = route(
             &mut app,
             &mut input,
             &input_key(7, Keycode::Return, false),
             &mut clipboard,
-        )
-        .unwrap_or_default();
+        );
+        assert_eq!(enter, Err(review.clone()), "{typed:?}");
         assert_eq!(app.tools.draft_text(), Some(typed.texts()[0]));
         assert!(app.session.history().pending().is_none());
-        app.control(typed.control()).unwrap_err();
+        let reopen = app.control(typed.control()).unwrap_err();
+        assert_eq!(reopen, review, "{typed:?}");
         assert_eq!(app.tools.draft_text(), Some(typed.texts()[0]), "kept");
         assert!(app.tools.shared_draft().is_some());
     }
