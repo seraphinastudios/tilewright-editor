@@ -27,11 +27,11 @@ use tilewright_editor_ui::tools::{PortalStep, ToolMode};
 /// value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Typed {
-    /// "Edit position (x,y)" for marker_1.
+    /// "Edit position (x,y)" for `marker_1`.
     Move,
     /// "New anchor at (3, 3)" in Anchor mode.
     Anchor,
-    /// "Type a location" for gate_west.
+    /// "Type a location" for `gate_west`.
     Location,
 }
 
@@ -556,14 +556,14 @@ fn the_shared_coordinate_anchor_and_location_fields_cover_and_paint_what_the_edi
             app.tools.update_preedit("にほん", 2, 0).unwrap();
         }),
         ("selection", Typed::Move, |app| {
-            app.tools.select_all().unwrap()
+            app.tools.select_all().unwrap();
         }),
         ("unsupported glyph", Typed::Move, |app| {
             app.tools.input("\u{e000}").unwrap();
         }),
         ("empty", Typed::Anchor, |_| {}),
         ("typed", Typed::Anchor, |app| {
-            app.tools.input("camp").unwrap()
+            app.tools.input("camp").unwrap();
         }),
         ("long, scrolled to the end", Typed::Anchor, |app| {
             app.tools.input(&"a".repeat(128)).unwrap();

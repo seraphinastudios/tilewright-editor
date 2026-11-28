@@ -888,7 +888,7 @@ impl Typed {
         }
     }
 
-    /// The text the draft opens with: marker_1's position, or nothing.
+    /// The text the draft opens with: `marker_1`'s position, or nothing.
     fn opened(self) -> &'static str {
         match self {
             Self::Move => "3,2",
@@ -951,7 +951,7 @@ impl Typed {
     }
 }
 
-/// The sample's document and catalog, with the inspector view of marker_1.
+/// The sample's document and catalog, with the inspector view of `marker_1`.
 struct Sample {
     _dir: tempfile::TempDir,
     document: WorldDocument,
