@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -27,6 +28,13 @@ PROPOSAL_NAME = re.compile(r'proposal-[0-9a-f]{64}\.json')
 MAX_PROPOSAL = 16 << 20
 PERSON_PREFIX = 'human:'
 MAX_ACTOR = 256
+# A person's favourites file (tilewright_editor_ui::favourites): its size
+# bound and format, the name the editor reads in the session's palettes/
+# directory, and the names of the files it writes back there.
+MAX_PALETTES = 64 << 10
+PALETTES_FORMAT = 'tilewright.editor-favourites/1'
+PALETTES_FILE = 'favourites.json'
+SAVED_PALETTES = re.compile(r'favourites-[0-9]{4}\.json')
 
 
 def directory(path):
@@ -88,24 +96,21 @@ def person_actor(text):
     return text
 
 
-def read_proposal(path):
-    """The bytes of the proposal file at `path`, checked and read before
-    anything is created: a regular file, not a link, at most 16 MiB, named
-    as the proposal store names it. It is opened once, without following a
-    link and without blocking on a pipe, read whole and closed; it is never
-    written."""
-    if PROPOSAL_NAME.fullmatch(path.name) is None:
-        raise ValueError('a proposal file is named proposal-<64 lowercase hex digits>.json')
+def read_regular(path, what, maximum, bound, dir_fd=None):
+    """The bytes and status of the file at `path`: a regular file, not a
+    link, at most `maximum` bytes (`bound` in words). It is opened once,
+    without following a link and without blocking on a pipe, read whole and
+    closed; it is never written."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
     except OSError as error:
-        raise ValueError('the proposal must be an existing readable regular file, not a link') from error
+        raise ValueError(f'the {what} must be an existing readable regular file, not a link') from error
     try:
         value = os.fstat(fd)
         if not stat.S_ISREG(value.st_mode):
-            raise ValueError('the proposal must be a regular file')
-        if value.st_size > MAX_PROPOSAL:
-            raise ValueError('the proposal is larger than 16 MiB')
+            raise ValueError(f'the {what} must be a regular file')
+        if value.st_size > maximum:
+            raise ValueError(f'the {what} is larger than {bound}')
         chunks = []
         total = 0
         while True:
@@ -113,19 +118,207 @@ def read_proposal(path):
             if not chunk:
                 break
             total += len(chunk)
-            if total > MAX_PROPOSAL:
-                raise ValueError('the proposal is larger than 16 MiB')
+            if total > maximum:
+                raise ValueError(f'the {what} is larger than {bound}')
             chunks.append(chunk)
         if total != value.st_size:
-            raise ValueError('the proposal changed while it was read')
-        return b''.join(chunks)
+            raise ValueError(f'the {what} changed while it was read')
+        return b''.join(chunks), value
     finally:
         os.close(fd)
 
 
+def read_proposal(path):
+    """The bytes of the proposal file at `path`, checked and read before
+    anything is created: a regular file, not a link, at most 16 MiB, named
+    as the proposal store names it."""
+    if PROPOSAL_NAME.fullmatch(path.name) is None:
+        raise ValueError('a proposal file is named proposal-<64 lowercase hex digits>.json')
+    return read_regular(path, 'proposal', MAX_PROPOSAL, '16 MiB')[0]
+
+
+def open_palettes(path):
+    """The person's favourites file at `path`, checked and read before
+    anything is created: a regular file, not a link, at most 64 KiB, in a
+    directory that is not itself a link. The directory is opened once, here,
+    and kept: the copy back works only through that descriptor, never
+    through the path again. Its contents are the editor's to check: a
+    malformed file is ignored there, as a whole."""
+    target = path.absolute()
+    if target.name in ('', '.', '..'):
+        raise ValueError('the palettes file must be a file')
+    try:
+        parent = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as error:
+        raise ValueError("the palettes file's directory must be an existing directory, not a link") from error
+    try:
+        data, value = read_regular(target.name, 'palettes file', MAX_PALETTES, '64 KiB', dir_fd=parent)
+    except BaseException:
+        os.close(parent)
+        raise
+    return {'directory': parent, 'name': target.name,
+            'data': data, 'sha256': hashlib.sha256(data).hexdigest(), 'identity': (value.st_dev, value.st_ino)}
+
+
+class Kept(Exception):
+    """The copy back did not replace the person's file, for `code`: a fixed
+    word, never anything from their path or their file."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def errno_code(error):
+    """A fixed word for an operating-system error: no path, no name."""
+    return 'permission' if isinstance(error, PermissionError) else 'io_error'
+
+
+def return_palettes(directory_fd, original, session):
+    """copy_back, with anything it did not foresee reported as the fixed
+    word io_error: no error's words (which can name the person's file) ever
+    reach the helper's output."""
+    try:
+        return copy_back(directory_fd, original, session)
+    except Exception:  # noqa: BLE001 - mapped to a fixed word on purpose.
+        return {'returned': False, 'reason': 'io_error'}
+
+
+def copy_back(directory_fd, original, session):
+    """After the editor ends: copy the newest favourites file the editor
+    wrote into the session's palettes/ directory back to the person's file,
+    or say where it is when that is not safe.
+
+    `original` is what open_palettes found: the kept directory descriptor,
+    the file's name, SHA-256 and identity. Every step works through that
+    descriptor. It is copied back only when the saved file is the editor's
+    (a regular private file of this user, at most 64 KiB, a JSON object of
+    the favourites format) and the person's file is still the file the
+    session copied in: the same file with the same bytes, owned by this user
+    and writable by them. The bytes go to a new file beside it (exclusive
+    create, with its mode), synced; then it is read once more, through the
+    same descriptor, and must still be that file with those bytes; then the
+    new file is renamed over it and the directory synced. Only a change in
+    the instant between that last read and the rename is not detected. A
+    stage that cannot be removed after a refusal is reported as
+    `stage_left`.
+
+    Returns what it did, for the helper's last line: whether it was
+    returned, the session-side path when it was kept, and a fixed reason
+    word (no_change, same_bytes, saved_invalid, target_changed,
+    not_writable, stage_exists, permission, io_error). Never the person's
+    path, name, contents or a digest of them."""
+    saved = sorted(name for name in os.listdir(directory_fd) if SAVED_PALETTES.fullmatch(name))
+    if not saved:
+        return {'returned': False, 'reason': 'no_change'}
+    newest = saved[-1]
+    kept = {'returned': False, 'kept': str(session / 'palettes' / newest)}
+    try:
+        try:
+            data, value = read_regular(newest, 'saved favourites', MAX_PALETTES, '64 KiB', dir_fd=directory_fd)
+            document = json.loads(data.decode('utf-8'))
+        except (OSError, ValueError) as error:
+            raise Kept('saved_invalid') from error
+        if (value.st_uid != os.getuid() or stat.S_IMODE(value.st_mode) != 0o600
+                or not isinstance(document, dict) or document.get('format') != PALETTES_FORMAT):
+            raise Kept('saved_invalid')
+        if hashlib.sha256(data).hexdigest() == original['sha256']:
+            return {'returned': False, 'reason': 'same_bytes'}
+        parent, name = original['directory'], original['name']
+        try:
+            current, status = read_regular(name, 'palettes file', MAX_PALETTES, '64 KiB', dir_fd=parent)
+        except (OSError, ValueError) as error:
+            raise Kept('target_changed') from error
+        if (hashlib.sha256(current).hexdigest() != original['sha256']
+                or (status.st_dev, status.st_ino) != original['identity']):
+            raise Kept('target_changed')
+        if status.st_uid != os.getuid() or not status.st_mode & stat.S_IWUSR:
+            raise Kept('not_writable')
+        staged = f'.{name}.tilewright-{os.getpid()}'
+        try:
+            fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=parent)
+        except FileExistsError as error:
+            raise Kept('stage_exists') from error
+        except OSError as error:
+            raise Kept(errno_code(error)) from error
+        try:
+            try:
+                os.fchmod(fd, stat.S_IMODE(status.st_mode))
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(fd, view):]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            try:
+                current, now = read_regular(name, 'palettes file', MAX_PALETTES, '64 KiB', dir_fd=parent)
+            except (OSError, ValueError) as error:
+                raise Kept('target_changed') from error
+            if (hashlib.sha256(current).hexdigest() != original['sha256']
+                    or (now.st_dev, now.st_ino) != original['identity']):
+                raise Kept('target_changed')
+            os.rename(staged, name, src_dir_fd=parent, dst_dir_fd=parent)
+        except BaseException as error:
+            # Only the stage this call made, never the person's file.
+            try:
+                os.unlink(staged, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                kept['stage_left'] = True
+            if isinstance(error, OSError):
+                raise Kept(errno_code(error)) from error
+            raise
+        try:
+            os.fsync(parent)
+        except OSError as error:
+            # Renamed, so returned; only its durability is unknown.
+            return {'returned': True, 'from': newest, 'synced': False, 'reason': errno_code(error)}
+        return {'returned': True, 'from': newest}
+    except Kept as error:
+        return {**kept, 'reason': error.code}
+
+
+PALETTE_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+def run_editor(command, fds, back):
+    """Runs the editor and then `back` (the copy back), however the editor
+    ends. While it runs, SIGINT, SIGTERM and SIGHUP to the helper are
+    passed to the editor instead of ending the helper (a terminal's Ctrl-C
+    reaches both), so the editor quits as it quits on them and the copy back
+    still runs. Returns the editor's exit status."""
+    child = None
+    # Signals that came before the editor started, passed on once it has.
+    early = []
+
+    def forward(number, _frame):
+        if child is None:
+            early.append(number)
+        elif child.returncode is None:
+            try:
+                child.send_signal(number)
+            except ProcessLookupError:
+                pass
+
+    previous = {number: signal.signal(number, forward) for number in PALETTE_SIGNALS}
+    try:
+        try:
+            child = subprocess.Popen(command, pass_fds=fds)
+            while early:
+                forward(early.pop(0), None)
+            return child.wait()
+        finally:
+            back()
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 def write_proposal(directory_fd, name, data):
-    """Write the proposal's bytes as a new private file in the session's
-    proposal/ directory and sync it and the directory."""
+    """Write bytes as a new private file in one of the session's
+    directories (proposal/, palettes/) and sync it and the directory."""
     fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
     try:
         view = memoryview(data)
@@ -205,7 +398,7 @@ def copy_tree(source, destination):
 SHARED_STRING_FIELD = 'tilewright-ui 0.1.3'
 
 
-def editor_command(executable, children, args, proposal_name, actor):
+def editor_command(executable, children, args, proposal_name, actor, palettes=False):
     """The editor's arguments: the retained descriptors and the options given."""
     command = [str(executable), 'prototype',
                '--world-fd', str(children['world']),
@@ -222,6 +415,8 @@ def editor_command(executable, children, args, proposal_name, actor):
         command += ['--actor', actor]
     if args.shared_string_field:
         command.append('--shared-string-field')
+    if palettes:
+        command += ['--palettes-fd', str(children['palettes'])]
     return command
 
 
@@ -238,12 +433,20 @@ def main():
     parser.add_argument('--actor', help='human:<name>, the actor of the changes this session accepts')
     parser.add_argument('--shared-string-field', action='store_true',
                         help="opt-in: the inspector's string field, the zone name drafts and the palette filter use the shared tilewright-ui field")
+    parser.add_argument('--palettes', type=Path,
+                        help="a person's favourites file; copied into the session and copied back when the editor ends")
     args = parser.parse_args()
     # Checked, and the proposal read, before anything is created.
     actor = None if args.actor is None else person_actor(args.actor)
     proposal = None
     if args.proposal is not None:
         proposal = (args.proposal.name, read_proposal(args.proposal))
+    palettes = None
+    if args.palettes is not None:
+        if args.demo_script or args.reference:
+            raise ValueError('favourites are personal and never reach evidence: '
+                             'the scripted demonstration runs without --palettes')
+        palettes = open_palettes(args.palettes)
     font_record = None
     if args.editor and args.font_pack is None:
         raise ValueError('editor launch requires explicit --font-pack')
@@ -277,7 +480,8 @@ def main():
         held.append(task_fd)
         ids = {'session': identity(task_fd)}
         children = {}
-        for child in ('world', 'recovery', 'evidence') + (('proposal',) if proposal else ()):
+        for child in (('world', 'recovery', 'evidence') + (('proposal',) if proposal else ())
+                      + (('palettes',) if palettes else ())):
             os.mkdir(child, mode=0o700, dir_fd=task_fd)
             fd = os.open(child, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=task_fd)
             held.append(fd)
@@ -288,6 +492,8 @@ def main():
         copied = copy_tree(args.world, children['world'])
         if proposal:
             write_proposal(children['proposal'], *proposal)
+        if palettes:
+            write_proposal(children['palettes'], PALETTES_FILE, palettes['data'])
         os.fsync(task_fd)
         os.fsync(parent_fd)
         receipt = {'format': 'tilewright.prototype-provision/1', 'platform': sys.platform,
@@ -296,6 +502,11 @@ def main():
         if proposal:
             receipt['proposal'] = {'name': proposal[0], 'bytes': len(proposal[1]),
                                    'sha256': hashlib.sha256(proposal[1]).hexdigest()}
+        # Only that favourites were given, and their size: never their
+        # path, name, contents or a digest (a small file's digest can be
+        # inverted by trying the lists a catalog allows).
+        if palettes:
+            receipt['palettes'] = {'given': True, 'bytes': len(palettes['data'])}
         if actor is not None:
             receipt['actor'] = actor
         if args.shared_string_field:
@@ -317,16 +528,26 @@ def main():
             raise ValueError('session identity or mount changed before launch')
         if args.editor:
             command = editor_command(args.editor.resolve(strict=True), children, args,
-                                     proposal and proposal[0], actor)
+                                     proposal and proposal[0], actor, palettes is not None)
             # subprocess closes every other descriptor (close_fds), so only
             # the standard streams and these directories reach the editor.
-            result = subprocess.run(command, pass_fds=tuple(children.values()), check=False)
-            return result.returncode
+            if not palettes:
+                result = subprocess.run(command, pass_fds=tuple(children.values()), check=False)
+                return result.returncode
+
+            def back():
+                outcome = return_palettes(children['palettes'], palettes, parent / name)
+                print(json.dumps({'palettes': outcome}), flush=True)
+            code = run_editor(command, tuple(children.values()), back)
+            # An editor ended by a signal: the shell's 128 + its number.
+            return code if code >= 0 else 128 - code
         return 0
     finally:
         for fd in reversed(held):
             os.close(fd)
         os.close(parent_fd)
+        if palettes:
+            os.close(palettes['directory'])
 
 
 if __name__ == '__main__':

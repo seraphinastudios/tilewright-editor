@@ -55,9 +55,134 @@ the actor of every change the session accepts (default
 session, the receipt and the editor's arguments are as before; only the
 standard streams and the session's directories reach the editor.
 
+`--palettes FILE` brings a person's [favourites](#favourites) into the
+session and takes their changes back out; without it nothing about the
+session changes.
+
 For an agent, `tools/provision-sandbox.py` makes a sandbox with the same
 copy rules under a fresh name each run and starts the headless runner in it
 ([agent sandboxes](SANDBOX.md)); this helper and its output are unchanged.
+A sandbox has no person, so it never has favourites.
+
+### Favourites
+
+A person's favourites are short ordered lists of values the catalog already
+grants: terrain values, catalog [scatter palettes](#scatter-palettes) and
+[Place](#placing-objects) prototypes. They live in a file of the person's
+own, wherever they keep it (for example under their configuration
+directory); the editor never opens a path outside the session.
+
+```json
+{
+  "format": "tilewright.editor-favourites/1",
+  "terrain": [
+    {"grid": "floor", "value": "sand"}
+  ],
+  "scatter": [
+    "speckle"
+  ],
+  "objects": [
+    "stone"
+  ]
+}
+```
+
+The file is strict JSON (no comments, no trailing commas, no duplicate
+keys) of at most 64 KiB: an object with `format` exactly
+`tilewright.editor-favourites/1` and the optional lists `terrain` (objects
+with exactly `grid` and `value`), `scatter` and `objects` (strings), each
+of at most 32 distinct entries, and no other member. A grid, value or
+prototype is 1 to 128 bytes, a scatter palette name 1 to 64, none with a
+control character. A file that breaks any of this is ignored as a whole:
+the session starts without favourites, the editor prints
+`favourites: file ignored: <reason>` and Terrain and Place mode say so in
+their Favourites section, and nothing is written back. The reason names
+only the rule broken, never what the file says.
+
+`tools/provision-prototype.py --palettes FILE` checks the file before
+anything is created (a regular file, not a link, at most 64 KiB, in a
+directory that is not itself a link) and keeps that directory open for the
+copy back. It copies the bytes as `favourites.json` into a private
+`palettes/` child of the session (0700, the file 0600, synced), records in
+the receipt only that a file was given and its size
+(`"palettes": {"given": true, "bytes": …}`), and passes that directory to
+the editor with `--palettes-fd`. The receipt carries no digest: a small
+file of a catalog's values is easy to rebuild from its SHA-256 by trying
+the lists the catalog allows, so a digest would not keep the lists private.
+The editor checks the directory as a proposal directory is checked (this
+user's, mode exactly 0700, no access control list, a checked local file
+system) when it opens it and again before every write, takes its lock, and
+refuses a missing or linked `favourites.json` or one that is not 0600. The scripted demonstration makes
+evidence frames, which favourites never reach, so the helper and the editor
+refuse `--palettes` with `--demo-script` (and so with `--reference`).
+
+In Terrain and Place mode a **Favourites** section comes first, after the
+brush rows, before the catalog's own lists. Terrain mode shows the terrain
+favourites, then the scatter favourites; Place mode the prototypes, which
+the Place filter does not narrow. A favourite the catalog grants is the
+catalog's own row of that value, with the same words, thumbnail, marking and
+control: choosing it is choosing that value in the catalog's list, so what
+the brush, Fill, Replace, a scatter stroke or a placement prepares is byte
+for byte the same, and nothing about favourites is recorded in the change,
+the recovery records or a proposal step. A favourite this catalog does not
+grant (the catalog changed, or another world) cannot be chosen: its row
+reads "Remove <value> (not granted)" (just "Remove <value>" where the row
+is narrow), and its one action removes it from the list, written back as
+any other change. One click removes it, with no undo in the session, and
+the copy back removes it from `FILE`, so from every world that uses that
+file; star it again in a world that grants it. The file still loads, and the entry stays until removed.
+
+Below them, "Star the chosen value" adds the mode's chosen value (the
+chosen terrain or scatter palette, or the prototype Place puts down) at the
+end of its list, and "Unstar the chosen value" removes it. "Move it up the
+favourites" moves a starred value one place up. Each change is written as
+a new file in the session's `palettes/` directory,
+`favourites-0001.json`, `favourites-0002.json` and so on, with an exclusive
+create that never replaces anything at that name, then the directory is
+synced; only then is it the session's list, and the section says
+"Saved: favourites-000N.json". A change that cannot be written (a name
+already taken, more than 9,999 changes, a disk error) is refused with its
+reason and changes nothing. `favourites.json` itself is never written.
+
+When the editor ends, the helper copies the newest `favourites-NNNN.json`
+back to `FILE`: after a normal quit, after the editor fails, and when the
+helper gets SIGINT (a terminal's Ctrl-C), SIGTERM or SIGHUP while the
+editor runs. It passes those signals on to the editor rather than ending
+itself, waits for the editor to quit, then copies back. (SIGKILL of the
+helper skips the copy back; the session's copy stays.) Every step goes
+through the directory kept open at provisioning, never through the path
+again. It replaces `FILE` only when:
+
+- the saved file is a private (0600) regular file of this user, at most
+  64 KiB, of the favourites format;
+- `FILE` is still the file the session copied in: the same file (device and
+  inode) with the same bytes, checked just before a stage is made;
+- `FILE` is owned by this user and has the owner's write bit (a person can
+  freeze their favourites with `chmod a-w`).
+
+The bytes go to a new file beside `FILE` (exclusive create, with `FILE`'s
+mode), synced; then `FILE` is read once more through the kept directory
+and must still be the same file with the same bytes; then the new file is
+renamed over it and the directory synced. This guards against `FILE` being
+replaced, removed or edited at any time up to that last read. It does not
+guard against a change in the instant between the last read and the
+rename (two system calls): that change is overwritten.
+
+Otherwise `FILE` is left alone and the helper's last line says where the
+session's copy is, to copy by hand, with a fixed reason word and nothing
+from `FILE`'s path or contents: `{"palettes": {"returned": false, "kept":
+"<session>/palettes/favourites-000N.json", "reason": "target_changed"}}`.
+The words are `no_change` and `same_bytes` (nothing to copy back, so no
+`kept`), `saved_invalid`, `target_changed`, `not_writable`, `stage_exists`,
+`permission` and `io_error`; anything unforeseen is `io_error`. When the
+stage beside `FILE` could not be removed after such a refusal, the line
+also has `"stage_left": true`: a file `.<name>.tilewright-<pid>` is left
+beside `FILE`, safe to delete. A copy back that succeeded says
+`{"palettes": {"returned": true, "from": "favourites-000N.json"}}`; if the
+directory could not be synced after the rename, the line adds
+`"synced": false` and a reason word: `FILE` holds the new lists, but a
+crash soon after could bring back the old ones.
+Without `--editor` (provision only) nothing is copied back.
 
 The helper never adopts existing state, changes permissions
 on owner directories or deletes failed sessions. Inspect and preserve them;
