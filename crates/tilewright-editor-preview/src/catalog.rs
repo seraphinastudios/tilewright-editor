@@ -199,6 +199,25 @@ impl PreviewCatalog {
     pub fn view(&self) -> (&str, i32, [i64; 4]) {
         (&self.plane, self.layer, self.bounds)
     }
+    /// This catalog with its active view moved to `bounds` on the same
+    /// plane and layer: the moving view window. Everything else, the
+    /// revision included, is the catalog's, so the files it was loaded from
+    /// still verify it; only the view's scope moves.
+    ///
+    /// # Errors
+    /// When `bounds` is empty, overflows or holds more than
+    /// `limits.maximum_cells` cells.
+    pub fn with_view_bounds(
+        &self,
+        bounds: [i64; 4],
+        limits: PreviewLimits,
+    ) -> Result<Self, PreviewError> {
+        crate::validate_bounds(bounds, limits)?;
+        Ok(Self {
+            bounds,
+            ..self.clone()
+        })
+    }
     pub fn presentation(&self) -> &str {
         &self.presentation
     }

@@ -267,3 +267,57 @@ fn large_world_benchmark() {
         println!();
     }
 }
+
+#[test]
+fn the_view_follows_the_camera_only_past_its_edge() {
+    use tilewright_editor_preview::follow_camera;
+    let bounds = [0, 0, 8, 6];
+    // Inside, edges included: unchanged.
+    for center in [[4.0, 3.0], [0.0, 0.0], [7.99, 5.99]] {
+        assert_eq!(follow_camera(bounds, center), bounds);
+    }
+    // Past an edge: the same size around the centre's tile, per axis.
+    assert_eq!(follow_camera(bounds, [8.0, 3.0]), [4, 0, 8, 6]);
+    assert_eq!(follow_camera(bounds, [-0.5, 6.0]), [-5, 3, 8, 6]);
+    assert_eq!(follow_camera(bounds, [100.25, -40.0]), [96, -43, 8, 6]);
+    // Not a tile within ±2^53: unchanged.
+    for center in [[f64::NAN, 3.0], [f64::INFINITY, 3.0], [4.0, 1e300]] {
+        assert_eq!(follow_camera(bounds, center), bounds);
+    }
+    // Bounds far from the centre move like any others.
+    let far = [i64::MAX - 8, 0, 8, 6];
+    assert_eq!(follow_camera(far, [0.0, 3.0]), [-4, 0, 8, 6]);
+}
+
+#[test]
+fn a_moved_view_keeps_the_catalog_and_shows_and_picks_far_chunks() {
+    let (_directory, root) = generated(4, 8);
+    let document = WorldDocument::open_prototype(&root).unwrap();
+    let limits = PreviewLimits::default();
+    let (catalog, resources) = loader::load(document.source(), document.world(), limits).unwrap();
+    // Past the cell budget: refused.
+    assert!(catalog.with_view_bounds([0, 0, 65, 64], limits).is_err());
+    assert!(catalog.with_view_bounds([0, 0, 0, 1], limits).is_err());
+    let moved = catalog.with_view_bounds([64, 64, 64, 64], limits).unwrap();
+    assert_eq!(moved.revision(), catalog.revision());
+    assert_eq!(moved.view(), ("main", 0, [64, 64, 64, 64]));
+    loader::revalidate(document.source(), &moved, &resources, limits).unwrap();
+    let view = moved.default_view(document.world(), 2048, 2048, 1);
+    let prepared = prepare(document.world(), &moved, &resources, &view, limits).unwrap();
+    // The objects of chunks [2, 2] to [3, 3], and none of chunk [0, 0].
+    let uids: Vec<&str> = prepared
+        .picks
+        .values()
+        .filter_map(|key| match key {
+            tilewright_editor_preview::SelectionKey::Object { uid } => Some(uid.as_str()),
+            tilewright_editor_preview::SelectionKey::Cell { .. } => None,
+        })
+        .collect();
+    assert_eq!(uids.len(), 4 * 8);
+    assert!(uids.contains(&"o_2_2_0") && uids.contains(&"o_3_3_7"));
+    assert!(
+        !uids
+            .iter()
+            .any(|uid| uid.starts_with("o_1_") || uid.ends_with("marker_1"))
+    );
+}

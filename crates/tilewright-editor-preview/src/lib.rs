@@ -355,6 +355,43 @@ impl PickMask {
     }
 }
 
+/// The view window for a camera centred on `center` (plane tile
+/// coordinates, as [`Camera::center`]): `bounds` while the tile under the
+/// centre is inside them, otherwise a window of the same size around that
+/// tile, placed as [`PreviewCatalog::default_view`] centres the camera on
+/// a catalog's view. `bounds` when the centre is not a finite tile or the
+/// moved window would overflow. Pure: the caller checks the cell budget
+/// ([`PreviewCatalog::with_view_bounds`]).
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn follow_camera(bounds: [i64; 4], center: [f64; 2]) -> [i64; 4] {
+    // Within ±2^53 every tile is an exact f64.
+    const LIMIT: f64 = 9_007_199_254_740_992.0;
+    let mut moved = bounds;
+    for axis in 0..2 {
+        let at = center[axis].floor();
+        if !at.is_finite() || at.abs() > LIMIT {
+            return bounds;
+        }
+        let tile = at as i64;
+        let (start, size) = (bounds[axis], bounds[axis + 2]);
+        if tile
+            .checked_sub(start)
+            .is_some_and(|offset| offset >= 0 && offset < size)
+        {
+            continue;
+        }
+        match tile
+            .checked_sub(size / 2)
+            .filter(|start| start.checked_add(size).is_some())
+        {
+            Some(start) => moved[axis] = start,
+            None => return bounds,
+        }
+    }
+    moved
+}
+
 pub(crate) fn validate_bounds(bounds: [i64; 4], limits: PreviewLimits) -> Result<(), PreviewError> {
     if bounds[2] <= 0
         || bounds[3] <= 0

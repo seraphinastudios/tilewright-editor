@@ -98,3 +98,20 @@ and files, 512 MiB.
 The preview's plane chunk budget (`PreviewLimits::maximum_chunks`, 8,192) is
 unchanged: the scene build stays under 10 ms at 8,100 chunks, and a plane
 past it is refused before any work.
+
+## Larger than one view
+
+The native app's view starts at the catalog's `view.bounds` and follows the
+camera: when a pan takes the camera's centre past the view's edge, a view of
+the same size moves to it ([OFFLINE-PROTOTYPE.md](OFFLINE-PROTOTYPE.md#moving-view-window)),
+so the cell budget, and with it the scene build and draw above, stays the
+same however large the world is.
+
+`prepare` looks up the chunks under the view by their key instead of
+scanning the plane's chunks for objects. Its share of the scene build was
+already small: on the 8,100-chunk world, placed objects take about 0.05 ms
+of 6.3 ms, the terrain about 1.5 ms and the World and cell-pick compiles
+the rest. Caching each chunk's object inputs by chunk digest would save
+less than that, so `prepare` does not; the shared compile runs on the whole
+view each time, as isometric depth order crosses chunks.
+
