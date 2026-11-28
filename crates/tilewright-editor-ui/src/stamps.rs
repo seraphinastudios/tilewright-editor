@@ -9,26 +9,60 @@
 //!
 //! The convention, in plane tiles about the anchor tile (offset `[0, 0]`):
 //!
-//! - **Mirror** (M) flips the layout across the anchor's column, the
-//!   plane's `y` axis through the anchor: `[dx, dy]` becomes `[-dx, dy]`.
-//!   It is a grid rule, the same in both projections: top-down the column
-//!   is vertical on screen, so M is a left-right mirror; in an isometric
-//!   view the column runs down-left on screen, so M flips across that
-//!   diagonal, not across the screen's vertical.
+//! - **Mirror** (M) flips the layout left to right on screen, so its rule
+//!   depends on the active view's projection ([`StampView`]), read when M
+//!   is pressed. Top-down it flips across the anchor's column, the plane's
+//!   `y` axis through the anchor, which is vertical on screen: `[dx, dy]`
+//!   becomes `[-dx, dy]`. In an isometric view `+x` is drawn down-right
+//!   and `+y` down-left, so a tile `[dx, dy]` sits `dx - dy` half-diamonds
+//!   right of the anchor and `dx + dy` down; flipping left to right
+//!   negates the first and keeps the second, so `[dx, dy]` becomes
+//!   `[dy, dx]` (across the anchor's vertical on screen).
 //! - **Turn** (R) turns it a quarter turn clockwise: `[dx, dy]` becomes
 //!   `[-dy, dx]`, so `+x` goes to `+y`. Both projections draw `+y` a quarter
 //!   turn clockwise from `+x` (top-down: right, then down; isometric:
-//!   down-right, then down-left), so this is clockwise on screen.
+//!   down-right, then down-left), so this is clockwise on screen. It is the
+//!   same rule in both.
 //! - Each key acts on the layout as it is shown: R turns what is shown, M
 //!   mirrors what is shown. The state is a number of quarter turns `t` and
-//!   a mirror flag `m`; an offset is first mirrored when `m` is set, then
-//!   turned `t` times. M after `t` turns therefore sets `t` to `4 - t` as it
-//!   flips `m`, since mirroring a turned layout is the same as turning the
-//!   mirrored one the other way.
+//!   a flag `m`, held on the grid: an offset is first mirrored across the
+//!   anchor's column when `m` is set, then turned `t` times. R adds one
+//!   turn. Top-down M sets `t` to `4 - t` as it flips `m`, since mirroring
+//!   a turned layout is the same as turning the mirrored one the other way;
+//!   in an isometric view M sets `t` to `3 - t` (mod 4) as it flips `m`,
+//!   since the screen flip `[dx, dy] → [dy, dx]` is the column mirror
+//!   followed by three quarter turns. Either way the keys reach the same
+//!   eight distinct layouts, the symmetries of the square, and two M or
+//!   four R give the shown layout back.
+//! - The Turn and Mirror buttons show the state as the view sees it
+//!   ([`StampTurn::shown`]): a turn applied after an optional screen
+//!   mirror, so M alone reads "Turn: 0°" and "Mirror: on" in both
+//!   projections.
 //!
 //! Every object's own art is unchanged: only where each object goes turns.
 use crate::stamp::StampObject;
 use tilewright_editor_preview::{PreviewCatalog, Stamp};
+
+/// The active view's projection, as far as M cares: which grid rule is a
+/// left-right flip on screen.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StampView {
+    /// Square tiles: M flips across the anchor's column, `[-dx, dy]`.
+    TopDown,
+    /// Diamond tiles: M flips across the screen's vertical through the
+    /// anchor, `[dy, dx]`.
+    Isometric,
+}
+
+impl StampView {
+    /// The view of a World drawn with `projection`.
+    pub const fn of(projection: &tilewright_source::Projection) -> Self {
+        match projection {
+            tilewright_source::Projection::TopDown { .. } => Self::TopDown,
+            tilewright_source::Projection::Isometric { .. } => Self::Isometric,
+        }
+    }
+}
 
 /// How Place mode shows and places the chosen stamp: quarter turns
 /// clockwise and whether it is mirrored first (see the module notes).
@@ -53,7 +87,8 @@ impl StampTurn {
         self.quarter_turns as u16 * 90
     }
     /// Whether the layout is mirrored across the anchor's column (before
-    /// turning).
+    /// turning): the state on the grid, whichever view M was pressed in
+    /// ([`Self::shown`] is the view's reading).
     pub const fn mirrored(self) -> bool {
         self.mirrored
     }
@@ -65,13 +100,41 @@ impl StampTurn {
             mirrored: self.mirrored,
         }
     }
-    /// M: the shown layout mirrored across the anchor's column.
+    /// The shown layout mirrored across the anchor's column: M in a
+    /// top-down view.
     #[must_use]
     pub const fn flipped(self) -> Self {
         Self {
             quarter_turns: (4 - self.quarter_turns) % 4,
             mirrored: !self.mirrored,
         }
+    }
+    /// M: the shown layout flipped left to right on screen in `view`.
+    /// Top-down that is [`Self::flipped`]; in an isometric view the screen
+    /// flip `[dx, dy] → [dy, dx]` is the column mirror then three quarter
+    /// turns, so applied to the shown layout it sets `3 - t` turns.
+    #[must_use]
+    pub const fn flipped_on_screen(self, view: StampView) -> Self {
+        match view {
+            StampView::TopDown => self.flipped(),
+            StampView::Isometric => Self {
+                quarter_turns: (7 - self.quarter_turns) % 4,
+                mirrored: !self.mirrored,
+            },
+        }
+    }
+    /// The state as `view` shows it on the Turn and Mirror buttons: the
+    /// clockwise turn in degrees and whether a screen mirror (M's rule in
+    /// `view`) comes before it. Top-down that is [`Self::degrees`] and
+    /// [`Self::mirrored`]; in an isometric view the column mirror is the
+    /// screen mirror then one quarter turn, so a mirrored state shows one
+    /// turn more.
+    pub const fn shown(self, view: StampView) -> (u16, bool) {
+        let turns = match view {
+            StampView::Isometric if self.mirrored => (self.quarter_turns + 1) % 4,
+            _ => self.quarter_turns,
+        };
+        (turns as u16 * 90, self.mirrored)
     }
     /// Where an object at catalog offset `[dx, dy]` goes: mirrored when
     /// [`Self::mirrored`], then turned [`Self::quarter_turns`] times. Both
@@ -124,7 +187,7 @@ pub fn turned_objects(objects: &[StampObject], turn: StampTurn) -> Vec<StampObje
 
 #[cfg(test)]
 mod tests {
-    use super::StampTurn;
+    use super::{StampTurn, StampView};
     use crate::stamp::{MAXIMUM_STAMP_OBJECTS, MAXIMUM_STAMP_OFFSET};
 
     /// Every combination the keys can reach, from the catalog layout.
@@ -213,6 +276,89 @@ mod tests {
             }
             assert_eq!(turn.apply([dx, dy]), expected);
         }
+    }
+
+    /// Every combination M and R reach in `view`, from the catalog layout.
+    fn reachable_in(view: StampView) -> Vec<StampTurn> {
+        let mut all = vec![StampTurn::NONE];
+        let mut index = 0;
+        while index < all.len() {
+            for next in [all[index].turned(), all[index].flipped_on_screen(view)] {
+                if !all.contains(&next) {
+                    all.push(next);
+                }
+            }
+            index += 1;
+        }
+        all
+    }
+
+    /// Where offset `[dx, dy]` is drawn relative to the anchor, in
+    /// half-diamonds right and down, in an isometric view (`+x` down-right,
+    /// `+y` down-left).
+    fn isometric_screen([dx, dy]: [i64; 2]) -> [i64; 2] {
+        [dx - dy, dx + dy]
+    }
+
+    #[test]
+    fn top_down_m_is_the_column_mirror_and_reads_as_before() {
+        for turn in reachable() {
+            assert_eq!(turn.flipped_on_screen(StampView::TopDown), turn.flipped());
+            assert_eq!(
+                turn.shown(StampView::TopDown),
+                (turn.degrees(), turn.mirrored())
+            );
+        }
+        assert_eq!(reachable_in(StampView::TopDown), reachable());
+    }
+
+    #[test]
+    fn isometric_m_flips_left_to_right_on_screen_what_is_shown() {
+        let iso = StampView::Isometric;
+        let none = StampTurn::NONE;
+        // The stated rule: [dx, dy] -> [dy, dx] from the catalog layout.
+        assert_eq!(none.flipped_on_screen(iso).apply([2, 1]), [1, 2]);
+        assert_eq!(none.flipped_on_screen(iso).apply([1, 0]), [0, 1]);
+        // M alone reads as a mirror and no turn, as top-down.
+        assert_eq!(none.flipped_on_screen(iso).shown(iso), (0, true));
+        let offsets = [[2, 1], [1, 0], [0, 1], [3, -1], [-4095, 7], [1, 4095]];
+        for start in reachable_in(iso) {
+            let flipped = start.flipped_on_screen(iso);
+            for offset in offsets {
+                // Left to right on screen: across negated, down kept.
+                let [across, down] = isometric_screen(start.apply(offset));
+                assert_eq!(isometric_screen(flipped.apply(offset)), [-across, down]);
+                // R after M still turns the shown layout clockwise, by the
+                // grid rule.
+                let shown = flipped.apply(offset);
+                assert_eq!(flipped.turned().apply(offset), [-shown[1], shown[0]]);
+            }
+            assert_eq!(flipped.flipped_on_screen(iso), start);
+            // The buttons' reading: a screen mirror, then that many turns.
+            let (degrees, mirrored) = start.shown(iso);
+            for [dx, dy] in offsets {
+                let mut expected = if mirrored { [dy, dx] } else { [dx, dy] };
+                for _ in 0..degrees / 90 {
+                    expected = [-expected[1], expected[0]];
+                }
+                assert_eq!(start.apply([dx, dy]), expected);
+            }
+        }
+        // The same eight distinct layouts as top-down, each a distinct
+        // reading on the buttons.
+        let all = reachable_in(iso);
+        assert_eq!(all.len(), 8);
+        let mut sorted = all.clone();
+        sorted.sort_by_key(|turn| (turn.quarter_turns(), turn.mirrored()));
+        let mut top_down = reachable();
+        top_down.sort_by_key(|turn| (turn.quarter_turns(), turn.mirrored()));
+        assert_eq!(sorted, top_down);
+        let images: std::collections::BTreeSet<_> =
+            all.iter().map(|turn| turn.apply([2, 1])).collect();
+        assert_eq!(images.len(), 8);
+        let readings: std::collections::BTreeSet<_> =
+            all.iter().map(|turn| turn.shown(iso)).collect();
+        assert_eq!(readings.len(), 8);
     }
 
     #[test]

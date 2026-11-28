@@ -15,7 +15,7 @@ use tilewright_editor_preview::{PreviewLimits, SelectionKey, loader};
 use tilewright_editor_testkit::fixture_world;
 use tilewright_editor_ui::capture::{Area, CaptureGesture, CaptureRefusal, CapturedCopy, Contents};
 use tilewright_editor_ui::stamp::{MAXIMUM_STAMP_OBJECTS, StampObject};
-use tilewright_editor_ui::stamps::StampTurn;
+use tilewright_editor_ui::stamps::{StampTurn, StampView};
 use tilewright_editor_ui::tools::{ToolMode, ToolState};
 use tilewright_editor_ui::uid::SeededUidSource;
 use tilewright_editor_ui::{Action, Session, SessionPhase};
@@ -436,7 +436,7 @@ fn a_stamped_copy_is_place_objects_turned_and_mirrored_in_all_eight_states() {
             // From the captured layout: M, then R `turns` times.
             capture(&mut tools, world, catalog, [0, 2], [3, 4]);
             if mirrored {
-                tools.mirror_stamp().unwrap();
+                tools.mirror_stamp(StampView::TopDown).unwrap();
             }
             for _ in 0..turns {
                 tools.turn_stamp().unwrap();
