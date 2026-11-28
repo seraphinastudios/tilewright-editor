@@ -254,6 +254,7 @@
                     "paint_zones",
                     "remove",
                     "place",
+                    "place_objects",
                     "rename_zone",
                     "set_zone_parent",
                     "create_zone",
@@ -884,6 +885,80 @@
                     "x",
                     "y",
                     "proto",
+                    "expected"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "place_objects"
+                    },
+                    "plane": {
+                      "type": "string",
+                      "maxLength": 4096,
+                      "pattern": "^[^\\u0000]*$"
+                    },
+                    "layer": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    },
+                    "x": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "objects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "proto": {
+                            "type": "string",
+                            "maxLength": 4096,
+                            "pattern": "^[^\\u0000]*$"
+                          },
+                          "offset": {
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": -4095,
+                              "maximum": 4095
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          }
+                        },
+                        "required": [
+                          "proto",
+                          "offset"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "description": "A stamp: the objects to place, in the order they are inserted, each a prototype granted by the catalog's editing.objects (the catalog tool lists them) and its offset [dx, dy] from the anchor tile (x, y), after any rotation or mirroring the caller applied. Each object goes on top of the stack of the tile at (x + dx, y + dy), with a new uid and its grant's render layer and defaults, all in one change. The whole stamp is refused if any object's prototype is not granted or its tile is outside the catalog's active view. Two objects may share a tile, and a tile may already hold objects: the review warns, and each new one is stacked on top. accept reports the new uids as applied.placed, a list in this order. With prototype names of World identifiers (at most 128 bytes), 64 objects fit well inside the request's 64 KiB."
+                    },
+                    "expected": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$",
+                      "description": "The sandbox revision the action was made for: state.revision."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "plane",
+                    "layer",
+                    "x",
+                    "y",
+                    "objects",
                     "expected"
                   ],
                   "additionalProperties": false
@@ -1843,6 +1918,13 @@
                             {
                               "type": "string",
                               "x-world-text": true
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "x-world-text": true
+                              }
                             },
                             {
                               "type": "null"

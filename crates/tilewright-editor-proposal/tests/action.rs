@@ -480,7 +480,7 @@ fn reading_refuses_every_other_form() {
     assert_eq!(scatter["kind"], "scatter_terrain");
     let heights = encode_action(&edit(18, [3; 32])).unwrap();
     assert_eq!(heights["kind"], "adjust_heights");
-    let flatten = encode_action(&edit(20, [3; 32])).unwrap();
+    let flatten = encode_action(&edit(21, [3; 32])).unwrap();
     assert_eq!(flatten["kind"], "flatten_heights");
     let smooth = encode_action(&edit(19, [3; 32])).unwrap();
     assert_eq!(smooth["kind"], "smooth_heights");
@@ -639,4 +639,165 @@ fn reading_refuses_every_other_form() {
             &text[..80]
         );
     }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_stamp_round_trips_at_its_bounds_and_refuses_every_other_form() {
+    use tilewright_editor_ui::stamp::StampObject;
+    let member = |proto: &str, offset: [i64; 2]| StampObject {
+        proto: proto.into(),
+        offset,
+    };
+    let stamped = |x: i64, objects: Vec<StampObject>| Action::PlaceObjects {
+        plane: "main".into(),
+        layer: -3,
+        x,
+        y: -MAX,
+        objects,
+        expected: [0x5c; 32],
+    };
+    let edge = limits::STAMP_OFFSET;
+    // One member; the most members, each at an extreme offset; repeated
+    // members; odd and longest prototype strings; the World's extremes.
+    round_trip(&stamped(0, vec![member("marker", [0, 0])]));
+    round_trip(&stamped(
+        MAX,
+        (0..limits::STAMP_OBJECTS)
+            .map(|index| {
+                let sign = if index % 2 == 0 { 1 } else { -1 };
+                member(&format!("p{index}"), [sign * edge, -sign * edge])
+            })
+            .collect(),
+    ));
+    round_trip(&stamped(
+        -MAX,
+        vec![
+            member("quote \" backslash \\ bidi \u{202e}", [1, 1]),
+            member(&"x".repeat(limits::TEXT_BYTES), [1, 1]),
+            member("quote \" backslash \\ bidi \u{202e}", [1, 1]),
+        ],
+    ));
+    // The writer refuses what the engine would never record.
+    for (action, code) in [
+        (stamped(0, Vec::new()), RefusalCode::ProposalInvalid),
+        (
+            stamped(0, vec![member("m", [0, 0]); limits::STAMP_OBJECTS + 1]),
+            RefusalCode::ProposalBudget,
+        ),
+        (
+            stamped(0, vec![member("m", [edge + 1, 0])]),
+            RefusalCode::ProposalInvalid,
+        ),
+        (
+            stamped(0, vec![member("m", [0, i64::MIN])]),
+            RefusalCode::ProposalInvalid,
+        ),
+        (
+            stamped(MAX + 1, vec![member("m", [0, 0])]),
+            RefusalCode::ProposalInvalid,
+        ),
+        (
+            stamped(0, vec![member("nul \u{0}", [0, 0])]),
+            RefusalCode::ProposalInvalid,
+        ),
+        (
+            stamped(0, vec![member(&"x".repeat(limits::TEXT_BYTES + 1), [0, 0])]),
+            RefusalCode::ProposalBudget,
+        ),
+    ] {
+        let text = format!("{action:?}");
+        assert_eq!(
+            encode_action(&action).unwrap_err().code(),
+            code,
+            "{}",
+            &text[..text.len().min(120)]
+        );
+    }
+    // The reader takes exactly the writer's form.
+    let good = encode_action(&edit(20, [3; 32])).unwrap();
+    assert_eq!(good["kind"], "place_objects");
+    assert!(read(&good.to_string()).is_ok());
+    let with = |key: &str, value: Value| {
+        let mut changed = good.clone();
+        changed[key] = value;
+        changed.to_string()
+    };
+    let without = |key: &str| {
+        let mut changed = good.clone();
+        changed.as_object_mut().unwrap().remove(key);
+        changed.to_string()
+    };
+    let invalid = [
+        with("objects", json!([])),
+        with("objects", json!(null)),
+        with("objects", json!({"proto": "marker", "offset": [0, 0]})),
+        with("objects", json!([{"proto": "marker"}])),
+        with("objects", json!([{"offset": [0, 0]}])),
+        with(
+            "objects",
+            json!([{"proto": "marker", "offset": [0, 0], "layer": "item"}]),
+        ),
+        with(
+            "objects",
+            json!([{"proto": "marker", "offset": [0, 0], "uid": "o.a"}]),
+        ),
+        with("objects", json!([{"proto": "marker", "offset": [0]}])),
+        with("objects", json!([{"proto": "marker", "offset": [0, 0, 0]}])),
+        with("objects", json!([{"proto": "marker", "offset": [0.0, 0]}])),
+        with("objects", json!([{"proto": "marker", "offset": ["0", 0]}])),
+        with(
+            "objects",
+            json!([{"proto": "marker", "offset": {"dx": 0, "dy": 0}}]),
+        ),
+        with(
+            "objects",
+            json!([{"proto": "marker", "offset": [edge + 1, 0]}]),
+        ),
+        with(
+            "objects",
+            json!([{"proto": "marker", "offset": [0, -edge - 1]}]),
+        ),
+        with("objects", json!([{"proto": 1, "offset": [0, 0]}])),
+        with("objects", json!([{"proto": null, "offset": [0, 0]}])),
+        with("objects", json!(["marker"])),
+        with("objects", json!([[0, 0]])),
+        without("objects"),
+        without("x"),
+        with("x", json!(5.0)),
+        with("proto", json!("marker")),
+        with("cells", json!([[0, 0]])),
+        with("kind", json!("place_stamp")),
+        with("kind", json!("place")),
+    ];
+    for text in &invalid {
+        assert_eq!(read(text), Err(RefusalCode::ProposalInvalid), "{text}");
+    }
+    let over = [
+        with(
+            "objects",
+            json!(vec![
+                json!({"proto": "m", "offset": [0, 0]});
+                limits::STAMP_OBJECTS + 1
+            ]),
+        ),
+        with(
+            "objects",
+            json!([{"proto": "x".repeat(limits::TEXT_BYTES + 1), "offset": [0, 0]}]),
+        ),
+    ];
+    for text in &over {
+        assert_eq!(
+            read(text),
+            Err(RefusalCode::ProposalBudget),
+            "{}",
+            &text[..80]
+        );
+    }
+    // A place with an objects member, or a stamp read as a place, is not a
+    // form either.
+    let place = encode_action(&edit(6, [3; 32])).unwrap();
+    let mut both = place.clone();
+    both["objects"] = good["objects"].clone();
+    assert_eq!(read(&both.to_string()), Err(RefusalCode::ProposalInvalid));
 }

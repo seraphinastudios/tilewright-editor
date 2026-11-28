@@ -12,7 +12,7 @@ use tilewright_editor_preview::{PreviewLimits, loader};
 use tilewright_editor_proposal::hex;
 use tilewright_editor_testkit::fixture_world;
 use tilewright_editor_ui::uid::SeededUidSource;
-use tilewright_editor_ui::{Action, Actor, PortalTarget, Session};
+use tilewright_editor_ui::{Action, Actor, PortalTarget, Session, stamp::StampObject};
 
 pub const AGENT: &str = "agent:sandbox \"test\"";
 pub const PERSON: &str = "human:tester";
@@ -113,7 +113,7 @@ pub fn revision(session: &Session) -> [u8; 32] {
 /// The edit actions of every kind, in an order in which each applies
 /// after the ones before it on the neutral fixture; the fill twice, once
 /// as a fill and once as a replace.
-pub const KINDS: usize = 21;
+pub const KINDS: usize = 22;
 #[allow(clippy::too_many_lines)]
 pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
     let main = || String::from("main");
@@ -265,6 +265,15 @@ pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
             kernel: 1,
             expected,
         },
+        // A stamp: two markers on one tile, a stone and a bush near them.
+        20 => Action::PlaceObjects {
+            plane: main(),
+            layer: 0,
+            x: 5,
+            y: 3,
+            objects: stamp_objects(),
+            expected,
+        },
         // Flatten the view's top three rows to -2.
         _ => Action::FlattenHeights {
             plane: main(),
@@ -274,6 +283,22 @@ pub fn edit(kind: usize, expected: [u8; 32]) -> Action {
             expected,
         },
     }
+}
+
+/// The members of the stamp of [`edit`]'s kind 20.
+pub fn stamp_objects() -> Vec<StampObject> {
+    [
+        ("marker", [0, 0]),
+        ("stone", [1, 1]),
+        ("marker", [0, 0]),
+        ("bush", [-1, 1]),
+    ]
+    .into_iter()
+    .map(|(proto, offset)| StampObject {
+        proto: proto.into(),
+        offset,
+    })
+    .collect()
 }
 
 /// Dispatch `action` and Accept it.

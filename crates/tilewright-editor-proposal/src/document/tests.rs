@@ -1,7 +1,7 @@
 // Copyright 2026 Seraphina Studios
 // SPDX-License-Identifier: MIT
 
-use super::{Proposal, ProposalStep, read_back};
+use super::{Placed, Proposal, ProposalStep, read_back};
 use serde_json::json;
 use tilewright_editor_ui::{Action, RefusalCode};
 
@@ -13,7 +13,7 @@ fn step(value: serde_json::Value, placed: Option<&str>) -> ProposalStep {
             value,
             expected: [1; 32],
         },
-        placed: placed.map(str::to_owned),
+        placed: placed.map_or(Placed::None, |uid| Placed::One(uid.to_owned())),
         transaction: String::new(),
         transaction_sha256: [0; 32],
         before: [1; 32],
@@ -38,6 +38,11 @@ fn a_step_that_reads_back_differently_is_refused() {
         read_back(&recorded[..1], &recorded).unwrap_err().code(),
         RefusalCode::ProposalInvalid
     );
+    // A stamp's list of one uid is not the single uid of a placement.
+    let mut listed = step(json!("a"), None);
+    listed.placed = Placed::List(vec!["o.x".into()]);
+    let error = read_back(&[step(json!(1.0), None), listed], &recorded).unwrap_err();
+    assert_eq!(error.code(), RefusalCode::ProposalInvalid);
 }
 
 /// A reader whose numbers drift (it reads every field value back as

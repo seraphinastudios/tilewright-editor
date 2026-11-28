@@ -352,6 +352,23 @@ pub(super) fn step_tiles<'a>(
         Action::Place {
             plane, layer, x, y, ..
         } => vec![Some((Role::Target, plane.as_str(), *layer, [*x, *y]))],
+        // Every object's tile, in object order; a tile two objects share
+        // is one tile of the highlight.
+        Action::PlaceObjects {
+            plane,
+            layer,
+            x,
+            y,
+            objects,
+            ..
+        } => objects
+            .iter()
+            .take(HIGHLIGHT_TILES)
+            .map(|object| {
+                tilewright_editor_ui::stamp::member_tile([*x, *y], object.offset)
+                    .map(|at| (Role::Target, plane.as_str(), *layer, at))
+            })
+            .collect(),
         // Created on the active view's spatial layer.
         Action::CreateAnchor { plane, x, y, .. } => vec![Some((
             Role::Anchor,
@@ -1768,6 +1785,34 @@ pub(super) fn action_words(action: &Action, world: &World, catalog: &PreviewCata
             tile(catalog, plane, *layer, [*x, *y]),
             shown(plane)
         ),
+        Action::PlaceObjects {
+            plane,
+            layer,
+            x,
+            y,
+            objects,
+            ..
+        } => {
+            let tiles: Vec<[i64; 2]> = objects
+                .iter()
+                .filter_map(|object| {
+                    tilewright_editor_ui::stamp::member_tile([*x, *y], object.offset)
+                })
+                .collect();
+            let outside = if tiles.len() == objects.len() {
+                outside(catalog, plane, *layer, &tiles)
+            } else {
+                ", some outside the view"
+            };
+            // The anchor need not be an object's tile, so only the
+            // objects' tiles are judged against the view.
+            format!(
+                "Place {} ({}) anchored at ({x}, {y}){outside} on {}/{layer}",
+                objects_words(objects.len()),
+                prototype_counts(objects),
+                shown(plane)
+            )
+        }
         Action::RenameZone {
             plane, zone, name, ..
         } => match name {
@@ -2039,6 +2084,41 @@ fn outside(catalog: &PreviewCatalog, plane: &str, layer: i32, cells: &[[i64; 2]]
     } else {
         ", some outside the view"
     }
+}
+
+fn objects_words(count: usize) -> String {
+    if count == 1 {
+        "1 object".into()
+    } else {
+        format!("{count} objects")
+    }
+}
+
+/// At most this many prototypes a stamp's words name.
+const STAMP_PROTOTYPES_NAMED: usize = 4;
+
+/// A stamp's prototypes in the order they first appear, each with how many
+/// objects have it ("marker 3, post 2"), at most
+/// [`STAMP_PROTOTYPES_NAMED`] of them, then how many more there are.
+fn prototype_counts(objects: &[tilewright_editor_ui::stamp::StampObject]) -> String {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for object in objects {
+        match counts.iter_mut().find(|(proto, _)| *proto == object.proto) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((&object.proto, 1)),
+        }
+    }
+    let mut words: Vec<String> = counts
+        .iter()
+        .take(STAMP_PROTOTYPES_NAMED)
+        .map(|(proto, count)| format!("{} {count}", shown(proto)))
+        .collect();
+    match counts.len().saturating_sub(STAMP_PROTOTYPES_NAMED) {
+        0 => {}
+        1 => words.push("1 more prototype".into()),
+        more => words.push(format!("{more} more prototypes")),
+    }
+    words.join(", ")
 }
 
 fn cells_words(count: usize) -> String {

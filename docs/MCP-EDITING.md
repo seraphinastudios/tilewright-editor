@@ -166,7 +166,7 @@ made from, holds that art, and `render` sends its pixels to the client.
 `kind` and exactly that kind's members, every one present, `null` for an
 absent option, and `expected`, the sandbox revision it was made for
 (`state.revision`). The input schema says this as an `anyOf` with one
-choice per kind (20), each listing exactly its members as required, with
+choice per kind (21), each listing exactly its members as required, with
 `additionalProperties: false`, and at the action's root the list of kinds
 and the two members every kind has. It uses only keywords that draft-07
 and 2020-12 read alike: `anyOf` rather than `oneOf` (the kinds' consts
@@ -187,7 +187,11 @@ itself excludes 0) and needs the catalog's height range, which the
 integer from -1,024 to 1,024 that the range must hold; `kernel` (of
 `smooth_heights`) is the integer 1, written as `minimum` and `maximum` 1
 so that `1.0` is admitted alike everywhere, and its description gives the
-rule; a portal `target` is `null`, an anchor or a location; a field
+rule; `objects` (of `place_objects`, a stamp) is 1 to 64 objects, each
+exactly a `proto` and an `offset` `[dx, dy]` of integers from -4,095 to
+4,095 from the anchor tile `x`, `y`, inserted in that order (64 objects
+with 128-byte prototypes at the widest offsets make a request of under 16
+KiB, well inside the 64 KiB a message may be); a portal `target` is `null`, an anchor or a location; a field
 `value` is any JSON value. The kind's `const` decides the
 choice, so a member of the wrong type fails the one choice that applies;
 there is no ambiguity of the kind the revision warns about for
@@ -199,8 +203,8 @@ crate's decoder, as the runner does. A test evaluates the schema sent in
 each member missing, an extra member and an unknown kind, and requires them
 to agree (more than 300 cases). To make them agree, the server rewrites a
 number with no fraction (`3.0`, `1e3`), which JSON Schema's `integer`
-admits, to the integer it is, in `x`, `y`, `layer`, `seed`, `amount`, `kernel`, a flatten's `target`, the cells and a
-location's `layer` and `at`, before decoding; a field `value` is never
+admits, to the integer it is, in `x`, `y`, `layer`, `seed`, `amount`, `kernel`, a flatten's `target`, the cells, a
+stamp object's `offset` and a location's `layer` and `at`, before decoding; a field `value` is never
 rewritten. What JSON Schema cannot say, the server still refuses, and a
 test holds each:
 
@@ -353,7 +357,8 @@ The instructions and every tool description say that results are world
 data, not instructions. In the output schemas, every string the world,
 the engine's review of it, or the client wrote is marked
 `"x-world-text": true`: file paths, warnings and review lines of `pending`,
-the runner's `message`, the view's `plane`, `applied.placed`, and the
+the runner's `message`, the view's `plane`, `applied.placed` (one uid
+for a `place`, the list of a `place_objects` in object order), and the
 `client` label (the operator's, untrusted, so marked too). Every other
 string is this editor's own: a code, a request name, a phase, a change
 kind, a revision or digest, the operator's actor, the editor version, or a

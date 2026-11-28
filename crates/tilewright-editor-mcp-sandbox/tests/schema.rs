@@ -163,6 +163,8 @@ fn bases(revision: &str) -> Vec<Value> {
         json!({"kind": "paint_zones", "plane": "main", "layer": 0, "cells": [[0, 0]], "zone": null}),
         json!({"kind": "remove", "uid": "marker_1"}),
         json!({"kind": "place", "plane": "main", "layer": 0, "x": 1, "y": 1, "proto": "marker"}),
+        json!({"kind": "place_objects", "plane": "main", "layer": 0, "x": 1, "y": 1,
+            "objects": [{"proto": "marker", "offset": [0, 0]}, {"proto": "stone", "offset": [1, 0]}]}),
         json!({"kind": "rename_zone", "plane": "main", "zone": "z", "name": null}),
         json!({"kind": "set_zone_parent", "plane": "main", "zone": "z", "parent": "y"}),
         json!({"kind": "create_zone", "plane": "main", "zone": "z", "name": "Z", "parent": null}),
@@ -300,6 +302,49 @@ fn variations(base: &Value) -> Vec<Value> {
                 found.push(with(name, Value::Null));
                 found.push(with(name, json!("text")));
             }
+            "objects" => {
+                let member =
+                    |proto: Value, offset: Value| json!({"proto": proto, "offset": offset});
+                let marker = || json!("marker");
+                // At and past the count; offsets at and past their bound,
+                // integral floats, fractions; members that are not.
+                found.push(with(name, json!([member(marker(), json!([0, 0]))])));
+                found.push(with(name, json!(vec![member(marker(), json!([0, 0])); 64])));
+                found.push(with(name, json!(vec![member(marker(), json!([0, 0])); 65])));
+                found.push(with(name, json!([])));
+                for offset in [
+                    json!([4095, -4095]),
+                    json!([4096, 0]),
+                    json!([0, -4096]),
+                    json!([1.0, 0]),
+                    json!([0, 0.5]),
+                    json!([0]),
+                    json!([0, 0, 0]),
+                    json!(["0", 0]),
+                    json!(null),
+                ] {
+                    found.push(with(name, json!([member(marker(), offset)])));
+                }
+                found.push(with(
+                    name,
+                    json!([member(json!("u".repeat(4096)), json!([0, 0]))]),
+                ));
+                found.push(with(
+                    name,
+                    json!([member(json!("u".repeat(4097)), json!([0, 0]))]),
+                ));
+                found.push(with(name, json!([member(Value::Null, json!([0, 0]))])));
+                found.push(with(name, json!([member(json!(7), json!([0, 0]))])));
+                found.push(with(name, json!([{"proto": "marker"}])));
+                found.push(with(name, json!([{"offset": [0, 0]}])));
+                found.push(with(
+                    name,
+                    json!([{"proto": "marker", "offset": [0, 0], "layer": "item"}]),
+                ));
+                found.push(with(name, json!(["marker"])));
+                found.push(with(name, json!({"proto": "marker", "offset": [0, 0]})));
+                found.push(with(name, Value::Null));
+            }
             _ => {
                 // A string member: at its bound, past it, null, another type.
                 found.push(with(name, json!("u".repeat(4096))));
@@ -376,6 +421,11 @@ fn what_the_schema_cannot_express_the_server_still_refuses() {
         base(json!({"kind": "remove", "uid": "\u{e9}".repeat(4096)})),
         // A field value past the engine's budget.
         base(json!({"kind": "set_field", "uid": "marker_1", "field": "label", "value": deep})),
+        // A stamp's prototype of 4,096 characters but more bytes.
+        base(
+            json!({"kind": "place_objects", "plane": "main", "layer": 0, "x": 1, "y": 1,
+            "objects": [{"proto": "\u{e9}".repeat(4096), "offset": [0, 0]}]}),
+        ),
     ] {
         assert!(matches(&schema, &action), "{action}");
         assert!(!server_takes(&mut client, &action), "{action}");

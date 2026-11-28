@@ -1151,3 +1151,148 @@ fn a_block_that_ends_by_zooming_brings_the_highlight_back() {
     // `shown` checks the stored highlight against a fresh one.
     assert_eq!(step(&mut twin.app), Some(0));
 }
+
+fn stamp(expected: [u8; 32]) -> Action {
+    use tilewright_editor_ui::stamp::StampObject;
+    Action::PlaceObjects {
+        plane: "main".into(),
+        layer: 0,
+        x: 5,
+        y: 3,
+        objects: [
+            ("marker", [0, 0]),
+            ("stone", [1, 1]),
+            ("marker", [0, 0]),
+            ("bush", [-1, 1]),
+        ]
+        .into_iter()
+        .map(|(proto, offset)| StampObject {
+            proto: proto.into(),
+            offset,
+        })
+        .collect(),
+        expected,
+    }
+}
+
+#[test]
+fn a_stamp_highlights_each_object_tile_once_in_object_order() {
+    use tilewright_editor_ui::stamp::StampObject;
+    let (_person, app) = person_application(|_| {});
+    let expected = revision(&app.session);
+    let of = |action: Action| {
+        let highlight = Highlight::of(0, &action, &app.session);
+        assert_eq!(highlight.tints, expected_tints(&tiles(&highlight)));
+        (highlight.concerns, tiles(&highlight))
+    };
+    // Two objects share (5, 3): one tile. The anchor is not highlighted
+    // for itself.
+    assert_eq!(
+        of(stamp(expected)),
+        (
+            Concerns::Tiles,
+            main0(&[("target", [5, 3]), ("target", [6, 4]), ("target", [4, 4])])
+        )
+    );
+    // Tiles outside the view are named but not drawn; an object whose
+    // tile overflows has none.
+    let object = |dx, dy| StampObject {
+        proto: "marker".into(),
+        offset: [dx, dy],
+    };
+    assert_eq!(
+        of(Action::PlaceObjects {
+            plane: "main".into(),
+            layer: 0,
+            x: 7,
+            y: 5,
+            objects: vec![object(0, 0), object(1, 0), object(-9, 1)],
+            expected,
+        }),
+        (
+            Concerns::Tiles,
+            main0(&[("target", [7, 5]), ("target", [8, 5]), ("target", [-2, 6])])
+        )
+    );
+    assert_eq!(
+        of(Action::PlaceObjects {
+            plane: "main".into(),
+            layer: 0,
+            x: i64::MAX,
+            y: 0,
+            objects: vec![object(1, 0)],
+            expected,
+        }),
+        (Concerns::NotPlaced, Vec::new())
+    );
+}
+
+#[test]
+fn a_stamp_step_reads_as_words_and_applies_through_the_panel() {
+    use super::proposal::prepare_and_accept;
+    use crate::prototype::proposal_view::action_words;
+    use tilewright_editor_ui::stamp::StampObject;
+    let mut twin = proposal_of(&[stamp]);
+    let words = |app: &Application, action: &Action| {
+        action_words(action, app.session.world(), app.session.catalog())
+    };
+    let step = twin.proposal.steps()[0].action().clone();
+    assert_eq!(
+        words(&twin.app, &step),
+        "Place 4 objects (marker 2, stone 1, bush 1) anchored at (5, 3) on main/0"
+    );
+    // Shown, the highlight is the stamp's tiles.
+    let (_, concerns, seen) = shown(&mut twin.app).unwrap();
+    assert_eq!(concerns, Concerns::Tiles);
+    assert_eq!(
+        seen,
+        main0(&[("target", [5, 3]), ("target", [6, 4]), ("target", [4, 4])])
+    );
+    // Applied through the panel with the recorded uids.
+    prepare_and_accept(&mut twin, 0);
+    let uids = twin.proposal.steps()[0].placed_objects().to_vec();
+    assert_eq!(uids.len(), 4);
+    for (index, uid) in uids.iter().enumerate() {
+        assert!(
+            twin.app.session.world().object(uid).is_some(),
+            "object {index}"
+        );
+    }
+    // Many prototypes are cut after four; an object outside the view is
+    // said.
+    let expected = revision(&twin.app.session);
+    let many = Action::PlaceObjects {
+        plane: "main".into(),
+        layer: 0,
+        x: 0,
+        y: 0,
+        objects: ["a", "b", "c", "d", "e", "f", "a"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, proto)| StampObject {
+                proto: proto.into(),
+                offset: [i64::try_from(index).unwrap() * 2, 0],
+            })
+            .collect(),
+        expected,
+    };
+    assert_eq!(
+        words(&twin.app, &many),
+        "Place 7 objects (a 2, b 1, c 1, d 1, 2 more prototypes) anchored at (0, 0), some outside the view on main/0"
+    );
+    let one = Action::PlaceObjects {
+        plane: "main".into(),
+        layer: 0,
+        x: 2,
+        y: 9,
+        objects: vec![StampObject {
+            proto: "lamp".into(),
+            offset: [0, -9],
+        }],
+        expected,
+    };
+    assert_eq!(
+        words(&twin.app, &one),
+        "Place 1 object (lamp 1) anchored at (2, 9) on main/0"
+    );
+}

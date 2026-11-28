@@ -5,7 +5,8 @@
 //! by the same sequences from the same stored values, must agree on every
 //! result and refusal wording, the committed and displayed text, the
 //! selection in stored terms, and the action a review hands the engine. The
-//! inspector's string field and both zone name drafts are compared.
+//! inspector's string field, both zone name drafts and the palette filter
+//! (with the rows it keeps) are compared.
 use std::{fs, path::Path};
 use tilewright_editor_document::WorldDocument;
 use tilewright_editor_preview::{PreviewCatalog, PreviewLimits, loader};
@@ -15,7 +16,7 @@ use tilewright_editor_ui::{
     field_input::FieldImplementation,
     inspector::inspect,
     text_input::{TextCursor, TextInputSnapshot, TextRevision, TextSelection},
-    tools::{ToolError, ToolMode, ToolState, ZoneChoice, ZoneDraft},
+    tools::{PortalStep, ToolError, ToolMode, ToolState, ZoneChoice, ZoneDraft},
 };
 use tilewright_source::World;
 use unicode_segmentation::UnicodeSegmentation;
@@ -238,7 +239,7 @@ fn both_fields_agree_on_every_step_and_on_the_reviewed_action() {
 }
 
 #[test]
-fn only_string_fields_and_zone_names_use_the_shared_field() {
+fn only_string_fields_zone_names_and_the_palette_filter_use_the_shared_field() {
     let dir = tempfile::tempdir().unwrap();
     world_with(dir.path(), "Trail marker");
     let document = WorldDocument::open(dir.path()).unwrap();
@@ -279,8 +280,8 @@ fn only_string_fields_and_zone_names_use_the_shared_field() {
     tools
         .set_selection(TextSelection::caret(TextCursor::new(0)), later)
         .unwrap();
-    // Coordinates, the palette filter and every other draft keep the
-    // editor's own field.
+    // Coordinates and every other draft but the zone names and the palette
+    // filter keep the editor's own field.
     tools.begin_move(&view, false).unwrap();
     assert!(tools.shared_draft().is_none());
     // Both zone name drafts follow the switch.
@@ -317,9 +318,11 @@ fn only_string_fields_and_zone_names_use_the_shared_field() {
             .unwrap();
         assert!(tools.portal_draft().is_some());
         assert!(tools.shared_draft().is_none(), "a portal location");
+        // The palette filter follows the switch too.
         tools.set_mode(ToolMode::Place);
         tools.focus_filter().unwrap();
-        assert!(tools.shared_draft().is_none(), "the palette filter");
+        assert!(tools.filter_focused());
+        assert_eq!(tools.shared_draft().is_some(), shared, "the palette filter");
     }
 }
 
@@ -610,4 +613,250 @@ fn the_frame_records_name_the_pinned_shared_field() {
         "{}",
         FieldImplementation::SHARED_NAME
     );
+}
+
+/// Text typed into the palette filter: parts of the sample's prototype ids
+/// in either case, letters no id has, refused text and pastes of up to and
+/// past the filter's 64 bytes.
+const FILTER_PIECES: [&str; 13] = [
+    "a", "St", "ONE", "r", "T", "ate", "x", "é", "青", "\n", "\t", "\u{2028}", "",
+];
+
+/// One step on the palette filter: an edit ([`op`]), or one of the filter's
+/// own: release it (Enter or a click), clear it (Esc), focus it again (`/`).
+#[derive(Clone, Debug)]
+enum FilterOp {
+    Edit(Op),
+    Release,
+    Clear,
+    Focus,
+}
+
+fn filter_op(random: &mut Seeded) -> FilterOp {
+    match random.below(20) {
+        0..=5 => FilterOp::Edit(Op::Input(
+            FILTER_PIECES[random.below(FILTER_PIECES.len())].to_owned(),
+        )),
+        6 => FilterOp::Edit(Op::Input("ab".repeat(28 + random.below(8)))),
+        7 => FilterOp::Release,
+        8 => FilterOp::Clear,
+        9 | 10 => FilterOp::Focus,
+        _ => FilterOp::Edit(op(random)),
+    }
+}
+
+/// Apply `op` to a tool state in Place mode. An edit on an unfocused filter
+/// is what the editor does with it: nothing reaches a draft.
+fn apply_filter(
+    tools: &mut ToolState,
+    op: &FilterOp,
+    stale: TextRevision,
+) -> Result<(), ToolError> {
+    match op {
+        FilterOp::Edit(op) if tools.filter_focused() => apply(tools, op, stale),
+        FilterOp::Edit(_) => Ok(()),
+        FilterOp::Release => {
+            tools.release_filter();
+            Ok(())
+        }
+        FilterOp::Clear => {
+            tools.clear_filter();
+            Ok(())
+        }
+        FilterOp::Focus => tools.focus_filter(),
+    }
+}
+
+/// The randomised parity run for the palette filter: after every step both
+/// fields hold the same filter text, snapshot, focus and composition, keep
+/// the same palette rows, and refuse review the same way.
+#[test]
+fn both_fields_agree_on_every_filter_step_and_on_the_rows_it_keeps() {
+    let mut random = Seeded(0x5f11_7e25);
+    let dir = tempfile::tempdir().unwrap();
+    world_with(dir.path(), "Trail marker");
+    let document = WorldDocument::open(dir.path()).unwrap();
+    let (catalog, _) = loader::load(
+        document.source(),
+        document.world(),
+        PreviewLimits::default(),
+    )
+    .unwrap();
+    let key = SelectionKey::Object {
+        uid: "marker_1".into(),
+    };
+    let view = inspect(
+        document.world(),
+        &catalog,
+        Some(&key),
+        4,
+        document.revision(),
+    );
+    let (mut steps, mut refusals, mut focused) = (0, 0, 0);
+    let mut kept = std::collections::BTreeSet::new();
+    for _ in 0..200 {
+        let [mut own, mut shared] = FieldImplementation::ALL.map(|implementation| {
+            let mut tools = ToolState::default();
+            tools.set_string_field(implementation);
+            tools.set_mode(ToolMode::Place);
+            tools.focus_filter().unwrap();
+            tools
+        });
+        let stale = [
+            own.input_revision().unwrap(),
+            shared.input_revision().unwrap(),
+        ];
+        for _ in 0..random.below(24) {
+            // Each focus really is the implementation it is named for.
+            assert!(own.shared_draft().is_none());
+            assert_eq!(shared.shared_draft().is_some(), shared.filter_focused());
+            let op = filter_op(&mut random);
+            let before = [own.input_revision(), shared.input_revision()];
+            let results = [
+                apply_filter(&mut own, &op, stale[0]),
+                apply_filter(&mut shared, &op, stale[1]),
+            ];
+            assert_eq!(results[0], results[1], "{op:?}");
+            refusals += usize::from(results[0].is_err());
+            assert_eq!(own.palette_filter(), shared.palette_filter(), "{op:?}");
+            assert_eq!(own.filter_focused(), shared.filter_focused(), "{op:?}");
+            assert_eq!(
+                own.draft_snapshot().map(comparable),
+                shared.draft_snapshot().map(comparable),
+                "{op:?}"
+            );
+            assert_eq!(own.is_composing(), shared.is_composing(), "{op:?}");
+            assert_eq!(
+                before[0] == own.input_revision(),
+                before[1] == shared.input_revision(),
+                "{op:?}"
+            );
+            // The rows the filter keeps, after every step.
+            let rows = own.filtered_palette(&catalog);
+            assert_eq!(rows, shared.filtered_palette(&catalog), "{op:?}");
+            kept.insert(rows.len());
+            // The filter is never reviewed, and never makes a change.
+            if own.filter_focused() {
+                focused += 1;
+                assert_eq!(
+                    own.build_action(&view, false),
+                    Err(ToolError("The palette filter is never reviewed"))
+                );
+                assert_eq!(
+                    shared.build_action(&view, false),
+                    Err(ToolError("The palette filter is never reviewed"))
+                );
+            }
+            steps += 1;
+        }
+        // Leaving Place clears the filter in both.
+        for tools in [&mut own, &mut shared] {
+            tools.set_mode(ToolMode::Select);
+            assert_eq!(tools.palette_filter(), "");
+            assert!(!tools.filter_focused());
+        }
+    }
+    // Every row count was reached, from none to the whole palette of six
+    // (no text keeps exactly five of bush, crate, gate, lamp, marker and
+    // stone).
+    assert_eq!(kept, [0, 1, 2, 3, 4, 6].into(), "{kept:?}");
+    assert!(
+        steps > 2_000 && refusals > 100 && focused > 1_000,
+        "{steps} {refusals} {focused}"
+    );
+}
+
+/// The filter's 64-byte limit, refused in the editor's own wording in both
+/// fields, and a composition dropped on release in both.
+#[test]
+fn both_fields_refuse_the_filter_past_its_byte_limit_and_drop_a_composition_on_release() {
+    const REFUSED: ToolError =
+        ToolError("Input exceeds byte budget or contains control characters or line breaks");
+    let full = "😀".repeat(16);
+    assert_eq!(full.len(), tilewright_editor_ui::tools::MAX_FILTER_BYTES);
+    for implementation in FieldImplementation::ALL {
+        let mut tools = ToolState::default();
+        tools.set_string_field(implementation);
+        tools.set_mode(ToolMode::Place);
+        tools.focus_filter().unwrap();
+        let case = format!("{implementation:?}");
+        assert_eq!(
+            tools.shared_draft().is_some(),
+            implementation == FieldImplementation::Shared
+        );
+        // One byte over, at once: refused and nothing changes.
+        assert_eq!(tools.input(&format!("{full}a")), Err(REFUSED), "{case}");
+        assert_eq!(tools.palette_filter(), "", "{case}");
+        tools.input(&full).unwrap();
+        assert_eq!(tools.input("a"), Err(REFUSED), "{case}");
+        assert_eq!(tools.update_preedit("a", 1, 0), Err(REFUSED), "{case}");
+        assert_eq!(tools.palette_filter(), full, "{case}");
+        // Released and focused again, it holds the whole limit, and still
+        // nothing more.
+        tools.release_filter();
+        tools.focus_filter().unwrap();
+        assert_eq!(tools.palette_filter(), full, "{case}");
+        assert_eq!(tools.input("a"), Err(REFUSED), "{case}");
+        // A composition is not part of the filter, and release drops it.
+        tools.select_all().unwrap();
+        tools.input("lam").unwrap();
+        tools.update_preedit("p", 1, 0).unwrap();
+        assert!(tools.is_composing(), "{case}");
+        assert_eq!(tools.palette_filter(), "lam", "{case}");
+        tools.release_filter();
+        assert_eq!(tools.palette_filter(), "lam", "{case}");
+        tools.focus_filter().unwrap();
+        assert!(!tools.is_composing(), "{case}");
+        assert_eq!(tools.draft_text(), Some("lam"), "{case}");
+        // Esc clears and releases, a composition included.
+        tools.update_preedit("p", 1, 0).unwrap();
+        assert!(tools.clear_filter(), "{case}");
+        assert_eq!(
+            (tools.palette_filter(), tools.filter_focused()),
+            ("", false)
+        );
+        assert!(!tools.clear_filter(), "{case}: nothing left to clear");
+    }
+}
+
+/// Focusing the filter ends an open portal step, as every other draft does,
+/// with either field: the next tile click places instead of picking.
+#[test]
+fn focusing_the_filter_ends_an_open_portal_step_with_either_field() {
+    let dir = tempfile::tempdir().unwrap();
+    world_with(dir.path(), "Trail marker");
+    let document = WorldDocument::open(dir.path()).unwrap();
+    let (catalog, _) = loader::load(
+        document.source(),
+        document.world(),
+        PreviewLimits::default(),
+    )
+    .unwrap();
+    let gate = SelectionKey::Object {
+        uid: "gate_west".into(),
+    };
+    for implementation in FieldImplementation::ALL {
+        for step in [PortalStep::PickTile, PortalStep::Anchors] {
+            let mut tools = ToolState::default();
+            tools.set_string_field(implementation);
+            tools.set_mode(ToolMode::Place);
+            assert!(
+                tools
+                    .toggle_portal_step(
+                        document.world(),
+                        &catalog,
+                        Some(&gate),
+                        step,
+                        document.revision(),
+                        false,
+                    )
+                    .unwrap()
+            );
+            assert_eq!(tools.portal_step(), Some(("gate_west", step)));
+            tools.focus_filter().unwrap();
+            assert!(tools.filter_focused(), "{implementation:?} {step:?}");
+            assert_eq!(tools.portal_step(), None, "{implementation:?} {step:?}");
+            assert!(!tools.portal_picking());
+        }
+    }
 }

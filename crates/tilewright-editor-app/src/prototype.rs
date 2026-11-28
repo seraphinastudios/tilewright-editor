@@ -774,8 +774,9 @@ pub(crate) fn undrawable_notice(advice: &str, reason: &str) -> String {
 }
 
 impl Application {
-    /// Switch the inspector's string fields and the zone name drafts to the
-    /// shared field (`--shared-string-field`), from the next such draft on.
+    /// Switch the inspector's string fields, the zone name drafts and the
+    /// palette filter to the shared field (`--shared-string-field`), from
+    /// the next such draft or filter focus on.
     fn share_string_field(&mut self) -> Result<()> {
         self.shared_field = Some(crate::shared_field::SharedField::new()?);
         self.tools
@@ -3837,16 +3838,18 @@ impl Application {
             .draft_snapshot()
             .filter(|_| self.tools.filter_focused())
         {
-            ui.editable(
+            // The editor's own field, or the same row reserved for the
+            // shared field to draw.
+            y = self.draft_field(
+                ui,
+                snapshot,
                 Rect {
                     x,
                     y,
                     width,
                     height: crate::workspace_render::FIELD_ROW_HEIGHT,
                 },
-                snapshot,
             );
-            y += crate::workspace_render::FIELD_ROW_HEIGHT + 4;
             ui.widget(
                 Rect {
                     x,

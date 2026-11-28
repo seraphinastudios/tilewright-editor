@@ -12,7 +12,7 @@ use tilewright_jsonc::Value;
 
 /// Every action kind and its members besides `kind` and `expected`, in
 /// the decoder's order. Each member's schema is [`member`]'s.
-pub const KINDS: [(&str, &[&str]); 20] = [
+pub const KINDS: [(&str, &[&str]); 21] = [
     ("move", &["uid", "x", "y"]),
     ("set_field", &["uid", "field", "value"]),
     ("paint", &["plane", "layer", "grid", "x", "y", "proto"]),
@@ -34,6 +34,7 @@ pub const KINDS: [(&str, &[&str]); 20] = [
     ("paint_zones", &["plane", "layer", "cells", "zone"]),
     ("remove", &["uid"]),
     ("place", &["plane", "layer", "x", "y", "proto"]),
+    ("place_objects", &["plane", "layer", "x", "y", "objects"]),
     ("rename_zone", &["plane", "zone", "name"]),
     ("set_zone_parent", &["plane", "zone", "parent"]),
     ("create_zone", &["plane", "zone", "name", "parent"]),
@@ -125,6 +126,12 @@ fn member(kind: &str, name: &str) -> String {
             r#"{{"type":"integer","minimum":{0},"maximum":{0},"description":"The smoothing rule's version; only {0} exists. Needs the catalog's editing.heights range (the catalog tool reports it as heights). Each cell becomes the weighted mean of the 5 x 5 tiles centred on it, weighted 1, 4, 6, 4, 1 across times 1, 4, 6, 4, 1 down (the cell itself 36 of 256), rounded to the nearest whole number, an exact half toward the cell's own height. Every height read is the committed one, clamped into the range, so the result is always in the range and the order of cells does not matter. Tiles not listed in cells are read too; a tile outside the catalog's active view or in a map chunk that does not exist is left out of the mean, so cells within two tiles of the view's edge depend on where it ends. Cells whose height would not change, and cells of map chunks that do not exist, are left out. A repeated action smooths further until the ground rests; an even slope is kept where all 25 tiles are read."}}"#,
             limits::SMOOTH_KERNEL
         ),
+        "objects" => format!(
+            r#"{{"type":"array","items":{{"type":"object","properties":{{"proto":{0},"offset":{{"type":"array","items":{{"type":"integer","minimum":-{1},"maximum":{1}}},"minItems":2,"maxItems":2}}}},"required":["proto","offset"],"additionalProperties":false}},"minItems":1,"maxItems":{2},"description":"A stamp: the objects to place, in the order they are inserted, each a prototype granted by the catalog's editing.objects (the catalog tool lists them) and its offset [dx, dy] from the anchor tile (x, y), after any rotation or mirroring the caller applied. Each object goes on top of the stack of the tile at (x + dx, y + dy), with a new uid and its grant's render layer and defaults, all in one change. The whole stamp is refused if any object's prototype is not granted or its tile is outside the catalog's active view. Two objects may share a tile, and a tile may already hold objects: the review warns, and each new one is stacked on top. accept reports the new uids as applied.placed, a list in this order. With prototype names of World identifiers (at most 128 bytes), {2} objects fit well inside the request's 64 KiB."}}"#,
+            text(),
+            limits::STAMP_OFFSET,
+            limits::STAMP_OBJECTS
+        ),
         "name" | "parent" => optional_text(),
         "zone" if kind == "paint_zones" => optional_text(),
         _ => text(),
@@ -170,8 +177,8 @@ pub fn action_schema() -> String {
 /// `integer` admits them, so that the decoder, which reads integers as
 /// written, takes what the schema takes. Only the members that are
 /// integers in every action are rewritten: `x`, `y`, `layer`, `seed`,
-/// `amount`, `kernel`, a flatten's `target`, the cells of `cells`, and a portal
-/// target's `layer` and `at`; a field `value`
+/// `amount`, `kernel`, a flatten's `target`, the cells of `cells`, a stamp
+/// object's `offset`, and a portal target's `layer` and `at`; a field `value`
 /// is never touched, so it is recorded as written.
 pub fn normalized(action: &Value) -> Value {
     let mut action = action.clone();
@@ -182,6 +189,18 @@ pub fn normalized(action: &Value) -> Value {
                 "cells" => {
                     if let Value::Array { items, .. } = &mut member.value {
                         items.iter_mut().for_each(pair);
+                    }
+                }
+                "objects" => {
+                    if let Value::Array { items, .. } = &mut member.value {
+                        for item in items {
+                            if let Value::Object { members, .. } = item {
+                                members
+                                    .iter_mut()
+                                    .filter(|member| member.key == "offset")
+                                    .for_each(|member| pair(&mut member.value));
+                            }
+                        }
                     }
                 }
                 "target" => {
@@ -257,7 +276,7 @@ mod tests {
     fn only_integer_members_are_rewritten() {
         let parse = |text: &str| Document::parse(text, &Limits::default()).unwrap();
         let action = parse(
-            r#"{"x":3.0,"y":-0.0,"layer":1e0,"cells":[[1.0,2]],"target":{"layer":2.0,"at":[4.0,5.0],"plane":1.0},"value":7.0,"uid":1.5,"other":2.0}"#,
+            r#"{"x":3.0,"y":-0.0,"layer":1e0,"cells":[[1.0,2]],"target":{"layer":2.0,"at":[4.0,5.0],"plane":1.0},"objects":[{"proto":2.0,"offset":[-1.0,6e0]}],"value":7.0,"uid":1.5,"other":2.0}"#,
         );
         // A flatten's target height.
         let flatten = normalized(parse(r#"{"target":-8.0}"#).root());
@@ -271,6 +290,9 @@ mod tests {
             ("/target/layer", Some(2)),
             ("/target/at/1", Some(5)),
             ("/target/plane", None),
+            ("/objects/0/offset/0", Some(-1)),
+            ("/objects/0/offset/1", Some(6)),
+            ("/objects/0/proto", None),
             ("/value", None),
             ("/uid", None),
             ("/other", None),

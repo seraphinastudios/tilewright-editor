@@ -919,18 +919,26 @@ pub fn model_cursor(cursor: TextCursor) -> tilewright_editor_ui::text_input::Tex
 const SAME_CARET_POSITION: f32 = 1.0 / 64.0;
 
 /// Layout steps one press may take: a committed position has at most two
-/// display positions (beside a marker's guard), each with two affinities.
+/// display positions (beside a marker's guard), each with two affinities. A
+/// press can also step past stops beside a guard on other committed
+/// positions ([`lands_behind`]); on the measured values it passes at most
+/// two, and no press needed more than four steps. A press cut off by the bound would end on such a stop.
 const MAXIMUM_CARET_STEPS: usize = 4;
 
 /// One arrow, Home or End press in the editor's own field: the new focus in
 /// `display_text`, from `snapshot`'s display focus, over `layout` of that
 /// text (map it with `snapshot.committed_cursor`). It follows the shared
-/// field's `step_caret` rule. A layout step that changes the affinity alone
-/// and leaves the caret where it was drawn (within [`SAME_CARET_POSITION`]),
-/// or that crosses a marker's guard without moving the committed position,
-/// is not a stop and is repeated, so a press that can move the caret moves
-/// it. Any other step is the press's result, as with a single layout step;
-/// a step that does not move ends it.
+/// field's `step_caret` rule (`tilewright-ui-render` 0.1.3). A layout step
+/// that changes the affinity alone and leaves the caret where it was drawn
+/// (within [`SAME_CARET_POSITION`]), or that crosses a marker's guard without
+/// moving the committed position, is not a stop and is repeated, so a press
+/// that can move the caret moves it. Nor is a step to the inner side of a
+/// guard whose committed position is drawn elsewhere and not beyond where the
+/// press began in the pressed direction ([`lands_behind`]); in mixed-direction
+/// text stopping there moved the caret against the press, or not at all, and
+/// could make presses cycle. Any other step is the
+/// press's result, as with a single layout step; a step that does not move
+/// ends it.
 pub fn step_caret(
     snapshot: &TextInputSnapshot,
     layout: &UnicodeLayout,
@@ -941,8 +949,13 @@ pub fn step_caret(
             (a.x - b.x).abs() <= SAME_CARET_POSITION && (a.y - b.y).abs() <= SAME_CARET_POSITION
         })
     };
-    let start = snapshot.selection.focus.byte;
     let mut display = renderer_cursor(snapshot.display_selection.focus);
+    let from = layout.caret(display);
+    let toward = match motion {
+        tilewright_render_ui::VisualMotion::Left | tilewright_render_ui::VisualMotion::Home => -1.0,
+        tilewright_render_ui::VisualMotion::Right | tilewright_render_ui::VisualMotion::End => 1.0,
+    };
+    let mut committed = snapshot.selection.focus.byte;
     for _ in 0..MAXIMUM_CARET_STEPS {
         let next = layout.move_visual(display, motion);
         if next == display {
@@ -954,14 +967,67 @@ pub fn step_caret(
         if unseen {
             continue;
         }
-        let committed = snapshot
+        let previous = committed;
+        committed = snapshot
             .committed_cursor(model_cursor(display))
-            .map_err(|error| error.to_string())?;
-        if committed.byte != start || !moved {
+            .map_err(|error| error.to_string())?
+            .byte;
+        if lands_behind(snapshot, layout, from, display, toward) {
+            continue;
+        }
+        // The display byte moved but the committed byte did not: the step
+        // only crossed a guard. Compared with the position the step left,
+        // which is the press's start unless a stop beside a guard was
+        // passed over.
+        if committed != previous || !moved {
             break;
         }
     }
     Ok(display)
+}
+
+/// Whether a press toward `toward` (-1 left, 1 right) that began with the
+/// caret drawn at `from` and whose layout steps reached `cursor` would, by
+/// stopping there, draw the caret back at `from` or behind it; the rule of
+/// the shared field's `lands_behind` (`tilewright-ui-render` 0.1.3).
+///
+/// Only a display position strictly inside a marker unit (beside its guard)
+/// can: `committed_cursor` maps it to the stored character's edge on the same
+/// side of the glyph, which is drawn at the unit's edge on that side, not at
+/// `cursor`. When the edge is drawn at `cursor`'s place, or a position has no
+/// caret, this is false. Otherwise it is true unless the edge lies more than
+/// [`SAME_CARET_POSITION`] beyond `from` in x, the pressed way; where
+/// `cursor` itself is drawn does not matter.
+fn lands_behind(
+    snapshot: &TextInputSnapshot,
+    layout: &UnicodeLayout,
+    from: Option<UiRect>,
+    cursor: TextCursor,
+    toward: f32,
+) -> bool {
+    let Some(marker) = snapshot
+        .markers
+        .iter()
+        .find(|marker| marker.display.start < cursor.byte && cursor.byte < marker.display.end)
+    else {
+        return false;
+    };
+    let edge = TextCursor {
+        byte: if cursor.byte <= marker.glyph.start {
+            marker.display.start
+        } else {
+            marker.display.end
+        },
+        ..cursor
+    };
+    let (Some(from), Some(stop), Some(edge)) = (from, layout.caret(cursor), layout.caret(edge))
+    else {
+        return false;
+    };
+    let same = |a: UiRect, b: UiRect| {
+        (a.x - b.x).abs() <= SAME_CARET_POSITION && (a.y - b.y).abs() <= SAME_CARET_POSITION
+    };
+    !same(stop, edge) && (edge.x - from.x) * toward <= SAME_CARET_POSITION
 }
 
 #[allow(clippy::cast_precision_loss)]
