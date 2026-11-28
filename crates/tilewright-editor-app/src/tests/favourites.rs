@@ -935,3 +935,33 @@ fn favourites_and_stamps_lay_out_together_at_1280x800_720x480_and_twice_the_pixe
         }
     }
 }
+
+#[test]
+fn while_a_copy_is_held_the_star_row_is_disabled_as_for_a_stamp() {
+    let file = format!(r#"{{"format": "{FORMAT}", "objects": ["stone", "bush"]}}"#);
+    let (temporary, mut app) = favourite_stamp_application(file.as_bytes());
+    let saved = temporary
+        .path()
+        .join("palettes")
+        .join(favourites_view::saved_name(1));
+    app.control(Control::PlacePalette("bush".into())).unwrap();
+    super::capture::copy(&mut app, [0, 2], [3, 4]);
+    let laid = rows(&mut app);
+    let star = laid
+        .iter()
+        .find(|row| row.1 == Some(Control::FavouriteStar))
+        .unwrap();
+    assert_eq!(star.0, favourites_view::STAMP_CHOSEN);
+    assert!(!star.2, "the star row is disabled");
+    assert!(
+        laid.iter()
+            .filter(|row| matches!(row.1, Some(Control::PlacePalette(_))))
+            .all(|row| !row.3)
+    );
+    assert!(app.control(Control::FavouriteStar).is_err());
+    assert!(!saved.exists());
+    // A favourite's row chooses its prototype and drops the copy.
+    click_first(&mut app, &Control::PlacePalette("stone".into()));
+    assert!(app.tools.copy_choice().is_none());
+    assert_eq!(app.tools.placement_choice(), Some("stone"));
+}

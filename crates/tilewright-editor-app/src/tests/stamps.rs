@@ -60,7 +60,7 @@ pub(super) fn with_stamps(root: &Path) {
 
 /// The 1280x800 application on the sample with stamps, seeded, in Place
 /// mode with the frame acknowledged.
-fn stamp_application() -> (tempfile::TempDir, Application) {
+pub(super) fn stamp_application() -> (tempfile::TempDir, Application) {
     let (temporary, mut app) = zone_application(with_stamps);
     app.session
         .set_uid_source(Box::new(SeededUidSource::new(SEED)));
@@ -71,13 +71,13 @@ fn stamp_application() -> (tempfile::TempDir, Application) {
 }
 
 /// A real key press on a displayed frame.
-fn press(app: &mut Application, keycode: Keycode) -> Result<(), String> {
+pub(super) fn press(app: &mut Application, keycode: Keycode) -> Result<(), String> {
     acknowledge_ui(app);
     route(app, &key(keycode))
 }
 
 /// A real press and release on tile `at`, on a displayed frame.
-fn click(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
+pub(super) fn click(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
     acknowledge_ui(app);
     let pixel = cell_pixel(app, at[0], at[1]);
     let down = route(app, &button(true, pixel));
@@ -86,7 +86,7 @@ fn click(app: &mut Application, at: [i64; 2]) -> Result<(), String> {
 }
 
 /// A real press and release on the widget of `control`.
-fn press_widget(app: &mut Application, control: &Control) -> Result<(), String> {
+pub(super) fn press_widget(app: &mut Application, control: &Control) -> Result<(), String> {
     acknowledge_ui(app);
     let point = super::widget_point(app, control);
     let down = route(app, &button(true, point));
@@ -95,7 +95,7 @@ fn press_widget(app: &mut Application, control: &Control) -> Result<(), String> 
 }
 
 /// Pointer motion with no button held over tile `at`.
-fn hover(app: &mut Application, at: [i64; 2]) {
+pub(super) fn hover(app: &mut Application, at: [i64; 2]) {
     let [x, y] = cell_pixel(app, at[0], at[1]);
     route(
         app,
@@ -116,7 +116,7 @@ fn hover(app: &mut Application, at: [i64; 2]) {
 /// The tiles the stamp preview marks, read back through the prepared cell
 /// picks: every copy is unpickable and in the stroke preview's tint, and
 /// the composed frame holds exactly these copies.
-fn marked(app: &mut Application) -> BTreeSet<[i64; 2]> {
+pub(super) fn marked(app: &mut Application) -> BTreeSet<[i64; 2]> {
     app.refresh_ui();
     let overlay = crate::prototype::stamp_overlay(app);
     let cells: BTreeSet<[i64; 2]> = overlay
@@ -165,7 +165,11 @@ fn camp(turns: u8, mirrored: bool) -> Vec<StampObject> {
 }
 
 /// The stamp a click on `anchor` records, as a direct action.
-fn place_objects(app: &Application, anchor: [i64; 2], objects: Vec<StampObject>) -> Action {
+pub(super) fn place_objects(
+    app: &Application,
+    anchor: [i64; 2],
+    objects: Vec<StampObject>,
+) -> Action {
     Action::PlaceObjects {
         plane: "main".into(),
         layer: 0,
@@ -176,7 +180,7 @@ fn place_objects(app: &Application, anchor: [i64; 2], objects: Vec<StampObject>)
     }
 }
 
-fn tiles(anchor: [i64; 2], objects: &[StampObject]) -> BTreeSet<[i64; 2]> {
+pub(super) fn tiles(anchor: [i64; 2], objects: &[StampObject]) -> BTreeSet<[i64; 2]> {
     objects
         .iter()
         .map(|object| [anchor[0] + object.offset[0], anchor[1] + object.offset[1]])
@@ -184,12 +188,12 @@ fn tiles(anchor: [i64; 2], objects: &[StampObject]) -> BTreeSet<[i64; 2]> {
 }
 
 /// The recorded proposal of `app`'s applied steps.
-fn proposal(app: &Application) -> tilewright_editor_proposal::Proposal {
+pub(super) fn proposal(app: &Application) -> tilewright_editor_proposal::Proposal {
     tilewright_editor_proposal::Proposal::from_session(&app.session, "test-editor", [1; 32], None)
         .unwrap()
 }
 
-fn turn_row(app: &mut Application) -> Vec<(String, bool, bool)> {
+pub(super) fn turn_row(app: &mut Application) -> Vec<(String, bool, bool)> {
     app.refresh_ui();
     app.ui
         .widgets
@@ -763,7 +767,12 @@ fn the_stamp_rows_fit_at_1280_by_800_720_by_480_and_double_scale() {
 
 /// Pointer motion over tile `at` in a window of `logical` size drawn at
 /// `physical` pixels.
-fn hover_at(app: &mut Application, at: [i64; 2], logical: (u32, u32), physical: (u32, u32)) {
+pub(super) fn hover_at(
+    app: &mut Application,
+    at: [i64; 2],
+    logical: (u32, u32),
+    physical: (u32, u32),
+) {
     let [x, y] = cell_pixel(app, at[0], at[1]);
     // `cell_pixel` gives a physical pixel; SDL reports logical positions.
     #[allow(clippy::cast_precision_loss)]
