@@ -6929,7 +6929,7 @@ fn stamp_key(app: &mut Application, key: Keycode) -> Result<()> {
 /// Whether R and M turn and mirror the chosen stamp: in Place mode with a
 /// stamp chosen. Elsewhere R is Reopen and M does nothing. In a blocked
 /// session (an uncertain publication) R stays Reopen even then, since it
-/// is the only way out and nothing can be placed.
+/// is the only way out, and M does nothing: nothing can be placed.
 fn stamp_keys(app: &Application) -> bool {
     app.tools.mode() == ToolMode::Place
         && app.tools.stamp_choice().is_some()
