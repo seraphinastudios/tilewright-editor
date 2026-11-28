@@ -787,6 +787,7 @@ fn the_road_fence_and_the_pause_refuse_typed_drafts_with_either_field() {
             assert_eq!(app.tools.draft_text(), Some(typed.texts()[0]));
             assert!(app.session.history().pending().is_none());
             let reopen = app.control(typed.control()).unwrap_err();
+            assert_eq!(reopen, review, "{typed:?}");
             assert_eq!(app.tools.draft_text(), Some(typed.texts()[0]), "kept");
             assert_eq!(
                 app.tools.shared_draft().is_some(),

@@ -832,6 +832,7 @@ fn the_road_fence_and_the_pause_refuse_typed_fields_with_either_field() {
             assert_eq!(app.tools.draft_text(), Some(scalar.texts()[0]));
             assert!(app.session.history().pending().is_none());
             let reopen = app.control(scalar.control()).unwrap_err();
+            assert_eq!(reopen, review, "{scalar:?}");
             assert_eq!(app.tools.draft_text(), Some(scalar.texts()[0]), "kept");
             assert_eq!(
                 app.tools.shared_draft().is_some(),

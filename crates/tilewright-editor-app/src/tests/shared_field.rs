@@ -1806,6 +1806,7 @@ fn the_road_fence_and_the_pause_refuse_zone_drafts_with_either_field() {
             .into_iter()
             .map(|draft| open_zone(&mut app, draft).unwrap_err())
             .collect();
+        assert_eq!(refusals, [review.clone(), review.clone()]);
         assert_eq!(app.tools.draft_text(), Some("Open meadow"), "kept");
         paused.push((review, refusals));
     }

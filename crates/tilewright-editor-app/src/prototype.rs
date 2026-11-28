@@ -954,11 +954,11 @@ impl Application {
         }
     }
 
-    /// The tools' `pending` for a text draft's review: whether the session
-    /// cannot prepare an edit. While rendering pauses editing the review is
-    /// refused here, in the pause's own words, since the tools' refusal
-    /// names a pending edit and there may be none. Nothing is changed, so
-    /// the draft keeps its text.
+    /// The tools' `pending` for opening or reviewing a text draft: whether
+    /// the session cannot prepare an edit. While rendering pauses editing
+    /// both are refused here, in the pause's own words, since the tools'
+    /// refusal names a pending edit and there may be none. Nothing is
+    /// changed, so an open draft keeps its text.
     fn draft_unavailable(&self) -> Result<bool> {
         self.refuse_while_paused()?;
         Ok(!self.session.can_prepare())
@@ -4859,16 +4859,19 @@ impl Application {
             self.session.generation(),
             self.session.history().document().revision(),
         );
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
         match control {
-            Control::Coordinates => self
-                .tools
-                .begin_move(&inspected, unavailable)
-                .map_err(|error| error.to_string()),
-            Control::Field(field) => self
-                .tools
-                .begin_field(&inspected, &field, unavailable)
-                .map_err(|error| error.to_string()),
+            Control::Coordinates => {
+                let unavailable = self.draft_unavailable()?;
+                self.tools
+                    .begin_move(&inspected, unavailable)
+                    .map_err(|error| error.to_string())
+            }
+            Control::Field(field) => {
+                let unavailable = self.draft_unavailable()?;
+                self.tools
+                    .begin_field(&inspected, &field, unavailable)
+                    .map_err(|error| error.to_string())
+            }
             _ => {
                 let snapshot = self.tools.draft_snapshot().ok_or("no draft")?;
                 let layout = self
@@ -4892,7 +4895,6 @@ impl Application {
     /// management rows. Edits leave as Session actions; the Session checks
     /// the grant, the revision and every refusal again.
     fn zone_control(&mut self, control: Control) -> Result<()> {
-        let unavailable = self.blocked.is_some() || !self.session.can_prepare();
         let expected = self.session.history().document().revision();
         let plane = self.session.catalog().view().0.to_owned();
         let chosen = match self.tools.zone_choice() {
@@ -4909,14 +4911,14 @@ impl Application {
                 self.session.world(),
                 self.session.catalog(),
                 expected,
-                unavailable,
+                self.draft_unavailable()?,
             ),
             Control::ZoneCreate(parent) => self.tools.begin_zone_create(
                 self.session.world(),
                 self.session.catalog(),
                 parent,
                 expected,
-                unavailable,
+                self.draft_unavailable()?,
             ),
             Control::ZoneParents => self
                 .tools
@@ -4967,7 +4969,12 @@ impl Application {
             Control::AnchorCreate => {
                 return self
                     .tools
-                    .begin_anchor_create(catalog, self.session.selection(), expected, unavailable)
+                    .begin_anchor_create(
+                        catalog,
+                        self.session.selection(),
+                        expected,
+                        self.draft_unavailable()?,
+                    )
                     .map_err(|error| error.to_string());
             }
             Control::AnchorMove => self.tools.move_anchor_action(
@@ -5030,7 +5037,13 @@ impl Application {
             Control::PortalLocation => {
                 return self
                     .tools
-                    .begin_portal_location(world, catalog, selection, expected, unavailable)
+                    .begin_portal_location(
+                        world,
+                        catalog,
+                        selection,
+                        expected,
+                        self.draft_unavailable()?,
+                    )
                     .map_err(|error| error.to_string());
             }
             Control::PortalAnchor { plane, anchor } => self.tools.portal_anchor_action(
