@@ -52,8 +52,7 @@ with tilewright-renderer 0.7.2, including its shared UI/text compiler.
 Every text draft (the inspector's string, boolean, integer, number and
 reference fields, the zone name drafts, the Place palette filter, Move
 coordinates, anchor ids and typed portal locations) is edited with
-tilewright-ui 0.1.3's shared text field; `--editor-text-field` opts out to the
-editor's own field for now ([Offline editing prototype](docs/OFFLINE-PROTOTYPE.md#shared-text-field)).
+tilewright-ui 0.1.3's shared text field, the editor's only one ([Offline editing prototype](docs/OFFLINE-PROTOTYPE.md#shared-text-field)).
 The production manifests target exact crates.io
 versions, recorded with their repositories in `policy/released-dependencies.json`.
 The registry lockfile records their actual archive checksums; producer path/Git
